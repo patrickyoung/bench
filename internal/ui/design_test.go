@@ -53,7 +53,7 @@ func TestOpenDesignPromotesUserRequirementsWithoutWriting(t *testing.T) {
 		{role: roleUser, text: "A fixture suite must pass."},
 	}
 	updated, cmd := m.Update(key("ctrl+d"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || m.screen != screenDesignForm || m.formFocus != 0 {
 		t.Fatalf("design form did not open: screen=%v focus=%d", m.screen, m.formFocus)
 	}
@@ -91,7 +91,7 @@ func TestDraftNewThenCheckAdmitsOnlyExecutableVerdict(t *testing.T) {
 	m.project.SetValue("review-agent")
 	m.composer.SetValue("Review patches and prove findings with fixtures.")
 	updated, cmd := m.Update(key("ctrl+s"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || m.job != jobDraftNew || !m.running {
 		t.Fatalf("draft new did not start: job=%v running=%v", m.job, m.running)
 	}
@@ -100,14 +100,14 @@ func TestDraftNewThenCheckAdmitsOnlyExecutableVerdict(t *testing.T) {
 	}
 
 	updated, cmd = m.Update(draftProcessEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || m.job != jobDraftCheck || draft.checkDir != projectDir {
 		t.Fatalf("draft check did not follow new: job=%v dir=%q", m.job, draft.checkDir)
 	}
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stdout, Text: "./bin/check\n"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(draftProcessEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.screen != screenDesignReview || !m.designBuildable || m.designCheck != "./bin/check" {
 		t.Fatalf("review state: screen=%v buildable=%v check=%q", m.screen, m.designBuildable, m.designCheck)
 	}
@@ -131,7 +131,7 @@ func TestDraftCheckExitOneIsNeedsRevisionNotBroken(t *testing.T) {
 	m.running = true
 	m.activity = "the Check section is still false"
 	updated, _ := m.Update(draftProcessEvent{Done: true, ExitCode: 1, Err: &fakeExitError{}})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.screen != screenDesignReview || m.designBuildable || m.designBroken {
 		t.Fatalf("exit 1 state: screen=%v buildable=%v broken=%v", m.screen, m.designBuildable, m.designBroken)
 	}
@@ -157,14 +157,14 @@ func TestExistingProjectReopensThroughDraftCheck(t *testing.T) {
 		t.Fatalf("project init: cmd=%v picking=%v screen=%v", cmd != nil, m.picking, m.screen)
 	}
 	updated, wait := m.Update(cmd())
-	m = updated.(Model)
+	m = updated.(*Model)
 	if wait == nil || !m.running || m.job != jobDraftCheck || draft.checkDir != projectDir {
 		t.Fatalf("project check: running=%v job=%v dir=%q", m.running, m.job, draft.checkDir)
 	}
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stdout, Text: "./bin/check\n"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(draftProcessEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if !m.designBuildable || m.designBody != "# Existing\n" {
 		t.Fatalf("reopened project: buildable=%v body=%q", m.designBuildable, m.designBody)
 	}
@@ -201,9 +201,9 @@ func TestProjectSlugIsBoringAndPortable(t *testing.T) {
 func TestDesignScreensFitEightyByTwentyFour(t *testing.T) {
 	m := New(Config{Workspace: "/work/project", InitialPrompt: "Build a small agent with a real check."})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(key("ctrl+d"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 
 	m.screen = screenDesignReview

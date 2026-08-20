@@ -32,10 +32,11 @@ type Event struct {
 // Spec names one program invocation. Args are passed directly, never through
 // a shell. Dir is optional.
 type Spec struct {
-	Path string
-	Args []string
-	Dir  string
-	Env  []string
+	Path  string
+	Args  []string
+	Dir   string
+	Env   []string
+	Stdin string
 }
 
 // Outcome is the terminal process result.
@@ -62,6 +63,9 @@ func Start(ctx context.Context, spec Spec) <-chan Event {
 func Execute(ctx context.Context, spec Spec, onChunk func(Stream, string)) Outcome {
 	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
 	cmd.Dir = spec.Dir
+	if spec.Stdin != "" {
+		cmd.Stdin = strings.NewReader(spec.Stdin)
+	}
 	if len(spec.Env) > 0 {
 		cmd.Env = overlayEnv(os.Environ(), spec.Env)
 	}

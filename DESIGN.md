@@ -24,11 +24,18 @@ project through Design, Build, Prove, and Learn.
 
 ## Non-negotiable boundary
 
-The TUI does not become a model client, an agent runtime, or a shell. For a
-turn it executes the equivalent of:
+The TUI does not become a model client, an agent runtime, or a shell. For an
+unskilled turn it executes the equivalent of:
 
 ```sh
 ask -f .bench/sessions/SESSION.jsonl -- "$message"
+```
+
+With explicit skills selected, the seam is still ordinary composition:
+
+```sh
+ask -S "$(ask system; brief cat SKILL...)" \
+  -f .bench/sessions/SESSION.jsonl -- "$message"
 ```
 
 It captures stdout as the answer, renders stderr as transient activity, and
@@ -38,7 +45,8 @@ failed turn stays failed even if its output sounds confident.
 This boundary is what lets later screens compose rather than accrete:
 
 - Build configures and observes `ply`; it does not copy its loop.
-- Procedures will come from `brief`, not a hidden prompt library.
+- Procedures come from `brief`, not a hidden prompt library. Selected skill
+  names are visible, and Ask records the exact composed prompt per turn.
 - Evaluation runs named checks and mutation suites; it does not ask the model
   if it won.
 - Learning admits only `hone` output from verified recoveries.
@@ -82,6 +90,32 @@ work and no command palette full of promises.
 
 The layout collapses at narrow widths instead of clipping a decorative side
 rail. Colour is semantic garnish; labels and spacing carry the hierarchy.
+
+## Skills are files; refinement is a checked loop
+
+The Skills workbench does not read brief's directories itself. It composes
+`brief ls`, `path`, `cat`, and `lint -strict`, preserving stdout, stderr, and
+the grep-like 0/1/2 outcomes. Level-one metadata is enough to browse; the raw
+body and bundled files are disclosed only after a user chooses a skill.
+
+New skills begin with `brief new -d DIR NAME`. Content—pasted prose, logs,
+examples, feedback, or paths to local files—travels on stdin to `ply`, never
+through a shell or argv. `SOURCE_ROOT` names the workspace explicitly so
+relative local paths remain useful while ply works inside the skill directory.
+Ply edits the ordinary directory and the fixed check is `"$BRIEF" lint
+-strict .`; user text cannot alter it. Refinement sessions live under
+`.bench/brief/refine/NAME`, outside the skill so provenance does not pollute
+progressive disclosure.
+
+This produces two intentionally different growth paths:
+
+- **source refinement:** material helps `ply` improve a procedure, with
+  `brief lint -strict` proving its shape but not the truth of every claim;
+- **verified learning:** `hone -into SKILL SESSION` may append a lesson only
+  when a replayable build failed and later passed.
+
+Calling arbitrary notes “learning” would erase the only evidence boundary in
+the system. The UI names the distinction instead of smoothing it away.
 
 ## State and artifacts
 
@@ -128,6 +162,9 @@ and writes the brief skill. There is no TUI memory schema.
    no private registry.
 8. Add domain-specific suites as ordinary check artifacts when a real agent
    design calls for them; do not make a suite framework inside the TUI.
+9. **Done:** integrate `brief` as a progressive-disclosure Skills workbench,
+   compose source-driven refinement through `ply`, and let selected skills
+   shape replayable Ask turns without a private catalogue or prompt store.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

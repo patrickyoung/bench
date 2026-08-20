@@ -31,7 +31,7 @@ func TestSubmitAndSuccessfulTurn(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event, 3)}
 	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", Model: "test/model", InitialPrompt: "build it"})
 	updated, cmd := m.Update(key("ctrl+s"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || !m.running {
 		t.Fatal("submit did not start a turn")
 	}
@@ -40,11 +40,11 @@ func TestSubmitAndSuccessfulTurn(t *testing.T) {
 	}
 
 	updated, _ = m.Update(processEvent{Stream: askexec.Stderr, Text: "thinking"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(processEvent{Stream: askexec.Stdout, Text: "working agent"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(processEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 
 	if m.running || len(m.messages) != 2 {
 		t.Fatalf("running=%v messages=%#v", m.running, m.messages)
@@ -57,11 +57,25 @@ func TestSubmitAndSuccessfulTurn(t *testing.T) {
 	}
 }
 
+func TestSubmitPassesOnlyExplicitlyActiveBriefSkills(t *testing.T) {
+	runner := &fakeRunner{events: make(chan askexec.Event)}
+	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "review it"})
+	m.activeSkills = []string{"go-review", "house-style"}
+	updated, cmd := m.Update(key("ctrl+s"))
+	m = updated.(*Model)
+	if cmd == nil || !m.running {
+		t.Fatal("skilled turn did not start")
+	}
+	if got := strings.Join(runner.req.Skills, ","); got != "go-review,house-style" {
+		t.Fatalf("skills = %q", got)
+	}
+}
+
 func TestExitTwoRemainsContextFull(t *testing.T) {
 	m := New(Config{Runner: &fakeRunner{events: make(chan askexec.Event)}, Session: "/tmp/run.jsonl"})
 	m.running = true
 	updated, _ := m.Update(processEvent{Done: true, ExitCode: 2, Err: &fakeExitError{}})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if !strings.Contains(strings.ToLower(m.notice), "context full") {
 		t.Fatalf("notice = %q", m.notice)
 	}
@@ -70,13 +84,23 @@ func TestExitTwoRemainsContextFull(t *testing.T) {
 func TestResizeKeepsComposerAndTranscriptUsable(t *testing.T) {
 	m := New(Config{})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.viewport.Width() < 20 || m.viewport.Height() < 3 {
 		t.Fatalf("viewport is unusable: %dx%d", m.viewport.Width(), m.viewport.Height())
 	}
 	view := m.View()
 	if !view.AltScreen || !strings.Contains(view.Content, "REQUIREMENTS") {
 		t.Fatalf("view missing terminal contract: %#v", view)
+	}
+}
+
+func TestBubbleTeaModelIsPointerOwned(t *testing.T) {
+	m := New(Config{})
+	if _, ok := any(m).(tea.Model); !ok {
+		t.Fatal("*Model no longer implements tea.Model")
+	}
+	if _, ok := any(*m).(tea.Model); ok {
+		t.Fatal("Model value must not be copied into Bubble Tea while cursor commands are live")
 	}
 }
 
@@ -102,9 +126,9 @@ func TestPickerMakesResumeExplicitAndRestoresPublicReplay(t *testing.T) {
 		t.Fatal("saved sessions did not open the explicit picker")
 	}
 	updated, _ := m.Update(key("down"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, cmd := m.Update(key("enter"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || !m.running || m.job != jobReplay {
 		t.Fatalf("resume did not start: running=%v job=%v", m.running, m.job)
 	}
@@ -113,9 +137,9 @@ func TestPickerMakesResumeExplicitAndRestoresPublicReplay(t *testing.T) {
 	}
 
 	updated, _ = m.Update(processEvent{Stream: askexec.Stdout, Text: "session saved\n» old requirement\nold answer\n"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(processEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.picking || m.running || !strings.Contains(m.restored, "old requirement") {
 		t.Fatalf("restore state: picking=%v running=%v restored=%q", m.picking, m.running, m.restored)
 	}
@@ -133,7 +157,7 @@ func TestPickerCanStartNewWithoutTouchingSavedSession(t *testing.T) {
 		Sessions:   []session.Info{{Path: "/tmp/saved.jsonl", Name: "saved"}},
 	})
 	updated, _ := m.Update(key("n"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.picking || m.session != "/tmp/new.jsonl" {
 		t.Fatalf("new state: picking=%v session=%q", m.picking, m.session)
 	}
@@ -149,11 +173,11 @@ func TestFailedVerificationReturnsToPicker(t *testing.T) {
 		Sessions:   []session.Info{{Path: "/tmp/bad.jsonl", Name: "bad"}},
 	})
 	updated, _ := m.Update(beginReplayMsg{})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(processEvent{Stream: askexec.Stderr, Text: "replay divergence"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(processEvent{Done: true, ExitCode: 1, Err: &fakeExitError{}})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if !m.picking || m.restored != "" {
 		t.Fatalf("unverified session was admitted: picking=%v restored=%q", m.picking, m.restored)
 	}
@@ -180,7 +204,7 @@ func TestPickerKeepsSelectedSessionVisible(t *testing.T) {
 	m.viewport.SetHeight(6)
 	for i := 0; i < 14; i++ {
 		updated, _ := m.Update(key("down"))
-		m = updated.(Model)
+		m = updated.(*Model)
 	}
 	if m.selected != 14 || m.viewport.YOffset() == 0 {
 		t.Fatalf("selected=%d offset=%d", m.selected, m.viewport.YOffset())

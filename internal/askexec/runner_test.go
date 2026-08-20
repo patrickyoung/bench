@@ -65,6 +65,62 @@ printf 'the answer'
 	}
 }
 
+func TestRunnerComposesSelectedBriefSkillIntoSystemPrompt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	ask := filepath.Join(dir, "fake-ask")
+	brief := filepath.Join(dir, "fake-brief")
+	capture := filepath.Join(dir, "system")
+	t.Setenv("ASK_CAPTURE", capture)
+	askScript := `#!/bin/sh
+set -eu
+if [ "$1" = system ]; then
+  printf 'base system\n'
+  exit 0
+fi
+[ "$1" = -f ]
+[ "$3" = -S ]
+printf '%s' "$4" > "$ASK_CAPTURE"
+[ "$5" = -- ]
+printf 'skilled answer'
+`
+	briefScript := `#!/bin/sh
+set -eu
+[ "$1" = cat ]
+[ "$2" = go-review ]
+printf 'Run the repository fixture before reporting a finding.\n'
+`
+	for path, body := range map[string]string{ask: askScript, brief: briefScript} {
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout strings.Builder
+	var done Event
+	for event := range (Runner{Path: ask, BriefPath: brief}).Start(context.Background(), Request{
+		Message: "review this", Session: filepath.Join(dir, "run.jsonl"), Skills: []string{"go-review"},
+	}) {
+		if event.Stream == Stdout {
+			stdout.WriteString(event.Text)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Err != nil || done.ExitCode != 0 || stdout.String() != "skilled answer" {
+		t.Fatalf("done=%#v stdout=%q", done, stdout.String())
+	}
+	system, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(system); got != "base system\n\nRun the repository fixture before reporting a finding." {
+		t.Fatalf("system = %q", got)
+	}
+}
+
 func TestRunnerReportsExitCode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")

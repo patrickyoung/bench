@@ -25,16 +25,16 @@ func TestBuildSuccessComesFromExitZeroAndKeepsEvidence(t *testing.T) {
 	m.designBuildable = true
 	m.screen = screenDesignReview
 	updated, cmd := m.Update(key("b"))
-	m = updated.(Model)
+	m = updated.(*Model)
 	if cmd == nil || !m.running || m.job != jobDraftBuild || draft.buildDir != project {
 		t.Fatalf("build did not start: running=%v job=%v dir=%q", m.running, m.job, draft.buildDir)
 	}
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stderr, Text: "$ go test ./...\nok\n"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stdout, Text: "Built it.\n"})
-	m = updated.(Model)
+	m = updated.(*Model)
 	updated, _ = m.Update(draftProcessEvent{Done: true, ExitCode: 0})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.running || m.buildState != buildPassed {
 		t.Fatalf("build state = %v, running=%v", m.buildState, m.running)
 	}
@@ -53,7 +53,7 @@ func TestBuildExitTwoIsNotDoneNotBroken(t *testing.T) {
 	m.job = jobDraftBuild
 	m.buildState = buildRunning
 	updated, _ := m.Update(draftProcessEvent{Done: true, ExitCode: 2, Err: &fakeExitError{}})
-	m = updated.(Model)
+	m = updated.(*Model)
 	if m.buildState != buildNotDone {
 		t.Fatalf("build state = %v", m.buildState)
 	}

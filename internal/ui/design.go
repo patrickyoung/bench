@@ -13,7 +13,7 @@ import (
 	"github.com/patrickyoung/bench/internal/draftexec"
 )
 
-func (m Model) openDesign() (tea.Model, tea.Cmd) {
+func (m *Model) openDesign() (tea.Model, tea.Cmd) {
 	if m.designBody != "" {
 		m.screen = screenDesignReview
 		m.viewport.GotoTop()
@@ -33,10 +33,11 @@ func (m Model) openDesign() (tea.Model, tea.Cmd) {
 	m.composer.Blur()
 	m.notice = "Review the path and requirements before draft writes anything"
 	m.syncContent()
-	return m, m.project.Focus()
+	cmd := m.project.Focus()
+	return m, cmd
 }
 
-func (m Model) requirementsText() string {
+func (m *Model) requirementsText() string {
 	var parts []string
 	for _, msg := range m.messages {
 		if msg.role == roleUser && strings.TrimSpace(msg.text) != "" {
@@ -49,7 +50,7 @@ func (m Model) requirementsText() string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (m Model) updateDesignForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+func (m *Model) updateDesignForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.running {
 		switch key {
 		case "ctrl+c", "esc":
@@ -67,12 +68,14 @@ func (m Model) updateDesignForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 			m.formFocus = 1
 			m.project.Blur()
 			m.syncContent()
-			return m, m.composer.Focus()
+			cmd := m.composer.Focus()
+			return m, cmd
 		}
 		m.formFocus = 0
 		m.composer.Blur()
 		m.syncContent()
-		return m, m.project.Focus()
+		cmd := m.project.Focus()
+		return m, cmd
 	case "ctrl+s":
 		return m.startDraftNew()
 	case "pgup", "pgdown":
@@ -91,7 +94,7 @@ func (m Model) updateDesignForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+func (m *Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.running {
 		switch key {
 		case "ctrl+c", "esc":
@@ -120,7 +123,7 @@ func (m Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-func (m Model) backToAsk() (tea.Model, tea.Cmd) {
+func (m *Model) backToAsk() (tea.Model, tea.Cmd) {
 	m.screen = screenAsk
 	m.project.Blur()
 	m.composer.Placeholder = "Describe what you want to build, change, or understand…"
@@ -131,10 +134,11 @@ func (m Model) backToAsk() (tea.Model, tea.Cmd) {
 		m.notice = "Agent design remains at " + filepath.Join(m.designDir, "DESIGN.md")
 	}
 	m.syncContent()
-	return m, m.composer.Focus()
+	cmd := m.composer.Focus()
+	return m, cmd
 }
 
-func (m Model) startDraftNew() (tea.Model, tea.Cmd) {
+func (m *Model) startDraftNew() (tea.Model, tea.Cmd) {
 	if m.draft == nil {
 		m.notice = "draft is unavailable"
 		return m, nil
@@ -168,7 +172,7 @@ func (m Model) startDraftNew() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }
 
-func (m Model) startDraftCheck() (tea.Model, tea.Cmd) {
+func (m *Model) startDraftCheck() (tea.Model, tea.Cmd) {
 	if m.draft == nil {
 		m.notice = "draft is unavailable"
 		return m, nil
@@ -191,7 +195,7 @@ func (m Model) startDraftCheck() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }
 
-func (m Model) updateDraftProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
+func (m *Model) updateDraftProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
 	if m.job == jobDraftBuild {
 		return m.updateBuildProcess(event)
 	}
@@ -225,7 +229,8 @@ func (m Model) updateDraftProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
 		}
 		m.activity = ""
 		m.syncContent()
-		return m, m.focusCurrent()
+		cmd := m.focusCurrent()
+		return m, cmd
 	}
 
 	checkOutput := strings.TrimSpace(m.stdout.String())
@@ -268,6 +273,27 @@ func waitDraftEvent(events <-chan draftexec.Event) tea.Cmd {
 
 func (m *Model) focusCurrent() tea.Cmd {
 	if m.running || m.picking || m.screen == screenDesignReview || m.screen == screenBuild || m.screen == screenProve {
+		return nil
+	}
+	if m.screen == screenSkills {
+		m.composer.Blur()
+		m.project.Blur()
+		m.skillSource.Blur()
+		return m.skillQuery.Focus()
+	}
+	if m.screen == screenSkillForm {
+		m.composer.Blur()
+		m.project.Blur()
+		switch m.skillFormFocus {
+		case 0:
+			return m.skillName.Focus()
+		case 1:
+			return m.skillDirectory.Focus()
+		default:
+			return m.skillSource.Focus()
+		}
+	}
+	if m.screen == screenSkillDetail || m.screen == screenSkillRun {
 		return nil
 	}
 	if m.screen == screenLearn {

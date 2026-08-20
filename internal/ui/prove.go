@@ -13,7 +13,7 @@ import (
 
 const proveOutputLimit = 256 * 1024
 
-func (m Model) startProve() (tea.Model, tea.Cmd) {
+func (m *Model) startProve() (tea.Model, tea.Cmd) {
 	if m.draft == nil {
 		m.notice = "draft is unavailable"
 		return m, nil
@@ -37,7 +37,7 @@ func (m Model) startProve() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }
 
-func (m Model) updateProve(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+func (m *Model) updateProve(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.running {
 		switch key {
 		case "ctrl+c", "esc":
@@ -74,7 +74,7 @@ func (m Model) updateProve(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateProveProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
+func (m *Model) updateProveProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
 		switch event.Stream {
 		case draftexec.Stdout:
@@ -121,7 +121,7 @@ func appendVisibleOutput(existing, addition string, limit int, marker string) st
 	return string(markerRunes) + string(runes[len(runes)-keep:])
 }
 
-func (m Model) renderProve(width int) string {
+func (m *Model) renderProve(width int) string {
 	t := makeTheme(m.dark)
 	verdict, style := m.proveVerdict(t)
 	rows := []string{
@@ -140,7 +140,7 @@ func (m Model) renderProve(width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func (m Model) proveVerdict(t theme) (string, lipgloss.Style) {
+func (m *Model) proveVerdict(t theme) (string, lipgloss.Style) {
 	switch m.proveState {
 	case proveRunning:
 		return "… EVALUATING", t.sessionLabel

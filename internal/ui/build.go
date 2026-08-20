@@ -14,7 +14,7 @@ import (
 
 const buildLogLimit = 256 * 1024
 
-func (m Model) startBuild() (tea.Model, tea.Cmd) {
+func (m *Model) startBuild() (tea.Model, tea.Cmd) {
 	if m.draft == nil {
 		m.notice = "draft is unavailable"
 		return m, nil
@@ -39,7 +39,7 @@ func (m Model) startBuild() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }
 
-func (m Model) updateBuild(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+func (m *Model) updateBuild(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.running {
 		switch key {
 		case "ctrl+c", "esc":
@@ -76,7 +76,7 @@ func (m Model) updateBuild(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateBuildProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
+func (m *Model) updateBuildProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
 		switch event.Stream {
 		case draftexec.Stdout:
@@ -123,7 +123,7 @@ func (m *Model) appendBuildLog(s string) {
 	m.buildLog = string(marker) + string(runes[len(runes)-keep:])
 }
 
-func (m Model) renderBuild(width int) string {
+func (m *Model) renderBuild(width int) string {
 	t := makeTheme(m.dark)
 	verdict, style := m.buildVerdict(t)
 	rows := []string{
@@ -147,7 +147,7 @@ func (m Model) renderBuild(width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func (m Model) buildVerdict(t theme) (string, lipgloss.Style) {
+func (m *Model) buildVerdict(t theme) (string, lipgloss.Style) {
 	switch m.buildState {
 	case buildRunning:
 		return "… BUILDING", t.sessionLabel

@@ -17,6 +17,7 @@ Requirements:
 - `ask` on `PATH` and configured with a model
 - `draft` on `PATH` for agent-project creation (`ask`, `brief`, `ply`, and
   `hone` are draft's own dependencies)
+- `brief` and `ply` on `PATH` to browse, author, and refine skills
 - `hone` on `PATH` to admit lessons from verified build recoveries
 
 ```sh
@@ -30,7 +31,7 @@ go run . -project path/to/existing-agent
 Inside the TUI, press `ctrl+s` to send, `enter` for a newline, `f1` for help,
 and `ctrl+c` to quit. While a turn is running, `esc` or `ctrl+c` interrupts
 the process. Press `ctrl+d` to promote the user requirements into an agent
-project.
+project, or `ctrl+b` from any idle stage to open the Skills workbench.
 
 Sessions are written to `.bench/sessions` only after the first message is
 sent. Set `BENCH_DIR` to place them elsewhere, or `BENCH_ASK` to use a
@@ -41,6 +42,9 @@ running from the bench checkout before installing `draft/bin/draft` on
 `PATH`.
 
 `BENCH_HONE` likewise selects the `hone` executable used by the Learn stage.
+`BENCH_BRIEF` and `BENCH_PLY` select the executables used by the Skills
+workbench. They are also useful for exercising the complete flow offline with
+fake filters.
 
 When saved sessions exist, `bench` opens an explicit session picker. It does
 not guess that the newest one is current. Before a selected conversation is
@@ -55,6 +59,66 @@ The first command must succeed. The second command's public rendering becomes
 the restored transcript; bench does not import ask internals or decode its
 event schema. `-session id-or-path` selects directly, while `-new` bypasses
 the picker.
+
+## Skills from source
+
+`ctrl+b` opens the live `brief ls` catalogue. Typing filters the level-one
+name and description metadata already printed by brief; opening an item runs
+the public sequence:
+
+```sh
+brief path SKILL
+brief cat PATH/SKILL.md
+brief ls PATH
+brief lint -strict PATH
+```
+
+The detail view therefore shows the raw, human-editable `SKILL.md`, its
+bundled progressive-disclosure files, its resolved provider path, and the
+strict executable verdict. There is no copied catalogue or private skill
+schema in bench.
+
+Press `ctrl+n` to create a project skill. The default destination is
+`.claude/skills`, so it shadows personal skills by the ordinary `BRIEF_PATH`
+rule and travels with the project. Paste notes, documentation, logs, examples,
+feedback, or paths to readable local source files. Relative paths resolve from
+the workspace through the explicit `SOURCE_ROOT` environment contract. Bench
+first runs:
+
+```sh
+brief new -d .claude/skills NAME
+```
+
+Then it sends the source on stdin—not argv—and lets `ply` edit the ordinary
+skill directory until brief owns the verdict:
+
+With `SKILL_DIR` as the process working directory, the equivalent invocation
+is:
+
+```sh
+SOURCE | BRIEF=brief PLY_DIR=.bench/brief/refine/NAME \
+  ply -sh -check '"$BRIEF" lint -strict .' GOAL
+```
+
+Bench starts `ply` directly rather than through this illustrative shell
+pipeline; source is connected to stdin and every argument remains literal.
+
+The visible typescript and replayable Ask session stay under
+`.bench/brief/refine/NAME`. Exit 0 is **STRICT CLEAN**, exit 2 is **NOT DONE**,
+and no model sentence can override either. On an existing skill, press `e` to
+run the same refinement loop against new source or feedback, or `l` to lint
+without changing anything.
+
+Press `u` on a skill to toggle it for future Ask turns. For each such turn,
+bench composes the public values `ask system` and `brief cat SKILL`, then
+passes the result as one literal `ask -S` argument. Ask records the exact
+system prompt in that request event, so the procedure that shaped an answer
+is replayable rather than hidden in TUI state.
+
+Arbitrary source and verified learning are deliberately different. Source
+may refine instructions, but only `hone` may admit a lesson from a replayable
+failed-then-passed build recovery. Press `h` from a skill after Build and
+Prove to send that evidence to `hone -into`.
 
 ## From requirements to a checked design
 

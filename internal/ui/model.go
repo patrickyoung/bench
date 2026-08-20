@@ -19,8 +19,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
 	"github.com/patrickyoung/bench/internal/honeexec"
+	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
 )
 
@@ -43,6 +45,8 @@ type Config struct {
 	Runner        askClient
 	Draft         draftexec.Client
 	Hone          honeexec.Client
+	Brief         briefexec.Client
+	Ply           plyexec.Client
 	Session       string
 	NewSession    string
 	Resume        bool
@@ -50,23 +54,35 @@ type Config struct {
 	Sessions      []session.Info
 	Model         string
 	Workspace     string
+	DataDir       string
 	Project       string
 	InitialPrompt string
 }
 
-// Model is the complete ask-screen state.
+// Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
+// widgets carry live cursor state, so the root model must not be copied while
+// commands are running.
 type Model struct {
 	runner     askClient
 	draft      draftexec.Client
 	hone       honeexec.Client
+	brief      briefexec.Client
+	ply        plyexec.Client
 	session    string
 	newSession string
 	modelName  string
 	workspace  string
+	dataDir    string
 
-	composer        textarea.Model
-	project         textinput.Model
-	skill           textinput.Model
+	composer       textarea.Model
+	project        textinput.Model
+	skill          textinput.Model
+	skillQuery     textinput.Model
+	skillName      textinput.Model
+	skillDirectory textinput.Model
+	// Keep the heavyweight secondary editor indirect so the event-loop object
+	// stays lean while it is passed through the tea.Model interface.
+	skillSource     *textarea.Model
 	viewport        viewport.Model
 	messages        []message
 	restored        string
@@ -92,6 +108,23 @@ type Model struct {
 	learnLog        string
 	learnOutput     string
 	learnState      learnState
+	learnReturn     screen
+	skills          []skillEntry
+	skillCursor     int
+	skillsReturn    screen
+	skillForm       skillFormMode
+	skillFormFocus  int
+	skillDetailName string
+	skillDetailPath string
+	skillBody       string
+	skillFiles      string
+	skillLint       string
+	skillLintState  skillLintState
+	skillRunLog     string
+	skillRunAnswer  string
+	skillRunState   skillRunState
+	skillRunSession string
+	activeSkills    []string
 
 	width       int
 	height      int
@@ -107,6 +140,8 @@ type Model struct {
 	events      <-chan askexec.Event
 	draftEvents <-chan draftexec.Event
 	honeEvents  <-chan honeexec.Event
+	briefEvents <-chan briefexec.Event
+	plyEvents   <-chan plyexec.Event
 	job         job
 }
 
@@ -116,6 +151,8 @@ type beginReplayMsg struct{}
 type beginProjectMsg struct{}
 type draftProcessEvent draftexec.Event
 type honeProcessEvent honeexec.Event
+type briefProcessEvent briefexec.Event
+type plyProcessEvent plyexec.Event
 
 type askClient interface {
 	askexec.Starter
@@ -132,6 +169,13 @@ const (
 	jobDraftBuild
 	jobDraftProve
 	jobHone
+	jobBriefList
+	jobBriefPath
+	jobBriefCat
+	jobBriefFiles
+	jobBriefLint
+	jobBriefNew
+	jobPlyRefine
 )
 
 type screen uint8
@@ -143,6 +187,10 @@ const (
 	screenBuild
 	screenProve
 	screenLearn
+	screenSkills
+	screenSkillDetail
+	screenSkillForm
+	screenSkillRun
 )
 
 type buildState uint8
@@ -178,8 +226,35 @@ const (
 	learnInterrupted
 )
 
+type skillFormMode uint8
+
+const (
+	skillFormNew skillFormMode = iota + 1
+	skillFormRefine
+)
+
+type skillLintState uint8
+
+const (
+	skillLintUnknown skillLintState = iota
+	skillLintClean
+	skillLintIssues
+	skillLintBroken
+)
+
+type skillRunState uint8
+
+const (
+	skillRunIdle skillRunState = iota
+	skillRunRunning
+	skillRunPassed
+	skillRunNotDone
+	skillRunFailed
+	skillRunInterrupted
+)
+
 // New builds an idle workbench without touching the workspace.
-func New(cfg Config) Model {
+func New(cfg Config) *Model {
 	composer := textarea.New()
 	composer.Placeholder = "Describe what you want to build, change, or understand…"
 	composer.ShowLineNumbers = false
@@ -197,28 +272,56 @@ func New(cfg Config) Model {
 	skill.Prompt = ""
 	skill.CharLimit = 120
 	skill.SetWidth(68)
+	skillQuery := textinput.New()
+	skillQuery.Placeholder = "type to filter by name or description"
+	skillQuery.Prompt = "› "
+	skillQuery.CharLimit = 240
+	skillQuery.SetWidth(68)
+	skillName := textinput.New()
+	skillName.Placeholder = "patch-review"
+	skillName.Prompt = ""
+	skillName.CharLimit = 64
+	skillName.SetWidth(68)
+	skillDirectory := textinput.New()
+	skillDirectory.Placeholder = ".claude/skills"
+	skillDirectory.Prompt = ""
+	skillDirectory.CharLimit = 240
+	skillDirectory.SetWidth(68)
+	skillSource := textarea.New()
+	skillSource.Placeholder = "Paste notes, documentation, logs, examples, feedback, or paths to local source files…"
+	skillSource.ShowLineNumbers = false
+	skillSource.Prompt = "│ "
+	skillSource.SetHeight(5)
+	skillSource.SetWidth(72)
 
 	view := viewport.New(viewport.WithWidth(76), viewport.WithHeight(12))
 	view.SoftWrap = true
 	view.MouseWheelEnabled = true
 
 	m := Model{
-		runner:     cfg.Runner,
-		draft:      cfg.Draft,
-		hone:       cfg.Hone,
-		session:    cfg.Session,
-		newSession: cfg.NewSession,
-		modelName:  cfg.Model,
-		workspace:  cfg.Workspace,
-		composer:   composer,
-		project:    project,
-		skill:      skill,
-		viewport:   view,
-		sessions:   cfg.Sessions,
-		resume:     cfg.Resume,
-		width:      80,
-		height:     24,
-		dark:       true,
+		runner:         cfg.Runner,
+		draft:          cfg.Draft,
+		hone:           cfg.Hone,
+		brief:          cfg.Brief,
+		ply:            cfg.Ply,
+		session:        cfg.Session,
+		newSession:     cfg.NewSession,
+		modelName:      cfg.Model,
+		workspace:      cfg.Workspace,
+		dataDir:        cfg.DataDir,
+		composer:       composer,
+		project:        project,
+		skill:          skill,
+		skillQuery:     skillQuery,
+		skillName:      skillName,
+		skillDirectory: skillDirectory,
+		skillSource:    &skillSource,
+		viewport:       view,
+		sessions:       cfg.Sessions,
+		resume:         cfg.Resume,
+		width:          80,
+		height:         24,
+		dark:           true,
 	}
 	if m.newSession == "" {
 		m.newSession = m.session
@@ -232,10 +335,10 @@ func New(cfg Config) Model {
 	}
 	m.applyTheme()
 	m.syncContent()
-	return m
+	return &m
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	if m.designDir != "" && m.screen == screenDesignReview {
 		return func() tea.Msg { return beginProjectMsg{} }
 	}
@@ -248,7 +351,7 @@ func (m Model) Init() tea.Cmd {
 	return m.composer.Focus()
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = msg.Width, msg.Height, true
@@ -269,6 +372,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDraftProcess(draftexec.Event(msg))
 	case honeProcessEvent:
 		return m.updateLearnProcess(honeexec.Event(msg))
+	case briefProcessEvent:
+		return m.updateBriefProcess(briefexec.Event(msg))
+	case plyProcessEvent:
+		return m.updateSkillRunProcess(plyexec.Event(msg))
 	case tickMsg:
 		if m.running {
 			m.spinner++
@@ -286,8 +393,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showHelp {
 				m.composer.Blur()
 				m.project.Blur()
+				m.skillQuery.Blur()
+				m.skillName.Blur()
+				m.skillDirectory.Blur()
+				m.skillSource.Blur()
 			} else if !m.running && !m.picking {
-				return m, m.focusCurrent()
+				cmd := m.focusCurrent()
+				return m, cmd
 			}
 			m.syncContent()
 			return m, nil
@@ -297,10 +409,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 				m.syncContent()
 				if !m.running && !m.picking {
-					return m, m.focusCurrent()
+					cmd := m.focusCurrent()
+					return m, cmd
 				}
 			}
 			return m, nil
+		}
+		if key == "ctrl+b" && !m.running && !m.picking && !isSkillScreen(m.screen) {
+			return m.openSkills()
+		}
+		if isSkillScreen(m.screen) {
+			return m.updateSkills(msg, key)
 		}
 		if m.screen == screenDesignForm {
 			return m.updateDesignForm(msg, key)
@@ -357,7 +476,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) submit() (tea.Model, tea.Cmd) {
+func (m *Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.composer.Value())
 	if text == "" {
 		m.notice = "Write a requirement before sending."
@@ -378,13 +497,13 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	m.spinner = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session})
+	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session, Skills: append([]string(nil), m.activeSkills...)})
 	m.job = jobTurn
 	m.syncContent()
 	return m, tea.Batch(waitEvent(m.events), tick())
 }
 
-func (m Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
+func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 	if event.Done {
 		m.running = false
 		m.cancel = nil
@@ -410,7 +529,8 @@ func (m Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 			if m.picking {
 				return m, nil
 			}
-			return m, m.composer.Focus()
+			cmd := m.composer.Focus()
+			return m, cmd
 		}
 		switch {
 		case event.Err == nil && event.ExitCode == 0 && answer != "":
@@ -428,7 +548,8 @@ func (m Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 		m.activity = ""
 		m.job = 0
 		m.syncContent()
-		return m, m.composer.Focus()
+		cmd := m.composer.Focus()
+		return m, cmd
 	}
 
 	switch event.Stream {
@@ -441,7 +562,7 @@ func (m Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 	return m, waitEvent(m.events)
 }
 
-func (m Model) startReplay(path string) (tea.Model, tea.Cmd) {
+func (m *Model) startReplay(path string) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		m.notice = "ask runner is unavailable"
 		return m, nil
@@ -461,7 +582,7 @@ func (m Model) startReplay(path string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitEvent(m.events), tick())
 }
 
-func (m Model) updatePicker(key string) (tea.Model, tea.Cmd) {
+func (m *Model) updatePicker(key string) (tea.Model, tea.Cmd) {
 	last := len(m.sessions)
 	switch key {
 	case "ctrl+c":
@@ -488,19 +609,33 @@ func (m Model) updatePicker(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) startNew() (tea.Model, tea.Cmd) {
+func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.session = m.newSession
 	m.restored = ""
 	m.messages = nil
 	m.picking = false
 	m.notice = "New conversation"
 	m.syncContent()
-	return m, m.composer.Focus()
+	cmd := m.composer.Focus()
+	return m, cmd
 }
 
 func (m *Model) interrupt() {
 	if m.cancel != nil {
-		m.notice = "Interrupting ask…"
+		name := "process"
+		switch m.job {
+		case jobTurn, jobReplay:
+			name = "ask"
+		case jobDraftNew, jobDraftCheck, jobDraftBuild, jobDraftProve:
+			name = "draft"
+		case jobHone:
+			name = "hone"
+		case jobBriefList, jobBriefPath, jobBriefCat, jobBriefFiles, jobBriefLint, jobBriefNew:
+			name = "brief"
+		case jobPlyRefine:
+			name = "ply"
+		}
+		m.notice = "Interrupting " + name + "…"
 		m.cancel()
 	}
 }
@@ -544,6 +679,11 @@ func (m *Model) resize() {
 	m.composer.SetHeight(composerHeight)
 	m.project.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
+	m.skillQuery.SetWidth(w - 6)
+	m.skillName.SetWidth(w - 6)
+	m.skillDirectory.SetWidth(w - 6)
+	m.skillSource.SetWidth(w - 2)
+	m.skillSource.SetHeight(composerHeight)
 	m.viewport.SetWidth(w)
 	m.viewport.SetHeight(transcriptHeight)
 	m.viewport.YPosition = 2
@@ -565,6 +705,14 @@ func (m *Model) syncContent() {
 		content = m.renderProve(width)
 	} else if m.screen == screenLearn {
 		content = m.renderLearn(width)
+	} else if m.screen == screenSkills {
+		content = m.renderSkills(width)
+	} else if m.screen == screenSkillDetail {
+		content = m.renderSkillDetail(width)
+	} else if m.screen == screenSkillForm {
+		content = m.renderSkillForm(width)
+	} else if m.screen == screenSkillRun {
+		content = m.renderSkillRun(width)
 	} else if m.picking {
 		content = m.renderPicker(width)
 	} else {
@@ -584,7 +732,19 @@ func (m *Model) syncContent() {
 		}
 		return
 	}
-	if m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn {
+	if m.screen == screenSkills {
+		line := 4 + m.skillCursor
+		top := m.viewport.YOffset()
+		bottom := top + m.viewport.Height() - 1
+		switch {
+		case line < top:
+			m.viewport.SetYOffset(line)
+		case line > bottom:
+			m.viewport.SetYOffset(line - m.viewport.Height() + 1)
+		}
+		return
+	}
+	if m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn || m.screen == screenSkillRun {
 		if wasBottom {
 			m.viewport.GotoBottom()
 		}
@@ -598,7 +758,7 @@ func (m *Model) syncContent() {
 	}
 }
 
-func (m Model) renderDesignForm(width int) string {
+func (m *Model) renderDesignForm(width int) string {
 	t := makeTheme(m.dark)
 	projectLabel := t.faint.Render("PROJECT DIRECTORY")
 	if m.formFocus == 0 && !m.running {
@@ -619,7 +779,7 @@ func (m Model) renderDesignForm(width int) string {
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 }
 
-func (m Model) renderDesignReview(width int) string {
+func (m *Model) renderDesignReview(width int) string {
 	t := makeTheme(m.dark)
 	state, stateStyle := m.designVerdict(t)
 	heading := t.hero.Render(filepath.Base(m.designDir)) + "  " + stateStyle.Render(state)
@@ -632,7 +792,7 @@ func (m Model) renderDesignReview(width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func (m Model) designVerdict(t theme) (string, lipgloss.Style) {
+func (m *Model) designVerdict(t theme) (string, lipgloss.Style) {
 	switch {
 	case m.running && m.job == jobDraftCheck:
 		return "… CHECKING", t.sessionLabel
@@ -650,7 +810,7 @@ func spinnerFrame(n int) string {
 	return frames[n%len(frames)]
 }
 
-func (m Model) renderTranscript(width int) string {
+func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
 		title := t.hero.Render("Start with requirements.")
@@ -661,6 +821,10 @@ func (m Model) renderTranscript(width int) string {
 		return lipgloss.NewStyle().Padding(1, 2).Render(title + "\n\n" + body + "\n\n" + examples)
 	}
 	blocks := make([]string, 0, len(m.messages)+2)
+	if len(m.activeSkills) > 0 {
+		blocks = append(blocks, t.sessionLabel.Render("BRIEF")+"\n"+
+			t.restoredBlock.Width(max(12, width-5)).Render("active for future turns  "+strings.Join(m.activeSkills, " · ")))
+	}
 	if m.restored != "" {
 		body := t.restoredBlock.Width(max(12, width-5)).Render(m.restored)
 		blocks = append(blocks, t.sessionLabel.Render("VERIFIED SESSION")+"\n"+body)
@@ -690,7 +854,7 @@ func (m Model) renderTranscript(width int) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-func (m Model) renderPicker(width int) string {
+func (m *Model) renderPicker(width int) string {
 	t := makeTheme(m.dark)
 	rows := []string{
 		t.hero.Render("Continue a verified conversation."),
@@ -729,13 +893,46 @@ func formatBytes(n int64) string {
 	}
 }
 
-func (m Model) renderHelp(width int) string {
+func (m *Model) renderHelp(width int) string {
 	t := makeTheme(m.dark)
+	if isSkillScreen(m.screen) {
+		rows := []string{t.hero.Render("Skills keyboard"), ""}
+		switch m.screen {
+		case screenSkills:
+			rows = append(rows,
+				helpRow(t, "type", "filter brief ls metadata", width),
+				helpRow(t, "↑ / ↓", "choose a skill", width),
+				helpRow(t, "enter", "inspect raw SKILL.md, files, path, and lint", width),
+				helpRow(t, "ctrl+n", "build a project skill from source", width),
+				helpRow(t, "ctrl+r", "reload BRIEF_PATH", width))
+		case screenSkillDetail:
+			rows = append(rows,
+				helpRow(t, "u", "toggle this procedure for future Ask turns", width),
+				helpRow(t, "e", "refine from pasted sources or feedback", width),
+				helpRow(t, "l", "rerun brief lint -strict", width),
+				helpRow(t, "h", "admit a verified build recovery with hone", width),
+				helpRow(t, "pgup / pgdown", "scroll SKILL.md", width))
+		case screenSkillForm:
+			rows = append(rows,
+				helpRow(t, "tab", "move through name, destination, and source", width),
+				helpRow(t, "ctrl+s", "create/refine with brief + ply", width),
+				helpRow(t, "esc", "return without starting a process", width))
+		case screenSkillRun:
+			rows = append(rows,
+				helpRow(t, "enter", "inspect the strict-clean skill", width),
+				helpRow(t, "r", "run the same refinement again", width),
+				helpRow(t, "pgup / pgdown", "scroll the ply typescript", width))
+		}
+		rows = append(rows, helpRow(t, "esc", "interrupt, or go back", width), helpRow(t, "f1", "close this help", width), "",
+			t.muted.Render("brief owns the files and lint; ply owns edits; hone alone admits verified recoveries."))
+		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
+	}
 	if m.screen == screenLearn {
 		rows := []string{
 			t.hero.Render("Learn keyboard"),
 			"",
 			helpRow(t, "ctrl+s", "ask hone to admit lessons into the named skill", width),
+			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll hone's provenance", width),
 			helpRow(t, "esc", "interrupt, or return to Prove", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -753,6 +950,7 @@ func (m Model) renderHelp(width int) string {
 			t.hero.Render("Prove keyboard"),
 			"",
 			helpRow(t, "r", "run draft prove again", width),
+			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll mutation results", width),
 			helpRow(t, "esc", "interrupt, or return to Build", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -768,6 +966,7 @@ func (m Model) renderHelp(width int) string {
 			t.hero.Render("Build keyboard"),
 			"",
 			helpRow(t, "r", "run draft build again; the worktree is the state", width),
+			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll the typescript", width),
 			helpRow(t, "esc", "interrupt, or return to Design", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -787,6 +986,7 @@ func (m Model) renderHelp(width int) string {
 			helpRow(t, "tab", "move between project path and requirements", width),
 			helpRow(t, "ctrl+s", "run draft new, then draft check", width),
 			helpRow(t, "r", "recheck DESIGN.md from review", width),
+			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll DESIGN.md", width),
 			helpRow(t, "esc", "interrupt, or return to Ask", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -802,6 +1002,7 @@ func (m Model) renderHelp(width int) string {
 		"",
 		helpRow(t, "ctrl+s", "send requirements", width),
 		helpRow(t, "ctrl+d", "turn requirements into a DESIGN.md", width),
+		helpRow(t, "ctrl+b", "browse and build brief skills", width),
 		helpRow(t, "enter", "new line in the composer", width),
 		helpRow(t, "pgup / pgdown", "scroll the transcript", width),
 		helpRow(t, "esc", "interrupt a running ask", width),
@@ -823,7 +1024,7 @@ func helpRow(t theme, key, description string, width int) string {
 }
 
 // View uses Bubble Tea v2's declarative terminal capabilities.
-func (m Model) View() tea.View {
+func (m *Model) View() tea.View {
 	t := makeTheme(m.dark)
 	w := max(24, m.width)
 	state := "ready"
@@ -836,6 +1037,8 @@ func (m Model) View() tea.View {
 		section = "prove"
 	} else if m.screen == screenLearn {
 		section = "learn"
+	} else if isSkillScreen(m.screen) {
+		section = "skills"
 	}
 	headerLeft := t.brand.Render("bench") + t.faint.Render("  /  "+section+"  /  "+filepath.Base(m.workspace))
 	if m.screen == screenDesignForm && m.running {
@@ -870,6 +1073,16 @@ func (m Model) View() tea.View {
 		state = "nothing"
 	} else if m.screen == screenLearn {
 		state = "ready"
+	} else if isSkillScreen(m.screen) && m.running {
+		state = "working"
+	} else if m.screen == screenSkillDetail && m.skillLintState == skillLintClean {
+		state = "clean"
+	} else if m.screen == screenSkillDetail && m.skillLintState == skillLintIssues {
+		state = "issues"
+	} else if m.screen == screenSkillRun && m.skillRunState == skillRunPassed {
+		state = "clean"
+	} else if isSkillScreen(m.screen) {
+		state = "ready"
 	} else if m.picking {
 		state = "choose"
 	} else if m.running && m.job == jobReplay {
@@ -884,6 +1097,9 @@ func (m Model) View() tea.View {
 
 	composerLabel := t.faint.Render(" REQUIREMENTS ")
 	composerContent := m.composer.View()
+	if m.screen == screenAsk && len(m.activeSkills) > 0 {
+		composerLabel = t.askLabel.Render(fmt.Sprintf(" REQUIREMENTS · %d BRIEF SKILL(S) ", len(m.activeSkills)))
+	}
 	if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
 		if m.formFocus == 1 && !m.running {
@@ -931,6 +1147,35 @@ func (m Model) View() tea.View {
 			detail = "hone is verifying evidence before deciding whether anything can be learned."
 		}
 		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
+	} else if m.screen == screenSkills {
+		composerLabel = t.faint.Render(" SEARCH BRIEF CATALOGUE ")
+		composerContent = m.skillQuery.View()
+	} else if m.screen == screenSkillForm {
+		composerLabel = t.faint.Render(" SOURCE / FEEDBACK ")
+		if m.skillFormFocus == 2 && !m.running {
+			composerLabel = t.sessionLabel.Render(" SOURCE / FEEDBACK ")
+		}
+		composerContent = m.skillSource.View()
+	} else if m.screen == screenSkillDetail {
+		composerLabel = t.faint.Render(" BRIEF LINT -STRICT ")
+		verdict, verdictStyle := m.skillLintVerdict(t)
+		detail := "The skill has not been checked."
+		if m.skillLintState == skillLintClean {
+			detail = "The ordinary SKILL.md passes brief's strict executable check."
+		} else if m.skillLintState == skillLintIssues {
+			detail = "The skill remains readable, but strict lint found work to do."
+		}
+		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
+	} else if m.screen == screenSkillRun {
+		composerLabel = t.faint.Render(" REFINEMENT VERDICT ")
+		verdict, verdictStyle := m.skillRunVerdict(t)
+		detail := "Ply is editing the skill; brief lint owns done."
+		if m.skillRunState == skillRunPassed {
+			detail = "Strict lint exited zero. Inspect the resulting SKILL.md with enter."
+		} else if m.skillRunState == skillRunNotDone {
+			detail = "The strict check still fails or a bound stopped the loop."
+		}
+		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
 	} else if m.picking {
 		composerLabel = t.faint.Render(" SESSION ")
 		composerContent = t.muted.Width(max(16, w-10)).Render("↑/↓ choose   enter resume   n new   f1 help")
@@ -948,10 +1193,18 @@ func (m Model) View() tea.View {
 			notice = "r prove again   l learn   pgup scroll   esc build   f1 help"
 		} else if m.screen == screenLearn {
 			notice = "ctrl+s learn   pgup scroll   esc prove   f1 help"
+		} else if m.screen == screenSkills {
+			notice = "type filter   ↑/↓ choose   enter inspect   ctrl+n new   esc back"
+		} else if m.screen == screenSkillDetail {
+			notice = "u use in Ask   e refine   l lint   h verified lesson   esc catalogue"
+		} else if m.screen == screenSkillForm {
+			notice = "tab move   ctrl+s run   esc back   f1 help"
+		} else if m.screen == screenSkillRun {
+			notice = "enter inspect   r run again   pgup scroll   esc back   f1 help"
 		} else if m.picking {
 			notice = "Nothing opens until ask replay -check succeeds"
 		} else {
-			notice = "ctrl+s send   enter newline   pgup scroll   f1 help"
+			notice = "ctrl+s send   ctrl+d design   ctrl+b skills   pgup scroll   f1 help"
 		}
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")
@@ -971,6 +1224,18 @@ func (m Model) View() tea.View {
 		rightContext = filepath.Base(m.designDir) + "  ·  prove"
 	} else if m.screen == screenLearn {
 		rightContext = m.skill.Value() + "  ·  brief skill"
+	} else if m.screen == screenSkills {
+		rightContext = fmt.Sprintf("%d skill(s)  ·  BRIEF_PATH", len(m.skills))
+	} else if m.screen == screenSkillDetail || m.screen == screenSkillForm {
+		rightContext = m.skillDetailName + "  ·  SKILL.md"
+		if m.screen == screenSkillForm && m.skillForm == skillFormNew {
+			rightContext = m.skillName.Value() + "  ·  new skill"
+		}
+	} else if m.screen == screenSkillRun {
+		rightContext = m.skillDetailName + "  ·  ply"
+		if m.skillRunSession != "" {
+			rightContext = filepath.Base(m.skillRunSession)
+		}
 	}
 	footerRightText := ansi.Truncate(rightContext, max(8, w/3), "…")
 	footerLeft := t.faint.Render(footerLeftText)
@@ -993,6 +1258,8 @@ func (m Model) View() tea.View {
 		view.WindowTitle = "bench · prove"
 	} else if section == "learn" {
 		view.WindowTitle = "bench · learn"
+	} else if section == "skills" {
+		view.WindowTitle = "bench · skills"
 	}
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
@@ -1086,6 +1353,16 @@ func (m *Model) applyTheme() {
 	inputStyles.Blurred = inputStyles.Focused
 	m.project.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
+	m.skillQuery.SetStyles(inputStyles)
+	m.skillName.SetStyles(inputStyles)
+	m.skillDirectory.SetStyles(inputStyles)
+	sourceStyles := m.skillSource.Styles()
+	sourceStyles.Focused.Text = t.hero
+	sourceStyles.Focused.Prompt = t.askLabel
+	sourceStyles.Focused.Placeholder = t.faint
+	sourceStyles.Focused.CursorLine = lipgloss.NewStyle()
+	sourceStyles.Blurred = sourceStyles.Focused
+	m.skillSource.SetStyles(sourceStyles)
 }
 
 func lastUsefulLine(s string) string {

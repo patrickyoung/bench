@@ -24,6 +24,7 @@ const (
 type Request struct {
 	Message string
 	Session string
+	Skills  []string
 }
 
 // Event is either a stream chunk or the final process outcome. Exactly one
@@ -44,7 +45,8 @@ type Replayer interface {
 
 // Runner invokes an installed ask executable directly, without a shell.
 type Runner struct {
-	Path string
+	Path      string
+	BriefPath string
 }
 
 // Start starts ask. It never blocks the caller.
@@ -75,10 +77,63 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 	if path == "" {
 		path = "ask"
 	}
-	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: []string{"-f", req.Session, "--", message}}, func(stream Stream, text string) {
+	args := []string{"-f", req.Session}
+	if len(req.Skills) > 0 {
+		system, outcome := r.skilledSystem(ctx, path, req.Skills, events)
+		if outcome.Err != nil || outcome.ExitCode != 0 {
+			events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}
+			return
+		}
+		args = append(args, "-S", system)
+	}
+	args = append(args, "--", message)
+	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: args}, func(stream Stream, text string) {
 		emit(ctx, events, Event{Stream: stream, Text: text})
 	})
 	events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}
+}
+
+func (r Runner) skilledSystem(ctx context.Context, askPath string, skills []string, events chan<- Event) (string, filterexec.Outcome) {
+	var parts []string
+	var system strings.Builder
+	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: askPath, Args: []string{"system"}}, func(stream Stream, text string) {
+		if stream == Stdout {
+			system.WriteString(text)
+		} else {
+			emit(ctx, events, Event{Stream: Stderr, Text: text})
+		}
+	})
+	if outcome.Err != nil || outcome.ExitCode != 0 {
+		return "", outcome
+	}
+	if value := strings.TrimSpace(system.String()); value != "" {
+		parts = append(parts, value)
+	}
+	briefPath := r.BriefPath
+	if briefPath == "" {
+		briefPath = "brief"
+	}
+	for _, skill := range skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			return "", filterexec.Outcome{ExitCode: 2, Err: errors.New("skill name is empty")}
+		}
+		var body strings.Builder
+		outcome = filterexec.Execute(ctx, filterexec.Spec{Path: briefPath, Args: []string{"cat", skill}}, func(stream Stream, text string) {
+			if stream == Stdout {
+				body.WriteString(text)
+			} else {
+				emit(ctx, events, Event{Stream: Stderr, Text: text})
+			}
+		})
+		if outcome.Err != nil || outcome.ExitCode != 0 {
+			return "", outcome
+		}
+		if value := strings.TrimSpace(body.String()); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, "\n\n"), filterexec.Outcome{ExitCode: 0}
 }
 
 // Replay first proves the append-only log, then asks ask to render it. The

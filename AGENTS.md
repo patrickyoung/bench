@@ -23,6 +23,8 @@ When changing `bench`:
 
 The implemented product boundary is deliberately compositional: `ask`
 conversation, `draft new/check/build/prove`, and `hone -into` are separate
-programs with visible evidence and exit-status verdicts. Further build,
+programs with visible evidence and exit-status verdicts. The Skills workbench
+likewise composes `brief ls/path/cat/new/lint`, passes sources to `ply` on
+stdin, and uses strict lint as the only refinement verdict. Further build,
 evaluation, and learning features belong here only as real compositions of
 existing filters, added one verified vertical slice at a time.
