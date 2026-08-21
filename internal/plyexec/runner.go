@@ -44,14 +44,15 @@ type RefineRequest struct {
 // means ply's full-shell mode; callers must make that grant visible rather than
 // presenting it as a sandbox.
 type TaskRequest struct {
-	Dir     string
-	Goal    string
-	Input   string
-	Session string
-	Skills  []string
-	Toolbox string
-	Model   string
-	Options TaskOptions
+	Dir          string
+	Goal         string
+	Input        string
+	Session      string
+	SubagentsDir string
+	Skills       []string
+	Toolbox      string
+	Model        string
+	Options      TaskOptions
 }
 
 // TaskOptions are optional Ply policy controls. The Has fields preserve the
@@ -189,6 +190,17 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if brief := strings.TrimSpace(r.BriefPath); brief != "" {
 		env = append(env, "BRIEF="+brief)
+	}
+	// The parent has an explicit session, but nested Ply processes normally
+	// choose their own. Give those subagents a durable, parent-scoped home
+	// without changing either process's stdout/stderr contract.
+	if dir := strings.TrimSpace(req.SubagentsDir); dir != "" {
+		env = append(env, "PLY_DIR="+dir)
+	}
+	// A child Ply inherits Ask's ordinary model default. Mirror an explicit
+	// parent selection so delegation does not silently switch models.
+	if model := strings.TrimSpace(req.Model); model != "" {
+		env = append(env, "ASK_MODEL="+model)
 	}
 	processEvents := filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env, Stdin: req.Input})
 	if sessionOut == "" {

@@ -3,6 +3,8 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,4 +69,33 @@ func Resolve(dir, value string) string {
 		return value
 	}
 	return filepath.Join(dir, strings.TrimSuffix(value, ".jsonl")+".jsonl")
+}
+
+// SubagentsDir names the directory where fresh child Ply sessions belonging
+// to one parent session live. The path hash prevents equal basenames from
+// unrelated explicit session paths colliding when they share a BENCH_DIR.
+func SubagentsDir(root, parent string) string {
+	clean := filepath.Clean(parent)
+	sum := sha256.Sum256([]byte(clean))
+	name := safeComponent(strings.TrimSuffix(filepath.Base(clean), filepath.Ext(clean)))
+	return filepath.Join(root, "subagents", name+"-"+hex.EncodeToString(sum[:8]))
+}
+
+func safeComponent(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if b.Len() >= 40 {
+			break
+		}
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), ".-")
+	if name == "" {
+		return "session"
+	}
+	return name
 }

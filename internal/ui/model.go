@@ -76,6 +76,7 @@ type Model struct {
 	ply          plyexec.Client
 	session      string
 	newSession   string
+	subagentsDir string
 	modelName    string
 	modelDefault string
 	workspace    string
@@ -319,6 +320,7 @@ func New(cfg Config) *Model {
 		ply:            cfg.Ply,
 		session:        cfg.Session,
 		newSession:     cfg.NewSession,
+		subagentsDir:   session.SubagentsDir(cfg.DataDir, cfg.Session),
 		modelName:      cfg.Model,
 		modelDefault:   cfg.Model,
 		workspace:      cfg.Workspace,
@@ -564,7 +566,7 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	m.cancel = cancel
 	if m.taskMode {
 		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
-			Dir: m.workspace, Goal: text, Session: m.session,
+			Dir: m.workspace, Goal: text, Session: m.session, SubagentsDir: m.subagentsPath(),
 			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
 			Options: m.taskOptions,
 		})
@@ -576,6 +578,10 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	m.job = jobTurn
 	m.syncContent()
 	return m, tea.Batch(waitEvent(m.events), tick())
+}
+
+func (m *Model) subagentsPath() string {
+	return m.subagentsDir
 }
 
 func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
@@ -698,6 +704,7 @@ func (m *Model) startReplay(path string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.session = path
+	m.subagentsDir = session.SubagentsDir(m.dataDir, path)
 	m.picking = false
 	m.running = true
 	m.job = jobReplay
@@ -741,6 +748,7 @@ func (m *Model) updatePicker(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.session = m.newSession
+	m.subagentsDir = session.SubagentsDir(m.dataDir, m.newSession)
 	m.restored = ""
 	m.messages = nil
 	m.picking = false
@@ -1166,6 +1174,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
 		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),
 		helpRow(t, "/status", "show mode, model, skills, and work policy", width),
+		helpRow(t, "subagents", "ask for up to 3 read-heavy jobs; root synthesizes", width),
 		helpRow(t, "/help · /quit", "show this contract or exit", width),
 		helpRow(t, "//text", "send a message beginning with one slash", width),
 		"",
@@ -1185,6 +1194,9 @@ func (m *Model) renderHelp(width int) string {
 		"",
 		t.muted.Render("Configured work policy:"),
 		t.code.Width(max(10, width-4)).Render(m.taskPolicyDisplay()),
+		"",
+		t.muted.Render("Fresh subagent sessions (created only when delegated):"),
+		t.code.Width(max(10, width-4)).Render(m.subagentsPath()),
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 }

@@ -228,7 +228,7 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		return streamEvents(ctx, events, stdout, stderr)
 	}
 	events := (plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}).Work(ctx, plyexec.TaskRequest{
-		Dir: work, Goal: message, Input: input, Session: file, Skills: skills,
+		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
 	})
 	return streamPlyEvents(ctx, events, stdout, stderr)
@@ -514,6 +514,9 @@ Interactive flags:
 Inside the TUI, Enter runs and Alt/Shift+Enter inserts a newline. Type /help
 for commands. Ctrl-C interrupts or quits; Ctrl-D exits an empty prompt;
 Ctrl-Z suspends to the parent shell.
+
+Ask naturally for up to three independent read-heavy subagent jobs. Bench
+keeps their Ply sessions and evidence under $BENCH_DIR/subagents for inspection.
 
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
 BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · NO_COLOR

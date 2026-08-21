@@ -32,6 +32,14 @@ by one explicit append-only Ask session. Ply now makes that session useful for
 open tool-backed tasks, and the same evidence boundary carries promoted work
 through Design, Build, Prove, and Learn.
 
+When a user explicitly asks for subagents, the same process boundary grows a
+flat fan-out rather than a second runtime. The root Ply may start up to three
+nested `$PLY` processes for independent, read-heavy work. Each child owns a
+fresh Ask session and indexed stdout/stderr/status artifacts under
+`.bench/subagents`; only the root synthesizes and writes in the shared tree,
+while the configured root check remains the completion verdict. Nested prompts
+do not advertise further delegation.
+
 ## Non-negotiable boundary
 
 The TUI does not become a model client, an agent runtime, or a shell
@@ -238,6 +246,10 @@ and writes the brief skill. There is no TUI memory schema.
     filters, automatic pipe detection, explicit model selection, slash
     commands, Enter-to-run, Ctrl-D/Ctrl-Z semantics, operator shell/editor
     handoff, and consistent model propagation through every AI-backed stage.
+12. **Done:** make explicit subagent requests work through nested ordinary Ply
+    processes, with flat bounded fan-out, inherited model/tool/workspace
+    context, private parent-scoped evidence, ordered failure-aware synthesis,
+    and cooperative whole-tree interruption.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

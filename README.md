@@ -123,6 +123,40 @@ ask -f SESSION -- MESSAGE
 Switching does not fork or hide state; both modes continue the same explicit,
 replayable session.
 
+## Subagents, by asking naturally
+
+Ask Bench directly when independent work would benefit from parallel eyes:
+
+```sh
+bench -m openai-codex/your-model \
+  'Use three subagents to review correctness, races, and missing tests; wait for all, then fix the confirmed issues.'
+```
+
+The root Ply process stays in charge. It may start up to three ordinary child
+Ply processes for bounded, read-heavy jobs, wait for their indexed results,
+and synthesize them before it edits or answers. Children inherit the resolved
+workspace, model, and tool grant, but not the root's Brief skills or check; the
+root must give each child a self-contained task and remains the sole writer and
+synthesizer. The root's executable check, when configured, still decides done.
+For genuinely independent writes, use separate worktrees.
+
+There is no hidden team service or provider-specific runtime. A child is
+`$PLY`, stdout is its distilled result, stderr is its typescript, and its exit
+status remains 0/1/2/130. Each fan-out writes private, numbered artifacts and
+fresh Ask sessions under the parent-scoped directory shown by `/status`:
+
+```text
+.bench/subagents/PARENT-HASH/ply-team.XXXXXX/
+  001.jsonl  001.out  001.err  001.rc
+  002.jsonl  002.out  002.err  002.rc
+```
+
+Nothing is created there unless the root actually delegates. Inspect a child
+with `ask replay -check PATH.jsonl` and `ask replay PATH.jsonl`. Interrupting
+Bench first interrupts the full fan-out so nested Ply processes can stop their
+own commands, then escalates for processes that do not cooperate. See
+[SUBAGENTS.md](SUBAGENTS.md) for the researched design and exact boundaries.
+
 ## Unix filters and an interactive shell
 
 Bench is both a TUI and a filter. When stdin or stdout is redirected, a plain

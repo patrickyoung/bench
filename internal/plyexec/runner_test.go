@@ -74,6 +74,13 @@ set -eu
 printf '%s\n' "$@" > args
 printf '%s' "${ASK-}" > ask
 printf '%s' "${BRIEF-}" > brief
+printf '%s' "${ASK_MODEL-}" > ask-model
+printf '%s' "${PLY_DIR-}" > subagents-env
+if [ -d "${PLY_DIR-}" ]; then
+  printf present > subagents-state
+else
+  printf absent > subagents-state
+fi
 cat > input
 printf 'ran rg and git\n' >&2
 printf 'task answer\n'
@@ -82,11 +89,13 @@ printf 'task answer\n'
 		t.Fatal(err)
 	}
 	session := filepath.Join(dir, "evidence", "task.jsonl")
+	subagents := filepath.Join(dir, "subagents", "task-01234567")
 	goal := "inspect this; $(still literal)"
 	var stdout, stderr strings.Builder
 	var done Event
 	for event := range (Runner{Path: fixture, AskPath: "/opt/tools/ask", BriefPath: "/opt/tools/brief"}).Work(context.Background(), TaskRequest{
-		Dir: dir, Goal: goal, Input: "piped evidence\n", Session: session, Model: "openai/test-model", Skills: []string{"go-review", "house-style"},
+		Dir: dir, Goal: goal, Input: "piped evidence\n", Session: session, SubagentsDir: subagents,
+		Model: "openai/test-model", Skills: []string{"go-review", "house-style"},
 	}) {
 		switch event.Stream {
 		case Stdout:
@@ -105,7 +114,10 @@ printf 'task answer\n'
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	wantArgs := strings.Join([]string{"-sh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
-	for file, want := range map[string]string{"args": wantArgs, "ask": "/opt/tools/ask", "brief": "/opt/tools/brief"} {
+	for file, want := range map[string]string{
+		"args": wantArgs, "ask": "/opt/tools/ask", "brief": "/opt/tools/brief",
+		"ask-model": "openai/test-model", "subagents-env": subagents, "subagents-state": "absent",
+	} {
 		got, err := os.ReadFile(filepath.Join(dir, file))
 		if err != nil || string(got) != want {
 			t.Errorf("%s=%q err=%v, want %q", file, got, err, want)
@@ -117,6 +129,29 @@ printf 'task answer\n'
 	}
 	if _, err := os.Stat(filepath.Dir(session)); err != nil {
 		t.Fatalf("session directory was not created: %v", err)
+	}
+	if _, err := os.Stat(subagents); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("subagent session directory was created before delegation: %v", err)
+	}
+}
+
+func TestWorkKeepsAmbientAskModelWithoutExplicitSelection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s' \"${ASK_MODEL-}\" > ask-model\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASK_MODEL", "ambient/model")
+	for range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "inspect", Session: filepath.Join(dir, "task.jsonl"),
+	}) {
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "ask-model"))
+	if err != nil || string(got) != "ambient/model" {
+		t.Fatalf("ASK_MODEL=%q err=%v, want ambient model unchanged", got, err)
 	}
 }
 

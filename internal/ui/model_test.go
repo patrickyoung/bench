@@ -152,6 +152,43 @@ func TestCompactedTaskSessionOwnsLaterAskOnlyTurn(t *testing.T) {
 	}
 }
 
+func TestCompactionKeepsOneSubagentEvidenceLineage(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/source.jsonl", DataDir: "/work/.bench",
+		Workspace: "/work", InitialPrompt: "first delegated turn",
+		TaskOptions: plyexec.TaskOptions{Compact: true},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	first := task.req.SubagentsDir
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/successor.jsonl"})
+	m = updated.(*Model)
+	m.composer.SetValue("second delegated turn")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if first == "" || task.req.SubagentsDir != first {
+		t.Fatalf("subagent lineage moved after compaction: first=%q second=%q", first, task.req.SubagentsDir)
+	}
+}
+
+func TestSelectingAnotherSessionMovesTheSubagentEvidenceLineage(t *testing.T) {
+	runner := &fakeRunner{replayEvents: make(chan askexec.Event)}
+	m := New(Config{Runner: runner, Session: "/tmp/current.jsonl", NewSession: "/tmp/new.jsonl", DataDir: "/work/.bench"})
+	initial := m.subagentsPath()
+	updated, _ := m.startReplay("/tmp/saved.jsonl")
+	m = updated.(*Model)
+	if m.subagentsPath() == initial || !strings.Contains(m.subagentsPath(), "saved-") {
+		t.Fatalf("selected session evidence path=%q initial=%q", m.subagentsPath(), initial)
+	}
+	selected := m.subagentsPath()
+	updated, _ = m.startNew()
+	m = updated.(*Model)
+	if m.subagentsPath() == selected || !strings.Contains(m.subagentsPath(), "new-") {
+		t.Fatalf("new session evidence path=%q selected=%q", m.subagentsPath(), selected)
+	}
+}
+
 func TestSlashAskSwitchesToAskOnly(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event)}
 	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl"})
@@ -278,8 +315,12 @@ func TestStatusShowsTheExactConfiguredWorkCheck(t *testing.T) {
 	if !strings.Contains(m.notice, "Ask · no model-run tools") || !strings.Contains(m.notice, "work check "+strconv.Quote(check)) {
 		t.Fatalf("status=%q", m.notice)
 	}
+	if !strings.Contains(m.notice, "subagents ") || !strings.Contains(m.notice, filepath.Join("subagents", "session-")) {
+		// An empty session still has a stable hashed evidence directory.
+		t.Fatalf("status omitted subagent evidence path: %q", m.notice)
+	}
 	help := m.renderHelp(80)
-	if !strings.Contains(help, strconv.Quote(check)) {
+	if !strings.Contains(help, strconv.Quote(check)) || !strings.Contains(help, "up to 3 read-heavy jobs; root synthesizes") {
 		t.Fatalf("help omitted configured check: %q", help)
 	}
 }

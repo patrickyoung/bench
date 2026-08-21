@@ -201,7 +201,7 @@ func (m *Model) statusLine() string {
 	} else if len(m.activeSkills) > 1 {
 		skills = fmt.Sprintf("%d skills", len(m.activeSkills))
 	}
-	return m.modeDisplay() + " · " + m.modelDisplay() + " · " + skills + " · " + m.taskPolicyDisplay()
+	return m.modeDisplay() + " · " + m.modelDisplay() + " · " + skills + " · " + m.taskPolicyDisplay() + " · subagents " + m.subagentsPath()
 }
 
 func (m *Model) taskPolicyDisplay() string {

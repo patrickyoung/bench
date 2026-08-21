@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,5 +55,29 @@ func TestResolveDoesNotGuess(t *testing.T) {
 	}
 	if got := Resolve(dir, "./abc.jsonl"); got != "./abc.jsonl" {
 		t.Fatalf("explicit relative path = %q", got)
+	}
+}
+
+func TestSubagentsDirIsStableAndDistinguishesEqualBasenames(t *testing.T) {
+	root := "/work/.bench"
+	a := SubagentsDir(root, "/one/task.jsonl")
+	b := SubagentsDir(root, "/two/task.jsonl")
+	if a == b || filepath.Dir(a) != filepath.Join(root, "subagents") || filepath.Base(a)[:5] != "task-" {
+		t.Fatalf("a=%q b=%q", a, b)
+	}
+	if got := SubagentsDir(root, "/one/./task.jsonl"); got != a {
+		t.Fatalf("clean path changed directory: got %q want %q", got, a)
+	}
+}
+
+func TestSubagentsDirSanitizesUntrustedExplicitSessionNames(t *testing.T) {
+	parent := filepath.Join("/tmp", strings.Repeat("long", 100)+"\n\x1b[31m.jsonl")
+	got := SubagentsDir("/work/.bench", parent)
+	base := filepath.Base(got)
+	if len(base) > 57 || strings.ContainsAny(base, "\n\r\x1b") || strings.Contains(base, string(os.PathSeparator)) {
+		t.Fatalf("unsafe subagent directory %q", got)
+	}
+	if parts := strings.Split(base, "-"); len(parts[len(parts)-1]) != 16 {
+		t.Fatalf("directory lacks 64-bit path hash: %q", base)
 	}
 }

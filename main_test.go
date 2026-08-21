@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/patrickyoung/bench/internal/session"
 )
 
 func TestHeadlessRunPreservesUnixStreamsAndArguments(t *testing.T) {
@@ -56,6 +58,48 @@ printf 'answer only\n'
 	if err != nil || resolveErr != nil || wantErr != nil || gotCWD != wantCWD {
 		t.Fatalf("cwd=%q err=%v", cwd, err)
 	}
+}
+
+func TestHeadlessRunRoutesFreshSubagentSessionsBesideBenchEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	capture := filepath.Join(dir, "subagent-env")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n%s\n' "${PLY_DIR-}" "${ASK_MODEL-}" > "$CAPTURE"
+printf answer
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_PLY", fixture)
+	t.Setenv("BENCH_DIR", filepath.Join(dir, "bench-data"))
+	t.Setenv("CAPTURE", capture)
+	parent := filepath.Join(dir, "elsewhere", "parent.jsonl")
+	var stdout, stderr strings.Builder
+	code := run([]string{"run", "-C", dir, "-f", parent, "-m", "openai/selected", "delegate it"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stdout.String() != "answer" || stderr.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	wantDir := session.SubagentsDir(filepath.Join(dir, "bench-data"), parent)
+	if got := strings.Split(strings.TrimSpace(string(mustRead(t, capture))), "\n"); len(got) != 2 || got[0] != wantDir || got[1] != "openai/selected" {
+		t.Fatalf("delegation env=%q, want %q and selected model", got, wantDir)
+	}
+	if _, err := os.Stat(wantDir); !os.IsNotExist(err) {
+		t.Fatalf("subagent directory was created without delegation: %v", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
 
 func TestHeadlessAskUsesTheSameModelSessionAndPipeContract(t *testing.T) {
