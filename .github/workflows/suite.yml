@@ -187,6 +187,7 @@ jobs:
           set -euo pipefail
           version=$(jq -r .version src/bench/internal/suite/manifest.json)
           gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
             --title "Bench suite $version"
