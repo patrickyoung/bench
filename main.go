@@ -25,11 +25,12 @@ import (
 	"github.com/patrickyoung/bench/internal/honeexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
+	"github.com/patrickyoung/bench/internal/suite"
 	"github.com/patrickyoung/bench/internal/ui"
 )
 
 const (
-	version      = "0.4.0"
+	version      = "0.5.0"
 	maxPipeInput = 16 << 20
 )
 
@@ -127,10 +128,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	paths := filterPaths()
 	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
 	m := ui.New(ui.Config{
-		Runner:        askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
-		Task:          plyRunner,
-		Draft:         draftexec.Runner{Path: paths.draft, WorkDir: workspace},
-		Hone:          honeexec.Runner{Path: paths.hone, WorkDir: workspace},
+		Runner: askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
+		Task:   plyRunner,
+		Draft: draftexec.Runner{
+			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
+			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
+		},
+		Hone:          honeexec.Runner{Path: paths.hone, AskPath: paths.ask, BriefPath: paths.brief, WorkDir: workspace},
 		Brief:         briefexec.Runner{Binary: paths.brief, WorkDir: workspace},
 		Ply:           plyRunner,
 		Session:       active,
@@ -363,10 +367,57 @@ type paths struct{ ask, ply, brief, draft, hone string }
 
 func filterPaths() paths {
 	return paths{
-		ask: envOr("BENCH_ASK", "ask"), ply: envOr("BENCH_PLY", "ply"),
-		brief: envOr("BENCH_BRIEF", "brief"), draft: envOr("BENCH_DRAFT", "draft"),
-		hone: envOr("BENCH_HONE", "hone"),
+		ask: toolPath("BENCH_ASK", "ask"), ply: toolPath("BENCH_PLY", "ply"),
+		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
+		hone: toolPath("BENCH_HONE", "hone"),
 	}
+}
+
+// toolPath preserves explicit overrides, then recognizes a release suite by
+// its manifest. A bare go-installed bench therefore keeps normal PATH
+// behavior, while an app can invoke a private suite's bin/bench directly and
+// get the exact companions shipped beside it.
+func toolPath(env, name string) string {
+	if value := strings.TrimSpace(os.Getenv(env)); value != "" {
+		return value
+	}
+	executable, err := os.Executable()
+	if err == nil {
+		if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
+			executable = resolved
+		}
+		if candidate := suiteTool(filepath.Dir(executable), name); candidate != "" {
+			return candidate
+		}
+	}
+	return name
+}
+
+func suiteTool(binDir, name string) string {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(binDir), "suite.json"))
+	if err != nil {
+		return ""
+	}
+	m, err := suite.Parse(data)
+	if err != nil {
+		return ""
+	}
+	found := false
+	for _, component := range m.Components {
+		if component.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ""
+	}
+	candidate := filepath.Join(binDir, name)
+	info, err := os.Stat(candidate)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return ""
+	}
+	return candidate
 }
 
 func envOr(name, fallback string) string {

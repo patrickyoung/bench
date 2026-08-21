@@ -82,6 +82,23 @@ for direct Ask. `bench tui` is the explicit override when terminal detection
 is unusual. The interactive and headless surfaces therefore differ in
 presentation, not process semantics.
 
+## Distribution is a pinned composition
+
+The source projects remain independent filters, but the end-user product is a
+suite release containing `bench`, `ask`, `brief`, `ply`, `hone`, and Draft's
+script and skill at exact revisions. `internal/suite/manifest.json` is the
+machine-readable compatibility set and `cmd/benchpack` turns matching sibling
+checkouts into one checksummed, relocatable archive. The emitted manifest
+resolves Bench's `self` revision to the actual source commit and records dirty
+development builds explicitly.
+
+A suite marker lets Bench find companions next to its own executable. Without
+that marker it preserves ordinary `PATH` lookup, and explicit `BENCH_*`
+overrides always win. This keeps `go install` useful while allowing an app to
+vendor and invoke one private, versioned runtime without rewriting global
+state. See [PACKAGING.md](PACKAGING.md) for the release and application
+contract.
+
 Ask-only is the deliberately narrower toggle. For an unskilled turn it
 executes the equivalent of:
 

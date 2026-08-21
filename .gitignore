@@ -1,2 +1,4 @@
 /.bench/
+/.benchpack/
 /bench
+/dist/

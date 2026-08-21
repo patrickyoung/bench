@@ -30,8 +30,10 @@ type Client interface {
 // Runner invokes hone directly. Flags precede the session because that is
 // part of hone's public CLI contract.
 type Runner struct {
-	Path    string
-	WorkDir string
+	Path      string
+	AskPath   string
+	BriefPath string
+	WorkDir   string
 }
 
 func (r Runner) Learn(ctx context.Context, req Request) <-chan Event {
@@ -47,7 +49,19 @@ func (r Runner) Learn(ctx context.Context, req Request) <-chan Event {
 		Path: r.path(),
 		Args: []string{"-into", skill, session},
 		Dir:  r.WorkDir,
+		Env:  r.toolEnv(),
 	})
+}
+
+func (r Runner) toolEnv() []string {
+	var env []string
+	if path := strings.TrimSpace(r.AskPath); path != "" {
+		env = append(env, "ASK="+path)
+	}
+	if path := strings.TrimSpace(r.BriefPath); path != "" {
+		env = append(env, "BRIEF="+path)
+	}
+	return env
 }
 
 func (r Runner) path() string {

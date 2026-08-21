@@ -21,6 +21,7 @@ set -eu
 [ "$1" = -into ]
 printf '%s' "$2" > skill
 printf '%s' "$3" > session
+printf '%s\n%s\n' "${ASK-}" "${BRIEF-}" > tools
 printf 'lesson admitted' >&2
 `
 	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
@@ -29,7 +30,7 @@ printf 'lesson admitted' >&2
 	session := filepath.Join(dir, "session with spaces.jsonl")
 	var stderr strings.Builder
 	var done Event
-	for event := range (Runner{Path: fixture, WorkDir: dir}).Learn(context.Background(), Request{
+	for event := range (Runner{Path: fixture, AskPath: "/suite/ask", BriefPath: "/suite/brief", WorkDir: dir}).Learn(context.Background(), Request{
 		Session: session,
 		Skill:   "review-house",
 	}) {
@@ -49,6 +50,10 @@ printf 'lesson admitted' >&2
 	}
 	if string(got) != session {
 		t.Fatalf("session = %q", got)
+	}
+	tools, err := os.ReadFile(filepath.Join(dir, "tools"))
+	if err != nil || string(tools) != "/suite/ask\n/suite/brief\n" {
+		t.Fatalf("tools=%q err=%v", tools, err)
 	}
 }
 

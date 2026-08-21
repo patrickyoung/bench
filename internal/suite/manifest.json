@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "version": "0.5.0",
+  "go": "1.26",
+  "components": [
+    {
+      "name": "bench",
+      "repository": "https://github.com/patrickyoung/bench.git",
+      "revision": "self",
+      "version": "0.5.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "ask",
+      "repository": "https://github.com/patrickyoung/ask.git",
+      "revision": "c749cf79e14450139a8300fc13bfbeeb62de0fd7",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "brief",
+      "repository": "https://github.com/patrickyoung/brief.git",
+      "revision": "8b746f0825f9c945c32d836541a394e88f035f53",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "ply",
+      "repository": "https://github.com/patrickyoung/ply.git",
+      "revision": "2f2f22cfddedaab15fde5d8b6ae65e1132c515cb",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "hone",
+      "repository": "https://github.com/patrickyoung/hone.git",
+      "revision": "66aa52f2cee2590cf7730a8e140a365733b9b4a7",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "draft",
+      "repository": "https://github.com/patrickyoung/draft.git",
+      "revision": "3eda0b23215a161021722c7a08ee87558c1a9222",
+      "version": "1.0.0",
+      "kind": "files",
+      "entry": "bin/draft",
+      "assets": ["skills/draft"],
+      "license": "MIT",
+      "license_file": "LICENSE"
+    }
+  ]
+}

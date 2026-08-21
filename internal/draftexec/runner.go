@@ -40,8 +40,12 @@ type Client interface {
 
 // Runner invokes an installed draft program directly, without a shell.
 type Runner struct {
-	Path    string
-	WorkDir string
+	Path      string
+	AskPath   string
+	BriefPath string
+	PlyPath   string
+	HonePath  string
+	WorkDir   string
 }
 
 func (r Runner) New(ctx context.Context, req Request) <-chan Event {
@@ -53,7 +57,7 @@ func (r Runner) New(ctx context.Context, req Request) <-chan Event {
 	if description == "" {
 		return failed("requirements are empty")
 	}
-	env := modelEnv(req.Model)
+	env := append(r.toolEnv(), modelEnv(req.Model)...)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path: r.path(),
 		Args: []string{"new", dir, description},
@@ -71,6 +75,7 @@ func (r Runner) Check(ctx context.Context, dir string) <-chan Event {
 		Path: r.path(),
 		Args: []string{"check", dir},
 		Dir:  r.WorkDir,
+		Env:  r.toolEnv(),
 	})
 }
 
@@ -81,7 +86,7 @@ func (r Runner) Build(ctx context.Context, req BuildRequest) <-chan Event {
 	if dir == "" {
 		return failed("project directory is empty")
 	}
-	env := []string{"PLY_DIR=" + filepath.Join(dir, ".draft", "build")}
+	env := append(r.toolEnv(), "PLY_DIR="+filepath.Join(dir, ".draft", "build"))
 	env = append(env, modelEnv(req.Model)...)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path: r.path(),
@@ -109,6 +114,7 @@ func (r Runner) Prove(ctx context.Context, dir string) <-chan Event {
 		Path: r.path(),
 		Args: []string{"prove", dir},
 		Dir:  r.WorkDir,
+		Env:  r.toolEnv(),
 	})
 }
 
@@ -117,6 +123,18 @@ func (r Runner) path() string {
 		return r.Path
 	}
 	return "draft"
+}
+
+func (r Runner) toolEnv() []string {
+	var env []string
+	for _, tool := range []struct{ name, path string }{
+		{"ASK", r.AskPath}, {"BRIEF", r.BriefPath}, {"PLY", r.PlyPath}, {"HONE", r.HonePath},
+	} {
+		if path := strings.TrimSpace(tool.path); path != "" {
+			env = append(env, tool.name+"="+path)
+		}
+	}
+	return env
 }
 
 func failed(message string) <-chan Event {

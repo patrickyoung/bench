@@ -1,0 +1,192 @@
+name: suite
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: src/bench
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: src/bench/go.mod
+          cache-dependency-path: src/bench/go.sum
+      - name: Check tag and suite version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v$(jq -r .version src/bench/internal/suite/manifest.json)"
+          test "$GITHUB_REF_NAME" = "$expected"
+      - name: Test Bench
+        working-directory: src/bench
+        run: go test ./...
+      - name: Vet Bench
+        working-directory: src/bench
+        run: go vet ./...
+      - name: Check source installer
+        working-directory: src/bench
+        run: sh -n install.sh
+
+  suite-build:
+    needs: bench-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            component_tests: true
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            component_tests: false
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            component_tests: false
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            component_tests: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: src/bench
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: src/bench/go.mod
+          cache-dependency-path: src/bench/go.sum
+      - name: Build pinned suite
+        working-directory: src/bench
+        run: >-
+          go run ./cmd/benchpack
+          -fetch
+          -self .
+          -workspace .benchpack/sources
+          -out "$RUNNER_TEMP/dist"
+          -os "${{ matrix.os }}"
+          -arch "${{ matrix.arch }}"
+      - name: Test pinned components
+        if: matrix.component_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sources="$GITHUB_WORKSPACE/src/bench/.benchpack/sources"
+          component_dir() {
+            revision=$(jq -r --arg name "$1" \
+              '.components[] | select(.name == $name) | .revision' \
+              src/bench/internal/suite/manifest.json)
+            printf '%s/%s-%s\n' "$sources" "$1" "$revision"
+          }
+          for component in ask brief ply hone; do
+            (cd "$(component_dir "$component")" && go test ./...)
+          done
+          draft=$(component_dir draft)
+          archive=$(printf '%s\n' "$RUNNER_TEMP"/dist/*.tar.gz)
+          mkdir -p "$RUNNER_TEMP/component-suite"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/component-suite"
+          bundle=$(find "$RUNNER_TEMP/component-suite" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          draft_test="$RUNNER_TEMP/draft-test-source"
+          cp -R "$draft" "$draft_test"
+          ask="$bundle/bin/ask"
+          brief="$bundle/bin/brief"
+          ply="$bundle/bin/ply"
+          hone="$bundle/bin/hone"
+          not_in_suite="$RUNNER_TEMP/not-in-suite"
+          env ASK="$ask" BRIEF="$brief" PLY="$ply" HONE="$hone" \
+            VOUCH="$not_in_suite" WEB="$not_in_suite" \
+            "$draft_test/bin/draft" sync
+          (
+            cd "$draft_test"
+            export ASK="$ask" BRIEF="$brief" PLY="$ply" HONE="$hone"
+            export PATH="$bundle/bin:$PATH"
+            sh -n bin/draft
+            sh bin/draft_test.sh
+          )
+          (cd "$(component_dir brief)" && go run . lint -strict "$draft_test/skills/draft")
+      - name: Verify archive checksum
+        shell: bash
+        working-directory: ${{ runner.temp }}/dist
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c *.tar.gz.sha256
+          else
+            shasum -a 256 -c *.tar.gz.sha256
+          fi
+      - name: Verify extracted installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(printf '%s\n' "$RUNNER_TEMP"/dist/*.tar.gz)
+          bundle=$(basename "$archive" .tar.gz)
+          mkdir -p "$RUNNER_TEMP/extracted"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/extracted"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$RUNNER_TEMP/extracted/$bundle" && sha256sum -c SHA256SUMS)
+          else
+            (cd "$RUNNER_TEMP/extracted/$bundle" && shasum -a 256 -c SHA256SUMS)
+          fi
+          "$RUNNER_TEMP/extracted/$bundle/install.sh" "$RUNNER_TEMP/prefix"
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP/home" \
+            "$RUNNER_TEMP/prefix/bin/bench" version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench-suite-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: suite-build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: src/bench
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bench-suite-*
+          path: dist
+          merge-multiple: true
+      - name: Verify release set
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version src/bench/internal/suite/manifest.json)
+          test "$GITHUB_REF_NAME" = "v$version"
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            archive="dist/bench-suite-$version-$target.tar.gz"
+            test -f "$archive"
+            test -f "$archive.sha256"
+            (cd dist && sha256sum -c "$(basename "$archive.sha256")")
+          done
+          find dist -maxdepth 1 -type f -name '*.tar.gz' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  dist/#  #' \
+            > "dist/bench-suite-$version-SHA256SUMS"
+          test "$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 4
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version src/bench/internal/suite/manifest.json)
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "Bench suite $version"

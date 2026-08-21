@@ -15,7 +15,11 @@ stdout/stderr/exit-status contracts.
 
 ## Run
 
-Requirements:
+The supported distribution is a pinned suite containing Bench and every tool
+required by the base workflow. See [PACKAGING.md](PACKAGING.md) for its exact
+contents, version contract, source builder, and application-embedding layout.
+
+Requirements when running from source rather than a suite archive:
 
 - Go 1.26 or newer
 - `ask` on `PATH` and configured with a model
@@ -24,6 +28,18 @@ Requirements:
   `hone` are draft's own dependencies)
 - `brief` and `ply` on `PATH` to browse, author, and refine skills
 - `hone` on `PATH` to admit lessons from verified build recoveries
+
+Build a relocatable development suite from the sibling repositories with:
+
+```sh
+go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
+```
+
+On a clean Bench checkout, `./install.sh` fetches missing components into an
+ignored local cache, builds and verifies the pinned suite, and installs all
+six commands under `~/.local`. Pass `-prefix DIR` to change the destination.
+The resulting archive also has an external checksum for application builds;
+apps can keep the extracted directory private and invoke `bin/bench` directly.
 
 ```sh
 go run .
@@ -308,3 +324,7 @@ or synchronize.
 
 See [DESIGN.md](DESIGN.md) for the product model and why the TUI remains a
 thin control plane over the filters.
+
+## License
+
+Bench is available under the [MIT License](LICENSE).

@@ -22,6 +22,7 @@ set -eu
 printf '%s\n' "$2" > new.dir
 printf '%s' "$3" > new.description
 printf '%s' "${ASK_MODEL-}" > new.model
+printf '%s\n%s\n%s\n%s\n' "${ASK-}" "${BRIEF-}" "${PLY-}" "${HONE-}" > new.tools
 printf 'drafting' >&2
 printf '%s/DESIGN.md\n' "$2"
 `
@@ -31,7 +32,8 @@ printf '%s/DESIGN.md\n' "$2"
 	description := "literal; $(not a shell)\nwith another line"
 	var stdout, stderr strings.Builder
 	var done Event
-	for event := range (Runner{Path: fixture, WorkDir: workspace}).New(context.Background(), Request{
+	runner := Runner{Path: fixture, WorkDir: workspace, AskPath: "/suite/ask", BriefPath: "/suite/brief", PlyPath: "/suite/ply", HonePath: "/suite/hone"}
+	for event := range runner.New(context.Background(), Request{
 		Dir:         "agent-one",
 		Description: description,
 		Model:       "openai/test-model",
@@ -58,6 +60,10 @@ printf '%s/DESIGN.md\n' "$2"
 	}
 	if string(got) != description {
 		t.Fatalf("description = %q", got)
+	}
+	tools, err := os.ReadFile(filepath.Join(workspace, "new.tools"))
+	if err != nil || string(tools) != "/suite/ask\n/suite/brief\n/suite/ply\n/suite/hone\n" {
+		t.Fatalf("tools=%q err=%v", tools, err)
 	}
 	model, err := os.ReadFile(filepath.Join(workspace, "new.model"))
 	if err != nil || string(model) != "openai/test-model" {

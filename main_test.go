@@ -8,7 +8,50 @@ import (
 	"testing"
 
 	"github.com/patrickyoung/bench/internal/session"
+	"github.com/patrickyoung/bench/internal/suite"
 )
+
+func TestSuiteToolUsesOnlyACompleteMarkedBundle(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ask := filepath.Join(bin, "ask")
+	if err := os.WriteFile(ask, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := suiteTool(bin, "ask"); got != "" {
+		t.Fatalf("unmarked suite resolved %q", got)
+	}
+	m, err := suite.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := suite.JSON(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "suite.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := suiteTool(bin, "ask"); got != ask {
+		t.Fatalf("suite ask = %q, want %q", got, ask)
+	}
+	if got := suiteTool(bin, "missing"); got != "" {
+		t.Fatalf("missing tool resolved %q", got)
+	}
+}
+
+func TestVersionMatchesSuiteVersion(t *testing.T) {
+	m, err := suite.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != m.Version {
+		t.Fatalf("bench version %q does not match suite %q", version, m.Version)
+	}
+}
 
 func TestHeadlessRunPreservesUnixStreamsAndArguments(t *testing.T) {
 	if runtime.GOOS == "windows" {
