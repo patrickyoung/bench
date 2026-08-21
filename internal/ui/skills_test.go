@@ -64,7 +64,7 @@ func TestSkillsCatalogueLoadsPublicBriefMetadataAndDetail(t *testing.T) {
 		catEvents: make(chan briefexec.Event), filesEvents: make(chan briefexec.Event), lintEvents: make(chan briefexec.Event),
 	}
 	m := New(Config{Workspace: workspace, Brief: brief})
-	updated, cmd := m.Update(key("ctrl+b"))
+	updated, cmd := m.Update(key("f2"))
 	m = updated.(*Model)
 	if cmd == nil || !m.running || m.job != jobBriefList || m.screen != screenSkills {
 		t.Fatalf("catalogue did not start: running=%v job=%v screen=%v", m.running, m.job, m.screen)
@@ -118,7 +118,7 @@ func TestNewSkillUsesBriefThenPlyWithSourceOnStdin(t *testing.T) {
 	workspace := t.TempDir()
 	brief := &fakeBrief{newEvents: make(chan briefexec.Event)}
 	ply := &fakePly{events: make(chan plyexec.Event)}
-	m := New(Config{Workspace: workspace, DataDir: filepath.Join(workspace, ".bench"), Brief: brief, Ply: ply})
+	m := New(Config{Workspace: workspace, DataDir: filepath.Join(workspace, ".bench"), Brief: brief, Ply: ply, Model: "openai/skill-model"})
 	m.screen = screenSkills
 	updated, _ := m.Update(key("ctrl+n"))
 	m = updated.(*Model)
@@ -138,7 +138,7 @@ func TestNewSkillUsesBriefThenPlyWithSourceOnStdin(t *testing.T) {
 	if cmd == nil || m.job != jobPlyRefine || m.screen != screenSkillRun {
 		t.Fatalf("ply did not follow scaffold: job=%v screen=%v", m.job, m.screen)
 	}
-	if ply.request.Dir != skillDir || !strings.Contains(ply.request.Source, "prose alone") || !strings.Contains(ply.request.Goal, "Agent Skill") {
+	if ply.request.Dir != skillDir || !strings.Contains(ply.request.Source, "prose alone") || !strings.Contains(ply.request.Goal, "Agent Skill") || ply.request.Model != "openai/skill-model" {
 		t.Fatalf("ply request = %#v", ply.request)
 	}
 	if !strings.HasSuffix(ply.request.SessionDir, filepath.Join("brief", "refine", "patch-review")) {

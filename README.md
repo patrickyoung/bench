@@ -27,17 +27,33 @@ Requirements:
 
 ```sh
 go run .
-go run . 'Find why the tests fail and fix the smallest root cause.'
-go run . -session 20260820-154753-32d9f393
-go run . -new
+go run . -m openai-codex/your-model 'Find the failing test and fix it.'
+go run . -f 20260820-154753-32d9f393
+go run . -n
 go run . -project path/to/existing-agent
+git diff | bench 'review this patch'
 ```
 
-Inside the TUI, press `ctrl+s` to run the task, `enter` for a newline, `f1` for
-help, and `ctrl+c` to quit. While a turn is running, `esc` or `ctrl+c`
-interrupts the process. Press `ctrl+t` to toggle between the default tools mode
-and Ask-only, `ctrl+d` to promote the user-authored task into an agent project,
-or `ctrl+b` from any idle stage to open the Skills workbench.
+Inside the TUI, `enter` runs or sends and `alt+enter` or `shift+enter` inserts a
+newline. `ctrl+c` interrupts or quits, `ctrl+d` exits an empty prompt, and
+`ctrl+z` suspends to the parent shell so `fg` returns. `f1` opens help and `f2`
+opens Skills. These retain normal shell and Readline meanings instead of using
+control keys as a private command language.
+
+The prompt accepts explicit, discoverable commands:
+
+```text
+/model provider/model   show or switch the model for every later stage
+/tools shell|off|PATH   choose Ask + Ply authority or Ask-only
+/ask · /work            switch directly between Ask and Ask + Ply
+/skills                 browse and build Brief skills
+/agent [description]    promote user task text into a checked design
+/shell                  open $SHELL in the workspace; exit returns
+/status                 show mode, model, and active skills
+/help                    show all commands and keys
+/quit                    exit Bench
+//text                   send a message beginning with one literal slash
+```
 
 Sessions are written to `.bench/sessions` only after the first message is
 sent. Set `BENCH_DIR` to place them elsewhere, or `BENCH_ASK` to use a
@@ -52,13 +68,19 @@ running from the bench checkout before installing `draft/bin/draft` on
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
 
+Model choice follows the filters' existing convention. `-m provider/model`
+overrides `ASK_MODEL` at startup; `/model provider/model` switches future Ask,
+Ask + Ply, skill-refinement, draft-creation, and agent-build turns in the same
+workbench. Ask records the model on every request, so switching mid-session is
+replayable. `/model default` restores the startup choice.
+
 ## Open tasks with Ask + tools
 
 The opening screen is a task composer, not an agent-requirements form. By
-default, `ctrl+s` starts the equivalent public process:
+default, `enter` starts the equivalent public process:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION [-s SKILL ...] -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] -- GOAL
 ```
 
 Bench starts `ply` directly. The goal is one literal argv value; it is never
@@ -67,7 +89,7 @@ writes, returns command output to the model, and repeats. Bench renders Ply's
 typescript as a durable **TOOLS** block and its stdout as the **ASK** answer.
 Both are recoverable from the explicit Ask session with `ask replay`.
 
-`-sh` is a full-shell grant, not a sandbox, and the yellow **TASK · FULL
+`-sh` is a full-shell grant, not a sandbox, and the yellow **ASK + PLY · FULL
 SHELL** label keeps that authority visible. Set `BENCH_TOOLS` to an ordinary
 toolbox directory to replace `-sh` with `ply -t DIR`; the label then names that
 toolbox. A toolbox limits program names but does not confine shell builtins or
@@ -78,14 +100,39 @@ program proves the goal. The TUI therefore says **Task stopped · no executable
 check**, never “done” or “passed.” Checked, repeatable work belongs in an agent
 design whose `DESIGN.md` supplies the executable verdict.
 
-Press `ctrl+t` for an Ask-only turn. That uses the narrower public seam:
+Type `/ask` or `/tools off` for an Ask-only turn. That uses the narrower public seam:
 
 ```sh
 ask -f SESSION -- MESSAGE
 ```
 
-Toggling does not fork or hide state; both modes continue the same explicit,
+Switching does not fork or hide state; both modes continue the same explicit,
 replayable session.
+
+## Unix filters and an interactive shell
+
+Bench is both a TUI and a filter. When stdin or stdout is redirected, a plain
+invocation automatically behaves like `bench run`; `bench tui` explicitly
+forces the alternate-screen interface when terminal detection is unusual:
+
+```sh
+git diff | bench -m openai-codex/your-model 'review this patch'
+go test ./... 2>&1 | bench run 'fix the smallest root cause' >answer.md 2>tools.log
+build.log | bench ask 'explain the first useful failure' | less
+bench run -t .bench/tools -s go-review -f review.jsonl 'review this tree'
+```
+
+For both headless commands, piped bytes are stdin evidence, the answer alone is
+stdout, progress or the Ply typescript is stderr, and the filter exit status is
+returned unchanged. Goals, model specs, skill names, and paths remain literal
+argv values; Bench never evaluates them as shell syntax.
+
+`/shell` temporarily gives the terminal to `$SHELL` in the workspace, then
+restores the TUI when that shell exits. It is deliberately operator-controlled
+and not inserted into model context or presented as Ask evidence. `ctrl+z` is
+the lighter Unix job-control path. In Design review, `e` opens `DESIGN.md` with
+`$VISUAL`, then `$EDITOR`, then `vi`, and automatically reruns `draft check`
+when the editor closes.
 
 When saved sessions exist, `bench` opens an explicit session picker. It does
 not guess that the newest one is current. Before selected work is
@@ -103,7 +150,7 @@ the picker.
 
 ## Skills from source
 
-`ctrl+b` opens the live `brief ls` catalogue. Typing filters the level-one
+`/skills` or `f2` opens the live `brief ls` catalogue. Typing filters the level-one
 name and description metadata already printed by brief; opening an item runs
 the public sequence:
 
@@ -163,10 +210,10 @@ Prove to send that evidence to `hone -into`.
 
 ## From an open task to a checked design
 
-`ctrl+d` opens the Design stage. It copies only user-authored task text from
+`/agent` opens the Design stage. It copies only user-authored task text from
 the current in-memory session; tool output and assistant prose never become
 requirements silently. The user reviews the project path and description, and
-`ctrl+s` runs the equivalent of:
+`ctrl+enter` (or the `ctrl+s` fallback) runs the equivalent of:
 
 ```sh
 draft new DIR DESCRIPTION
@@ -177,8 +224,9 @@ The directory is constrained to the current workspace. `draft new` owns all
 writes and keeps its normal provenance session. `draft check` exit 0 produces
 a green **BUILDABLE** verdict and displays the exact check command from
 stdout. Exit 1 is the ordinary **NEEDS REVISION** state. Exit 2 is shown as a
-broken check. The generated `DESIGN.md` is displayed read-only; edit the real
-file with any editor and press `r` to check it again.
+broken check. The generated `DESIGN.md` is displayed read-only; press `e` to
+edit the real file with the conventional editor environment and recheck it, or
+edit it elsewhere and press `r`.
 
 ## Build, prove, and learn
 
@@ -193,7 +241,7 @@ separates measurement from surviving mutations. Exit 0 is **CHECK PROVEN**;
 exit 1 is the ordinary **GAPS FOUND** verdict; exit 2 is an execution failure.
 
 After a proven evaluation, press `l`, choose a brief skill name, and press
-`ctrl+s`. Bench runs:
+`ctrl+enter` (or `ctrl+s`). Bench runs:
 
 ```sh
 hone -into SKILL .draft/build/SESSION.jsonl

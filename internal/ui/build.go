@@ -34,7 +34,7 @@ func (m *Model) startBuild() (tea.Model, tea.Cmd) {
 	m.viewport.GotoBottom()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.draftEvents = m.draft.Build(ctx, m.designDir)
+	m.draftEvents = m.draft.Build(ctx, draftexec.BuildRequest{Dir: m.designDir, Model: m.modelName})
 	m.syncContent()
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }

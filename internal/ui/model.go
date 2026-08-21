@@ -60,25 +60,27 @@ type Config struct {
 	Project       string
 	InitialPrompt string
 	Toolbox       string
+	ActiveSkills  []string
 }
 
 // Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
 // widgets carry live cursor state, so the root model must not be copied while
 // commands are running.
 type Model struct {
-	runner     askClient
-	task       plyexec.Worker
-	draft      draftexec.Client
-	hone       honeexec.Client
-	brief      briefexec.Client
-	ply        plyexec.Client
-	session    string
-	newSession string
-	modelName  string
-	workspace  string
-	dataDir    string
-	toolbox    string
-	taskMode   bool
+	runner       askClient
+	task         plyexec.Worker
+	draft        draftexec.Client
+	hone         honeexec.Client
+	brief        briefexec.Client
+	ply          plyexec.Client
+	session      string
+	newSession   string
+	modelName    string
+	modelDefault string
+	workspace    string
+	dataDir      string
+	toolbox      string
+	taskMode     bool
 
 	composer       textarea.Model
 	project        textinput.Model
@@ -264,7 +266,7 @@ const (
 // New builds an idle workbench without touching the workspace.
 func New(cfg Config) *Model {
 	composer := textarea.New()
-	composer.Placeholder = "Describe what you want to build, change, or understand…"
+	composer.Placeholder = "Describe a task, or type /help…"
 	composer.ShowLineNumbers = false
 	composer.Prompt = "│ "
 	composer.SetHeight(5)
@@ -316,6 +318,7 @@ func New(cfg Config) *Model {
 		session:        cfg.Session,
 		newSession:     cfg.NewSession,
 		modelName:      cfg.Model,
+		modelDefault:   cfg.Model,
 		workspace:      cfg.Workspace,
 		dataDir:        cfg.DataDir,
 		toolbox:        cfg.Toolbox,
@@ -329,6 +332,7 @@ func New(cfg Config) *Model {
 		skillSource:    &skillSource,
 		viewport:       view,
 		sessions:       cfg.Sessions,
+		activeSkills:   append([]string(nil), cfg.ActiveSkills...),
 		resume:         cfg.Resume,
 		width:          80,
 		height:         24,
@@ -390,6 +394,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTaskProcess(plyexec.Event(msg))
 		}
 		return m.updateSkillRunProcess(plyexec.Event(msg))
+	case shellReturnedMsg:
+		if msg.err != nil {
+			m.notice = "Shell exited with an error · " + msg.err.Error()
+		} else {
+			m.notice = "Returned from operator shell · shell activity is not part of the Ask session"
+		}
+		m.syncContent()
+		return m, m.composer.Focus()
+	case editorReturnedMsg:
+		if msg.err != nil {
+			m.notice = "Editor exited with an error · " + msg.err.Error()
+			m.syncContent()
+			return m, nil
+		}
+		m.notice = "Editor closed · rechecking DESIGN.md"
+		return m.startDraftCheck()
 	case tickMsg:
 		if m.running {
 			m.spinner++
@@ -416,6 +436,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			m.syncContent()
+			if m.showHelp {
+				m.viewport.GotoTop()
+			}
 			return m, nil
 		}
 		if m.showHelp {
@@ -429,18 +452,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if key == "ctrl+b" && !m.running && !m.picking && !isSkillScreen(m.screen) {
-			return m.openSkills()
-		}
-		if key == "ctrl+t" && !m.running && !m.picking && m.screen == screenAsk {
-			m.taskMode = !m.taskMode
-			if m.taskMode {
-				m.notice = "Tools on · Ply can act in this workspace"
-			} else {
-				m.notice = "Ask only · no commands will run"
-			}
+		if key == "ctrl+z" && !m.running && !m.picking {
+			m.notice = "Suspended · run fg in the parent shell to return"
 			m.syncContent()
-			return m, nil
+			return m, tea.Suspend
+		}
+		if key == "f2" && !m.running && !m.picking && !isSkillScreen(m.screen) {
+			return m.openSkills()
 		}
 		if isSkillScreen(m.screen) {
 			return m.updateSkills(msg, key)
@@ -475,16 +493,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.interrupt()
 			}
 			return m, nil
-		case "ctrl+s":
+		case "ctrl+s", "ctrl+enter":
 			if !m.running {
 				return m.submit()
 			}
 			return m, nil
-		case "ctrl+d":
+		case "enter":
 			if !m.running {
-				return m.openDesign()
+				return m.submit()
 			}
 			return m, nil
+		case "alt+enter", "shift+enter":
+			if !m.running {
+				m.composer.InsertString("\n")
+				m.syncContent()
+			}
+			return m, nil
+		case "ctrl+d":
+			if !m.running && strings.TrimSpace(m.composer.Value()) == "" {
+				return m, tea.Quit
+			}
 		case "pgup", "pgdown":
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
@@ -505,6 +533,11 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		m.notice = "Describe a task before sending."
 		return m, nil
+	}
+	if strings.HasPrefix(text, "//") {
+		text = strings.TrimPrefix(text, "/")
+	} else if strings.HasPrefix(text, "/") {
+		return m.handleCommand(text)
 	}
 	if m.taskMode && m.task == nil {
 		m.notice = "ply task runner is unavailable"
@@ -529,13 +562,13 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	if m.taskMode {
 		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
 			Dir: m.workspace, Goal: text, Session: m.session,
-			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox,
+			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
 		})
 		m.job = jobPlyTask
 		m.syncContent()
 		return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
 	}
-	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session, Skills: append([]string(nil), m.activeSkills...)})
+	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session, Skills: append([]string(nil), m.activeSkills...), Model: m.modelName})
 	m.job = jobTurn
 	m.syncContent()
 	return m, tea.Batch(waitEvent(m.events), tick())
@@ -854,7 +887,7 @@ func (m *Model) renderDesignForm(width int) string {
 		projectLabel,
 		t.input.Width(max(16, width-6)).Render(m.project.View()),
 		"",
-		t.faint.Render("Nothing is written until ctrl+s. The project must stay inside this workspace."),
+		t.faint.Render("Nothing is written until ctrl+enter (ctrl+s also works). The project stays inside this workspace."),
 	}
 	if m.running {
 		rows = append(rows, "", t.working.Render(spinnerFrame(m.spinner)+"  "+lastUsefulLine(m.activity)))
@@ -897,14 +930,14 @@ func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
 		titleText := "What are we working on?"
-		bodyText := "Ask can inspect and act through Ply's ordinary workspace tools. Every command and result stays in a replayable session. Press ctrl+t for Ask-only, or ctrl+d to promote the task into an agent design."
+		bodyText := "Ask + Ply can inspect and act through ordinary workspace tools. Commands and results stay replayable. Enter runs; /ask disables model-run tools; /agent promotes recurring work."
 		exampleText := "Try:  Find why the tests fail and fix the smallest root cause."
 		if !m.taskMode {
 			titleText = "What should we think through?"
-			bodyText = "Ask-only continues the same replayable session without running commands. Press ctrl+t to restore workspace tools, or ctrl+d to promote your own task text into an agent design."
+			bodyText = "Ask continues the same replayable session without running commands. Enter sends; /work restores Ask + Ply; /agent promotes your task text into a checked design."
 			exampleText = "Try:  Explain the tradeoffs in this design before we change it."
 		} else if m.toolbox != "" {
-			bodyText = "Ask can inspect and act through the explicit " + filepath.Base(m.toolbox) + " toolbox. Every command and result stays in a replayable session. Press ctrl+t for Ask-only, or ctrl+d to promote the task into an agent design."
+			bodyText = "Ask + Ply can inspect and act through the explicit " + filepath.Base(m.toolbox) + " toolbox. Commands and results stay replayable. Enter runs; /ask disables model-run tools."
 		}
 		title := t.hero.Render(titleText)
 		body := t.muted.Width(max(20, width-8)).Render(bodyText)
@@ -1016,7 +1049,7 @@ func (m *Model) renderHelp(width int) string {
 		case screenSkillForm:
 			rows = append(rows,
 				helpRow(t, "tab", "move through name, destination, and source", width),
-				helpRow(t, "ctrl+s", "create/refine with brief + ply", width),
+				helpRow(t, "ctrl+enter", "create/refine with brief + ply (ctrl+s fallback)", width),
 				helpRow(t, "esc", "return without starting a process", width))
 		case screenSkillRun:
 			rows = append(rows,
@@ -1032,8 +1065,8 @@ func (m *Model) renderHelp(width int) string {
 		rows := []string{
 			t.hero.Render("Learn keyboard"),
 			"",
-			helpRow(t, "ctrl+s", "ask hone to admit lessons into the named skill", width),
-			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
+			helpRow(t, "ctrl+enter", "ask hone to admit lessons (ctrl+s fallback)", width),
+			helpRow(t, "f2", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll hone's provenance", width),
 			helpRow(t, "esc", "interrupt, or return to Prove", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -1051,7 +1084,7 @@ func (m *Model) renderHelp(width int) string {
 			t.hero.Render("Prove keyboard"),
 			"",
 			helpRow(t, "r", "run draft prove again", width),
-			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
+			helpRow(t, "f2", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll mutation results", width),
 			helpRow(t, "esc", "interrupt, or return to Build", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -1067,7 +1100,7 @@ func (m *Model) renderHelp(width int) string {
 			t.hero.Render("Build keyboard"),
 			"",
 			helpRow(t, "r", "run draft build again; the worktree is the state", width),
-			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
+			helpRow(t, "f2", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll the typescript", width),
 			helpRow(t, "esc", "interrupt, or return to Design", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -1085,11 +1118,12 @@ func (m *Model) renderHelp(width int) string {
 			t.hero.Render("Design keyboard"),
 			"",
 			helpRow(t, "tab", "move between project path and requirements", width),
-			helpRow(t, "ctrl+s", "run draft new, then draft check", width),
+			helpRow(t, "ctrl+enter", "run draft new/check (ctrl+s fallback)", width),
+			helpRow(t, "e", "edit DESIGN.md with $VISUAL or $EDITOR, then recheck", width),
 			helpRow(t, "r", "recheck DESIGN.md from review", width),
-			helpRow(t, "ctrl+b", "browse and refine brief skills", width),
+			helpRow(t, "f2", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll DESIGN.md", width),
-			helpRow(t, "esc", "interrupt, or return to Ask", width),
+			helpRow(t, "esc", "interrupt, or return to Work", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
 			helpRow(t, "f1", "close this help", width),
 			"",
@@ -1107,19 +1141,28 @@ func (m *Model) renderHelp(width int) string {
 		grantHelp = "Ply can name only programs in " + filepath.Base(m.toolbox) + ". Replay the session with:"
 	}
 	rows := []string{
-		t.hero.Render("Keyboard"),
+		t.hero.Render("Commands & keys"),
 		"",
-		helpRow(t, "ctrl+s", sendHelp, width),
-		helpRow(t, "ctrl+t", "toggle workspace tools / Ask-only", width),
-		helpRow(t, "ctrl+d", "promote this task into an agent DESIGN.md", width),
-		helpRow(t, "ctrl+b", "browse and build brief skills", width),
-		helpRow(t, "enter", "new line in the composer", width),
+		helpRow(t, "/model SPEC", "show or switch provider/model", width),
+		helpRow(t, "/tools MODE", "show; use shell, off, or a toolbox path", width),
+		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
+		helpRow(t, "/skills", "browse and build Brief skills", width),
+		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
+		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),
+		helpRow(t, "/status", "show mode, model, and active skill count", width),
+		helpRow(t, "/help · /quit", "show this contract or exit", width),
+		helpRow(t, "//text", "send a message beginning with one slash", width),
+		"",
+		helpRow(t, "enter", sendHelp, width),
+		helpRow(t, "alt/shift+enter", "insert a newline", width),
+		helpRow(t, "ctrl+s", "run/send alias", width),
+		helpRow(t, "f2", "open Skills", width),
 		helpRow(t, "pgup / pgdown", "scroll the transcript", width),
-		helpRow(t, "esc", "interrupt a running ask", width),
+		helpRow(t, "esc", "interrupt a running process", width),
 		helpRow(t, "f1", "close this help", width),
 		helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
-		helpRow(t, "↑ / ↓ or j / k", "choose a saved session", width),
-		helpRow(t, "n", "start a new task session", width),
+		helpRow(t, "ctrl+d", "exit when the prompt is empty", width),
+		helpRow(t, "ctrl+z", "suspend; fg returns from the parent shell", width),
 		"",
 		t.muted.Render(grantHelp),
 		t.code.Width(max(10, width-4)).Render("ask replay -check " + m.session),
@@ -1129,7 +1172,9 @@ func (m *Model) renderHelp(width int) string {
 
 func helpRow(t theme, key, description string, width int) string {
 	left := t.key.Width(18).Render(key)
-	right := t.muted.Width(max(10, width-22)).Render(description)
+	// Leave one cell unused so the viewport does not soft-wrap an exactly full
+	// padded row into a visually blank continuation line at 80 columns.
+	right := t.muted.Width(max(10, width-23)).Render(description)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
@@ -1138,7 +1183,7 @@ func (m *Model) View() tea.View {
 	t := makeTheme(m.dark)
 	w := max(24, m.width)
 	state := "ready"
-	section := "task"
+	section := "ask+ply"
 	if !m.taskMode {
 		section = "ask"
 	}
@@ -1153,7 +1198,6 @@ func (m *Model) View() tea.View {
 	} else if isSkillScreen(m.screen) {
 		section = "skills"
 	}
-	headerLeft := t.brand.Render("bench") + t.faint.Render("  /  "+section+"  /  "+filepath.Base(m.workspace))
 	if m.screen == screenDesignForm && m.running {
 		state = "drafting"
 	} else if m.screen == screenDesignForm {
@@ -1203,17 +1247,24 @@ func (m *Model) View() tea.View {
 	} else if m.running {
 		state = "running"
 	}
-	headerRight := t.state.Render("● " + state)
+	modelWidth := min(22, max(4, w/3))
+	headerRight := t.state.Render(ansi.Truncate(m.modelDisplay(), modelWidth, "…") + " · ● " + state)
+	leftSuffix := "  /  " + section + "  /  " + filepath.Base(m.workspace)
+	leftWidth := max(5, w-lipgloss.Width(headerRight)-5)
+	headerLeft := t.brand.Render("bench")
+	if leftWidth > 5 {
+		headerLeft += t.faint.Render(ansi.Truncate(leftSuffix, leftWidth-5, "…"))
+	}
 	gap := max(1, w-lipgloss.Width(headerLeft)-lipgloss.Width(headerRight)-4)
 	header := "  " + headerLeft + strings.Repeat(" ", gap) + headerRight + "  "
 	header = t.header.Width(w).Render(header)
 
-	composerLabel := t.warning.Render(" TASK · FULL SHELL ")
+	composerLabel := t.warning.Render(" ASK + PLY · FULL SHELL ")
 	if m.toolbox != "" {
-		composerLabel = t.sessionLabel.Render(" TASK · TOOLBOX " + filepath.Base(m.toolbox) + " ")
+		composerLabel = t.sessionLabel.Render(" ASK + PLY · TOOLBOX " + filepath.Base(m.toolbox) + " ")
 	}
 	if !m.taskMode {
-		composerLabel = t.askLabel.Render(" ASK ONLY · NO TOOLS ")
+		composerLabel = t.askLabel.Render(" ASK · NO MODEL-RUN TOOLS ")
 	}
 	composerContent := m.composer.View()
 	if m.screen == screenAsk && len(m.activeSkills) > 0 {
@@ -1222,9 +1273,13 @@ func (m *Model) View() tea.View {
 			mode = "TOOLBOX " + filepath.Base(m.toolbox)
 		}
 		if !m.taskMode {
-			mode = "ASK ONLY"
+			mode = "NO MODEL-RUN TOOLS"
 		}
-		composerLabel = t.askLabel.Render(fmt.Sprintf(" TASK · %s · %d BRIEF SKILL(S) ", mode, len(m.activeSkills)))
+		prefix := "ASK + PLY"
+		if !m.taskMode {
+			prefix = "ASK"
+		}
+		composerLabel = t.askLabel.Render(fmt.Sprintf(" %s · %s · %d BRIEF SKILL(S) ", prefix, mode, len(m.activeSkills)))
 	}
 	if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
@@ -1310,31 +1365,31 @@ func (m *Model) View() tea.View {
 	notice := m.notice
 	if notice == "" {
 		if m.screen == screenDesignForm {
-			notice = "tab move   ctrl+s draft   esc ask   f1 help"
+			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
 		} else if m.screen == screenDesignReview {
-			notice = "r recheck   pgup scroll   esc ask   f1 help"
+			notice = "e edit   r recheck   pgup scroll   esc work   f2 skills   f1 help"
 		} else if m.screen == screenBuild {
 			notice = "r build again   p prove   pgup scroll   esc design   f1 help"
 		} else if m.screen == screenProve {
 			notice = "r prove again   l learn   pgup scroll   esc build   f1 help"
 		} else if m.screen == screenLearn {
-			notice = "ctrl+s learn   pgup scroll   esc prove   f1 help"
+			notice = "ctrl+enter learn   pgup scroll   esc prove   f2 skills   f1 help"
 		} else if m.screen == screenSkills {
 			notice = "type filter   ↑/↓ choose   enter inspect   ctrl+n new   esc back"
 		} else if m.screen == screenSkillDetail {
 			notice = "u use in tasks   e refine   l lint   h verified lesson   esc catalogue"
 		} else if m.screen == screenSkillForm {
-			notice = "tab move   ctrl+s run   esc back   f1 help"
+			notice = "tab move   ctrl+enter run   esc back   f1 help"
 		} else if m.screen == screenSkillRun {
 			notice = "enter inspect   r run again   pgup scroll   esc back   f1 help"
 		} else if m.picking {
 			notice = "Nothing opens until ask replay -check succeeds"
 		} else {
-			notice = "ctrl+s run   ctrl+t tools/ask   ctrl+d agent design   ctrl+b skills   f1 help"
+			notice = "enter run   /model   /tools   /skills   /agent   /help"
 		}
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")
-	rightContext := filepath.Base(m.session) + "  ·  " + m.modelName
+	rightContext := filepath.Base(m.session) + "  ·  " + m.modelDisplay()
 	if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		rightContext = filepath.Base(m.designDir)
 		if rightContext == "." || rightContext == "" {

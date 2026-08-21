@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,12 +43,12 @@ func (f *fakeRunner) Start(_ context.Context, req askexec.Request) <-chan askexe
 func TestDefaultSubmitRunsReplayableTaskAndKeepsToolActivity(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event, 4)}
 	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", Model: "test/model", InitialPrompt: "build it"})
-	updated, cmd := m.Update(key("ctrl+s"))
+	updated, cmd := m.Update(key("enter"))
 	m = updated.(*Model)
 	if cmd == nil || !m.running {
 		t.Fatal("submit did not start a task")
 	}
-	if task.req.Goal != "build it" || task.req.Session != "/tmp/run.jsonl" || task.req.Dir != "/work" {
+	if task.req.Goal != "build it" || task.req.Session != "/tmp/run.jsonl" || task.req.Dir != "/work" || task.req.Model != "test/model" {
 		t.Fatalf("request = %#v", task.req)
 	}
 
@@ -85,17 +87,19 @@ func TestTaskExitTwoRemainsNotDone(t *testing.T) {
 	}
 }
 
-func TestCtrlTTogglesToAskOnly(t *testing.T) {
+func TestSlashAskSwitchesToAskOnly(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event)}
-	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "explain it"})
-	updated, _ := m.Update(key("ctrl+t"))
+	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl"})
+	m.composer.SetValue("/ask")
+	updated, _ := m.Update(key("enter"))
 	m = updated.(*Model)
-	if m.taskMode || !strings.Contains(m.notice, "Ask only") {
+	if m.taskMode || !strings.Contains(m.notice, "Ask mode") {
 		t.Fatalf("taskMode=%v notice=%q", m.taskMode, m.notice)
 	}
-	if got := m.View(); got.WindowTitle != "bench · ask" || !strings.Contains(got.Content, "ASK ONLY · NO TOOLS") {
+	if got := m.View(); got.WindowTitle != "bench · ask" || !strings.Contains(got.Content, "ASK · NO MODEL-RUN TOOLS") {
 		t.Fatalf("Ask-only grant is not visible: title=%q\n%s", got.WindowTitle, got.Content)
 	}
+	m.composer.SetValue("explain it")
 	updated, cmd := m.Update(key("ctrl+s"))
 	m = updated.(*Model)
 	if cmd == nil || m.job != jobTurn || runner.req.Message != "explain it" {
@@ -103,11 +107,106 @@ func TestCtrlTTogglesToAskOnly(t *testing.T) {
 	}
 }
 
+func TestSlashModelSwitchesFutureAskAndPlyTurns(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work"})
+	m.composer.SetValue("/model openai-codex/gpt-test")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.modelName != "openai-codex/gpt-test" || !strings.Contains(m.notice, "Model switched") {
+		t.Fatalf("model=%q notice=%q", m.modelName, m.notice)
+	}
+	m.composer.SetValue("inspect it")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || task.req.Model != "openai-codex/gpt-test" {
+		t.Fatalf("task request=%#v", task.req)
+	}
+}
+
+func TestSlashToolsSelectsToolboxAndAskMode(t *testing.T) {
+	workspace := t.TempDir()
+	toolbox := filepath.Join(workspace, "tools")
+	if err := os.Mkdir(toolbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{Workspace: workspace})
+	m.composer.SetValue("/tools tools")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if !m.taskMode || m.toolbox != toolbox || !strings.Contains(m.notice, "toolbox tools") {
+		t.Fatalf("taskMode=%v toolbox=%q notice=%q", m.taskMode, m.toolbox, m.notice)
+	}
+	m.composer.SetValue("/tools off")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.taskMode {
+		t.Fatal("/tools off left Ask + Ply enabled")
+	}
+}
+
+func TestShellLikeComposerKeysAndSlashEscape(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work"})
+	m.composer.SetValue("first")
+	updated, cmd := m.Update(key("alt+enter"))
+	m = updated.(*Model)
+	if cmd != nil || m.composer.Value() != "first\n" || m.running {
+		t.Fatalf("newline value=%q running=%v", m.composer.Value(), m.running)
+	}
+	m.composer.SetValue("//literal")
+	updated, cmd = m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || task.req.Goal != "/literal" {
+		t.Fatalf("literal slash request=%#v", task.req)
+	}
+
+	idle := New(Config{})
+	_, quit := idle.Update(key("ctrl+d"))
+	if quit == nil {
+		t.Fatal("ctrl+d on an empty prompt did not request EOF/quit")
+	}
+	if _, ok := quit().(tea.QuitMsg); !ok {
+		t.Fatalf("ctrl+d message=%T", quit())
+	}
+
+	_, suspend := idle.Update(key("ctrl+z"))
+	if suspend == nil {
+		t.Fatal("ctrl+z did not request job-control suspension")
+	}
+	if _, ok := suspend().(tea.SuspendMsg); !ok {
+		t.Fatalf("ctrl+z message=%T", suspend())
+	}
+}
+
+func TestSlashCommandsAreDiscoverableAndNeverAccidentalModelCalls(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", ActiveSkills: []string{"go-review"}})
+	m.composer.SetValue("/status")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd != nil || m.running || !strings.Contains(m.notice, "Ask + Ply") || !strings.Contains(m.notice, "1 skill") {
+		t.Fatalf("status running=%v notice=%q", m.running, m.notice)
+	}
+	m.composer.SetValue("/unknown")
+	updated, cmd = m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd != nil || m.running || !strings.Contains(m.notice, "Unknown command") {
+		t.Fatalf("unknown command ran: running=%v notice=%q", m.running, m.notice)
+	}
+	m.composer.SetValue("/help")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	help := m.renderHelp(m.viewport.Width())
+	if !m.showHelp || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/shell") {
+		t.Fatalf("help=%q", help)
+	}
+}
+
 func TestSubmitPassesOnlyExplicitlyActiveBriefSkills(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event)}
 	task := &fakeTask{events: make(chan plyexec.Event)}
-	m := New(Config{Task: task, Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "review it"})
-	m.activeSkills = []string{"go-review", "house-style"}
+	m := New(Config{Task: task, Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "review it", ActiveSkills: []string{"go-review", "house-style"}})
 	updated, cmd := m.Update(key("ctrl+s"))
 	m = updated.(*Model)
 	if cmd == nil || !m.running {
@@ -136,7 +235,7 @@ func TestResizeKeepsComposerAndTranscriptUsable(t *testing.T) {
 		t.Fatalf("viewport is unusable: %dx%d", m.viewport.Width(), m.viewport.Height())
 	}
 	view := m.View()
-	if !view.AltScreen || view.WindowTitle != "bench · task" || !strings.Contains(view.Content, "TASK · FULL SHELL") {
+	if !view.AltScreen || view.WindowTitle != "bench · ask+ply" || !strings.Contains(view.Content, "ASK + PLY · FULL SHELL") || !strings.Contains(view.Content, "Ask default · ● ready") {
 		t.Fatalf("view missing terminal contract: %#v", view)
 	}
 }
@@ -161,6 +260,24 @@ func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
 	if got := m.View().Content; !strings.Contains(got, "TOOLS · END") || !strings.Contains(got, "no executable check") {
 		t.Fatalf("completed task evidence is not visible:\n%s", got)
 	}
+
+	m.showHelp = true
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+}
+
+func TestLongWorkspaceAndModelStillFitEightyColumns(t *testing.T) {
+	m := New(Config{
+		Workspace: "/work/a-workspace-name-that-is-deliberately-much-longer-than-the-header-can-display-without-truncation",
+		Session:   "/work/.bench/sessions/task.jsonl",
+		Model:     "a-provider-with-a-long-name/a-model-with-an-even-longer-name",
+	})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(*Model)
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if got := m.View().Content; !strings.Contains(got, "● ready") || !strings.Contains(got, "ASK + PLY · FULL SHELL") {
+		t.Fatalf("header lost useful state while truncating:\n%s", got)
+	}
 }
 
 func TestExplicitToolboxIsVisibleInsteadOfFullShell(t *testing.T) {
@@ -168,7 +285,7 @@ func TestExplicitToolboxIsVisibleInsteadOfFullShell(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(*Model)
 	got := m.View().Content
-	if !strings.Contains(got, "TASK · TOOLBOX tools") || strings.Contains(got, "TASK · FULL SHELL") {
+	if !strings.Contains(got, "ASK + PLY · TOOLBOX tools") || strings.Contains(got, "ASK + PLY · FULL SHELL") {
 		t.Fatalf("toolbox grant is ambiguous:\n%s", got)
 	}
 }

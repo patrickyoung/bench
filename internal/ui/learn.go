@@ -90,7 +90,7 @@ func (m *Model) updateLearn(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		m.notice = "Learning evidence remains in the brief skill"
 		m.syncContent()
 		return m, nil
-	case "ctrl+s":
+	case "ctrl+s", "ctrl+enter":
 		return m.startLearn()
 	case "pgup", "pgdown":
 		var cmd tea.Cmd

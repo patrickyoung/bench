@@ -24,6 +24,7 @@ type RefineRequest struct {
 	Goal       string
 	Source     string
 	SessionDir string
+	Model      string
 }
 
 // TaskRequest is one open-ended workspace task. An empty Toolbox deliberately
@@ -32,9 +33,11 @@ type RefineRequest struct {
 type TaskRequest struct {
 	Dir     string
 	Goal    string
+	Input   string
 	Session string
 	Skills  []string
 	Toolbox string
+	Model   string
 }
 
 type Client interface {
@@ -82,6 +85,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 		args = append(args, "-sh")
 	}
 	args = append(args, "-C", dir, "-f", session)
+	if model := strings.TrimSpace(req.Model); model != "" {
+		args = append(args, "-m", model)
+	}
 	for _, skill := range req.Skills {
 		skill = strings.TrimSpace(skill)
 		if skill == "" {
@@ -97,7 +103,7 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if brief := strings.TrimSpace(r.BriefPath); brief != "" {
 		env = append(env, "BRIEF="+brief)
 	}
-	return filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env})
+	return filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env, Stdin: req.Input})
 }
 
 // Refine lets ply edit the ordinary skill directory. The fixed check invokes
@@ -132,9 +138,14 @@ func (r Runner) Refine(ctx context.Context, req RefineRequest) <-chan Event {
 	if briefPath == "" {
 		briefPath = "brief"
 	}
+	args := []string{"-sh", "-check", `"$BRIEF" lint -strict .`}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		args = append(args, "-m", model)
+	}
+	args = append(args, goal)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path:  path,
-		Args:  []string{"-sh", "-check", `"$BRIEF" lint -strict .`, goal},
+		Args:  args,
 		Dir:   dir,
 		Env:   []string{"BRIEF=" + briefPath, "PLY_DIR=" + sessions, "SOURCE_ROOT=" + sourceRoot},
 		Stdin: req.Source,

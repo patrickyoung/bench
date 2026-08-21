@@ -21,6 +21,7 @@ set -eu
 [ "$1" = new ]
 printf '%s\n' "$2" > new.dir
 printf '%s' "$3" > new.description
+printf '%s' "${ASK_MODEL-}" > new.model
 printf 'drafting' >&2
 printf '%s/DESIGN.md\n' "$2"
 `
@@ -33,6 +34,7 @@ printf '%s/DESIGN.md\n' "$2"
 	for event := range (Runner{Path: fixture, WorkDir: workspace}).New(context.Background(), Request{
 		Dir:         "agent-one",
 		Description: description,
+		Model:       "openai/test-model",
 	}) {
 		switch event.Stream {
 		case Stdout:
@@ -56,6 +58,10 @@ printf '%s/DESIGN.md\n' "$2"
 	}
 	if string(got) != description {
 		t.Fatalf("description = %q", got)
+	}
+	model, err := os.ReadFile(filepath.Join(workspace, "new.model"))
+	if err != nil || string(model) != "openai/test-model" {
+		t.Fatalf("model=%q err=%v", model, err)
 	}
 }
 
@@ -102,6 +108,7 @@ set -eu
 [ "$1" = build ]
 printf '%s' "$PLY_DIR" > ply-dir
 printf '%s' "$2" > build-dir
+printf '%s' "${ASK_MODEL-}" > build-model
 printf 'typescript' >&2
 printf 'finished'
 `
@@ -110,7 +117,7 @@ printf 'finished'
 	}
 	project := filepath.Join(workspace, "agent")
 	var done Event
-	for event := range (Runner{Path: fixture, WorkDir: workspace}).Build(context.Background(), project) {
+	for event := range (Runner{Path: fixture, WorkDir: workspace}).Build(context.Background(), BuildRequest{Dir: project, Model: "anthropic/build-model"}) {
 		if event.Done {
 			done = event
 		}
@@ -124,6 +131,10 @@ printf 'finished'
 	}
 	if got, want := string(plyDir), filepath.Join(project, ".draft", "build"); got != want {
 		t.Fatalf("PLY_DIR = %q, want %q", got, want)
+	}
+	model, err := os.ReadFile(filepath.Join(workspace, "build-model"))
+	if err != nil || string(model) != "anthropic/build-model" {
+		t.Fatalf("ASK_MODEL=%q err=%v", model, err)
 	}
 }
 

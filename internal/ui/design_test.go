@@ -21,6 +21,7 @@ type fakeDraft struct {
 	newRequest  draftexec.Request
 	checkDir    string
 	buildDir    string
+	buildModel  string
 	proveDir    string
 }
 
@@ -34,8 +35,9 @@ func (f *fakeDraft) Check(_ context.Context, dir string) <-chan draftexec.Event 
 	return f.checkEvents
 }
 
-func (f *fakeDraft) Build(_ context.Context, dir string) <-chan draftexec.Event {
-	f.buildDir = dir
+func (f *fakeDraft) Build(_ context.Context, req draftexec.BuildRequest) <-chan draftexec.Event {
+	f.buildDir = req.Dir
+	f.buildModel = req.Model
 	return f.buildEvents
 }
 
@@ -52,7 +54,8 @@ func TestOpenDesignPromotesUserRequirementsWithoutWriting(t *testing.T) {
 		{role: roleAssistant, text: "What should prove it works?"},
 		{role: roleUser, text: "A fixture suite must pass."},
 	}
-	updated, cmd := m.Update(key("ctrl+d"))
+	m.composer.SetValue("/agent")
+	updated, cmd := m.Update(key("enter"))
 	m = updated.(*Model)
 	if cmd == nil || m.screen != screenDesignForm || m.formFocus != 0 {
 		t.Fatalf("design form did not open: screen=%v focus=%d", m.screen, m.formFocus)
@@ -86,7 +89,7 @@ func TestDraftNewThenCheckAdmitsOnlyExecutableVerdict(t *testing.T) {
 		newEvents:   make(chan draftexec.Event),
 		checkEvents: make(chan draftexec.Event),
 	}
-	m := New(Config{Workspace: workspace, Draft: draft})
+	m := New(Config{Workspace: workspace, Draft: draft, Model: "openai/design-model"})
 	m.screen = screenDesignForm
 	m.project.SetValue("review-agent")
 	m.composer.SetValue("Review patches and prove findings with fixtures.")
@@ -95,7 +98,7 @@ func TestDraftNewThenCheckAdmitsOnlyExecutableVerdict(t *testing.T) {
 	if cmd == nil || m.job != jobDraftNew || !m.running {
 		t.Fatalf("draft new did not start: job=%v running=%v", m.job, m.running)
 	}
-	if draft.newRequest.Dir != projectDir || !strings.Contains(draft.newRequest.Description, "fixtures") {
+	if draft.newRequest.Dir != projectDir || !strings.Contains(draft.newRequest.Description, "fixtures") || draft.newRequest.Model != "openai/design-model" {
 		t.Fatalf("new request = %#v", draft.newRequest)
 	}
 
@@ -137,6 +140,18 @@ func TestDraftCheckExitOneIsNeedsRevisionNotBroken(t *testing.T) {
 	}
 	if !strings.Contains(m.notice, "Not buildable yet") {
 		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestEditorReturnRechecksTheOrdinaryDesign(t *testing.T) {
+	draft := &fakeDraft{checkEvents: make(chan draftexec.Event)}
+	m := New(Config{Workspace: "/work", Draft: draft})
+	m.screen = screenDesignReview
+	m.designDir = "/work/agent"
+	updated, cmd := m.Update(editorReturnedMsg{})
+	m = updated.(*Model)
+	if cmd == nil || !m.running || m.job != jobDraftCheck || draft.checkDir != "/work/agent" {
+		t.Fatalf("editor return: running=%v job=%v check=%q", m.running, m.job, draft.checkDir)
 	}
 }
 
@@ -199,10 +214,12 @@ func TestProjectSlugIsBoringAndPortable(t *testing.T) {
 }
 
 func TestDesignScreensFitEightyByTwentyFour(t *testing.T) {
-	m := New(Config{Workspace: "/work/project", InitialPrompt: "Build a small agent with a real check."})
+	m := New(Config{Workspace: "/work/project"})
+	m.messages = []message{{role: roleUser, text: "Build a small agent with a real check."}}
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(*Model)
-	updated, _ = m.Update(key("ctrl+d"))
+	m.composer.SetValue("/agent")
+	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 

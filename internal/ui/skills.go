@@ -190,7 +190,7 @@ func (m *Model) updateSkillForm(msg tea.KeyPressMsg, key string) (tea.Model, tea
 		m.syncContent()
 		cmd := m.focusCurrent()
 		return m, cmd
-	case "ctrl+s":
+	case "ctrl+s", "ctrl+enter":
 		if m.skillForm == skillFormNew {
 			return m.startSkillNew()
 		}
@@ -524,7 +524,7 @@ func (m *Model) startSkillRefine() (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.plyEvents = m.ply.Refine(ctx, plyexec.RefineRequest{
-		Dir: m.skillDetailPath, SourceRoot: m.workspace, Goal: goal, Source: source, SessionDir: sessionDir,
+		Dir: m.skillDetailPath, SourceRoot: m.workspace, Goal: goal, Source: source, SessionDir: sessionDir, Model: m.modelName,
 	})
 	m.syncContent()
 	return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())

@@ -76,7 +76,7 @@ func (m *Model) updateDesignForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		cmd := m.project.Focus()
 		return m, cmd
-	case "ctrl+s":
+	case "ctrl+s", "ctrl+enter":
 		return m.startDraftNew()
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
@@ -109,6 +109,14 @@ func (m *Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd)
 		return m.backToAsk()
 	case "r":
 		return m.startDraftCheck()
+	case "e":
+		if m.designDir == "" {
+			m.notice = "No DESIGN.md to edit"
+			return m, nil
+		}
+		m.notice = "Opening DESIGN.md in $VISUAL or $EDITOR"
+		m.syncContent()
+		return m, m.openEditor(filepath.Join(m.designDir, "DESIGN.md"))
 	case "b":
 		if !m.designBuildable {
 			m.notice = "Design must pass draft check before build"
@@ -126,7 +134,7 @@ func (m *Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd)
 func (m *Model) backToAsk() (tea.Model, tea.Cmd) {
 	m.screen = screenAsk
 	m.project.Blur()
-	m.composer.Placeholder = "Describe what you want to build, change, or understand…"
+	m.composer.Placeholder = "Describe a task, or type /help…"
 	m.composer.SetValue(m.askComposer)
 	if m.designBody == "" {
 		m.notice = "Design cancelled; nothing was written"
@@ -167,7 +175,7 @@ func (m *Model) startDraftNew() (tea.Model, tea.Cmd) {
 	m.composer.Blur()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.draftEvents = m.draft.New(ctx, draftexec.Request{Dir: dir, Description: description})
+	m.draftEvents = m.draft.New(ctx, draftexec.Request{Dir: dir, Description: description, Model: m.modelName})
 	m.syncContent()
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }

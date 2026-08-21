@@ -72,6 +72,7 @@ set -eu
 printf '%s\n' "$@" > args
 printf '%s' "${ASK-}" > ask
 printf '%s' "${BRIEF-}" > brief
+cat > input
 printf 'ran rg and git\n' >&2
 printf 'task answer\n'
 `
@@ -83,7 +84,7 @@ printf 'task answer\n'
 	var stdout, stderr strings.Builder
 	var done Event
 	for event := range (Runner{Path: fixture, AskPath: "/opt/tools/ask", BriefPath: "/opt/tools/brief"}).Work(context.Background(), TaskRequest{
-		Dir: dir, Goal: goal, Session: session, Skills: []string{"go-review", "house-style"},
+		Dir: dir, Goal: goal, Input: "piped evidence\n", Session: session, Model: "openai/test-model", Skills: []string{"go-review", "house-style"},
 	}) {
 		switch event.Stream {
 		case Stdout:
@@ -101,12 +102,16 @@ printf 'task answer\n'
 	if stdout.String() != "task answer\n" || stderr.String() != "ran rg and git\n" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	wantArgs := strings.Join([]string{"-sh", "-C", dir, "-f", session, "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
+	wantArgs := strings.Join([]string{"-sh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
 	for file, want := range map[string]string{"args": wantArgs, "ask": "/opt/tools/ask", "brief": "/opt/tools/brief"} {
 		got, err := os.ReadFile(filepath.Join(dir, file))
 		if err != nil || string(got) != want {
 			t.Errorf("%s=%q err=%v, want %q", file, got, err, want)
 		}
+	}
+	input, err := os.ReadFile(filepath.Join(dir, "input"))
+	if err != nil || string(input) != "piped evidence\n" {
+		t.Fatalf("input=%q err=%v", input, err)
 	}
 	if _, err := os.Stat(filepath.Dir(session)); err != nil {
 		t.Fatalf("session directory was not created: %v", err)

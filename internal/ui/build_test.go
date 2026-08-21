@@ -20,14 +20,14 @@ func TestBuildSuccessComesFromExitZeroAndKeepsEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	draft := &fakeDraft{buildEvents: make(chan draftexec.Event)}
-	m := New(Config{Workspace: workspace, Draft: draft})
+	m := New(Config{Workspace: workspace, Draft: draft, Model: "anthropic/build-model"})
 	m.designDir = project
 	m.designBuildable = true
 	m.screen = screenDesignReview
 	updated, cmd := m.Update(key("b"))
 	m = updated.(*Model)
-	if cmd == nil || !m.running || m.job != jobDraftBuild || draft.buildDir != project {
-		t.Fatalf("build did not start: running=%v job=%v dir=%q", m.running, m.job, draft.buildDir)
+	if cmd == nil || !m.running || m.job != jobDraftBuild || draft.buildDir != project || draft.buildModel != "anthropic/build-model" {
+		t.Fatalf("build did not start: running=%v job=%v dir=%q model=%q", m.running, m.job, draft.buildDir, draft.buildModel)
 	}
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stderr, Text: "$ go test ./...\nok\n"})
 	m = updated.(*Model)

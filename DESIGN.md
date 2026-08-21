@@ -34,11 +34,13 @@ through Design, Build, Prove, and Learn.
 
 ## Non-negotiable boundary
 
-The TUI does not become a model client, an agent runtime, or a shell. Its
+The TUI does not become a model client, an agent runtime, or a shell
+implementation. It can yield the terminal to the operator's `$SHELL` or
+`$EDITOR`, then restore itself. Its
 default task turn executes the equivalent of:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] -- GOAL
 ```
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
@@ -50,6 +52,13 @@ only that the model stopped, the UI never calls that outcome done or passed.
 The full-shell grant is visible at all times. A toolbox is an executable-name
 grant, not confinement; operating-system sandboxing remains a separate
 composition rather than a misleading TUI boolean.
+
+The same seam is available without a TUI. `bench run` and automatically
+redirected plain invocations pass stdin to Ply, copy stdout and stderr to the
+same streams unchanged, and return its exit status. `bench ask` does the same
+for direct Ask. `bench tui` is the explicit override when terminal detection
+is unusual. The interactive and headless surfaces therefore differ in
+presentation, not process semantics.
 
 Ask-only is the deliberately narrower toggle. For an unskilled turn it
 executes the equivalent of:
@@ -109,14 +118,25 @@ and no command palette full of promises.
 
 - The transcript is primary and scrollable.
 - The composer is always visible.
-- `ctrl+s` runs the task; `enter` remains available for writing it.
-- `ctrl+t` toggles the visible grant between Ask + tools and Ask-only.
-- `ctrl+d` promotes only user-authored task text into an agent design; tool
+- `enter` runs or sends; `alt+enter` and enhanced-terminal `shift+enter` insert
+  a newline.
+- Slash commands expose `/model`, `/tools`, `/ask`, `/work`, `/skills`,
+  `/agent`, `/shell`, `/status`, `/help`, and `/quit`; `//` sends a leading
+  slash literally.
+- `ctrl+d` exits an empty prompt and `ctrl+z` suspends, preserving familiar
+  Readline and job-control meanings.
+- `/agent` promotes only user-authored task text into an agent design; tool
   output and assistant prose are never requirements silently.
 - `esc` interrupts a running process.
 - `ctrl+c` interrupts first and quits only when idle.
-- `f1` shows the complete keyboard contract.
+- `f1` shows the complete command/key contract; `f2` opens Skills.
 - The active model, tool grant, process state, and durable session path are visible.
+
+Model choice is one value across the product. `-m` seeds it and `/model`
+changes future work. Bench passes it as literal `-m` to Ask and Ply, and as
+`ASK_MODEL` to draft's model-backed stages. Skill refinement uses it too.
+Every underlying Ask request records the actual model, so a mid-session switch
+does not weaken replay evidence.
 
 The layout collapses at narrow widths instead of clipping a decorative side
 rail. Colour is semantic garnish; labels and spacing carry the hierarchy.
@@ -199,6 +219,10 @@ and writes the brief skill. There is no TUI memory schema.
 10. **Done:** make open tasks the default, composing Ask + tools through Ply,
     retaining visible tool evidence, exposing the full-shell/toolbox grant,
     and preserving Ask-only and agent-design promotion as deliberate paths.
+11. **Done:** align the workbench with shell conventions: composable headless
+    filters, automatic pipe detection, explicit model selection, slash
+    commands, Enter-to-run, Ctrl-D/Ctrl-Z semantics, operator shell/editor
+    handoff, and consistent model propagation through every AI-backed stage.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

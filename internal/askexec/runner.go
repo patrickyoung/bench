@@ -23,8 +23,10 @@ const (
 // guesses ask's global current conversation.
 type Request struct {
 	Message string
+	Input   string
 	Session string
 	Skills  []string
+	Model   string
 }
 
 // Event is either a stream chunk or the final process outcome. Exactly one
@@ -60,8 +62,8 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 	defer close(events)
 
 	message := strings.TrimSpace(req.Message)
-	if message == "" {
-		events <- Event{Done: true, ExitCode: 1, Err: errors.New("message is empty")}
+	if message == "" && req.Input == "" {
+		events <- Event{Done: true, ExitCode: 1, Err: errors.New("message and stdin are empty")}
 		return
 	}
 	if req.Session == "" {
@@ -78,6 +80,9 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 		path = "ask"
 	}
 	args := []string{"-f", req.Session}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		args = append(args, "-m", model)
+	}
 	if len(req.Skills) > 0 {
 		system, outcome := r.skilledSystem(ctx, path, req.Skills, events)
 		if outcome.Err != nil || outcome.ExitCode != 0 {
@@ -86,8 +91,10 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 		}
 		args = append(args, "-S", system)
 	}
-	args = append(args, "--", message)
-	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: args}, func(stream Stream, text string) {
+	if message != "" {
+		args = append(args, "--", message)
+	}
+	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: args, Stdin: req.Input}, func(stream Stream, text string) {
 		emit(ctx, events, Event{Stream: stream, Text: text})
 	})
 	events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}

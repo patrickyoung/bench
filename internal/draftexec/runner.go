@@ -22,13 +22,19 @@ const (
 type Request struct {
 	Dir         string
 	Description string
+	Model       string
+}
+
+type BuildRequest struct {
+	Dir   string
+	Model string
 }
 
 // Client is the part of draft the current TUI slice composes.
 type Client interface {
 	New(context.Context, Request) <-chan Event
 	Check(context.Context, string) <-chan Event
-	Build(context.Context, string) <-chan Event
+	Build(context.Context, BuildRequest) <-chan Event
 	Prove(context.Context, string) <-chan Event
 }
 
@@ -47,10 +53,12 @@ func (r Runner) New(ctx context.Context, req Request) <-chan Event {
 	if description == "" {
 		return failed("requirements are empty")
 	}
+	env := modelEnv(req.Model)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path: r.path(),
 		Args: []string{"new", dir, description},
 		Dir:  r.WorkDir,
+		Env:  env,
 	})
 }
 
@@ -68,17 +76,26 @@ func (r Runner) Check(ctx context.Context, dir string) <-chan Event {
 
 // Build delegates the complete loop to draft/ply. PLY_DIR is placed beside
 // DESIGN.md so the agent's replayable evidence travels with its project.
-func (r Runner) Build(ctx context.Context, dir string) <-chan Event {
-	dir = strings.TrimSpace(dir)
+func (r Runner) Build(ctx context.Context, req BuildRequest) <-chan Event {
+	dir := strings.TrimSpace(req.Dir)
 	if dir == "" {
 		return failed("project directory is empty")
 	}
+	env := []string{"PLY_DIR=" + filepath.Join(dir, ".draft", "build")}
+	env = append(env, modelEnv(req.Model)...)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path: r.path(),
 		Args: []string{"build", dir},
 		Dir:  r.WorkDir,
-		Env:  []string{"PLY_DIR=" + filepath.Join(dir, ".draft", "build")},
+		Env:  env,
 	})
+}
+
+func modelEnv(model string) []string {
+	if model = strings.TrimSpace(model); model != "" {
+		return []string{"ASK_MODEL=" + model}
+	}
+	return nil
 }
 
 // Prove mechanically mutates the project and lets its check detect the

@@ -65,6 +65,41 @@ printf 'the answer'
 	}
 }
 
+func TestRunnerPassesModelAndPipeInputWithoutASecondProtocol(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ask")
+	capture := filepath.Join(dir, "capture")
+	t.Setenv("ASK_CAPTURE", capture)
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$ASK_CAPTURE.args"
+cat > "$ASK_CAPTURE.stdin"
+printf answer
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for range (Runner{Path: fixture}).Start(context.Background(), Request{
+		Message: "explain", Input: "piped evidence\n", Session: filepath.Join(dir, "run.jsonl"), Model: "openai/test-model",
+	}) {
+	}
+	args, err := os.ReadFile(capture + ".args")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-f\n" + filepath.Join(dir, "run.jsonl") + "\n-m\nopenai/test-model\n--\nexplain\n"
+	if string(args) != want {
+		t.Fatalf("args=%q, want %q", args, want)
+	}
+	input, err := os.ReadFile(capture + ".stdin")
+	if err != nil || string(input) != "piped evidence\n" {
+		t.Fatalf("stdin=%q err=%v", input, err)
+	}
+}
+
 func TestRunnerComposesSelectedBriefSkillIntoSystemPrompt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")

@@ -24,8 +24,10 @@ When changing `bench`:
 The implemented product boundary is deliberately compositional. Open tasks
 run through `ply` with one explicit Ask session; the full-shell or toolbox
 grant and the resulting typescript stay visible, while unchecked exit zero is
-only a model stop, never a completed verdict. `ctrl+t` uses direct `ask` for a
-no-tools turn in that same session. `draft new/check/build/prove` and
+only a model stop, never a completed verdict. `/ask` uses direct `ask` for a
+no-tools turn in that same session; `bench run` and `bench ask` preserve the
+same boundaries headlessly. `-m` and `/model` must propagate through every
+model-backed stage. `draft new/check/build/prove` and
 `hone -into` remain separate programs for promoted agent work, with visible
 evidence and exit-status verdicts. The Skills workbench likewise composes
 `brief ls/path/cat/new/lint`, passes sources to `ply` on stdin, and uses strict
