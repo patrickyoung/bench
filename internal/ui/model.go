@@ -61,6 +61,7 @@ type Config struct {
 	InitialPrompt string
 	Toolbox       string
 	ActiveSkills  []string
+	TaskOptions   plyexec.TaskOptions
 }
 
 // Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
@@ -80,6 +81,7 @@ type Model struct {
 	workspace    string
 	dataDir      string
 	toolbox      string
+	taskOptions  plyexec.TaskOptions
 	taskMode     bool
 
 	composer       textarea.Model
@@ -322,6 +324,7 @@ func New(cfg Config) *Model {
 		workspace:      cfg.Workspace,
 		dataDir:        cfg.DataDir,
 		toolbox:        cfg.Toolbox,
+		taskOptions:    cfg.TaskOptions,
 		taskMode:       true,
 		composer:       composer,
 		project:        project,
@@ -563,6 +566,7 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
 			Dir: m.workspace, Goal: text, Session: m.session,
 			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
+			Options: m.taskOptions,
 		})
 		m.job = jobPlyTask
 		m.syncContent()
@@ -650,6 +654,9 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 
 	m.running = false
 	m.cancel = nil
+	if event.Session != "" {
+		m.session = event.Session
+	}
 	answer := strings.TrimSpace(m.stdout.String())
 	toolLog := strings.TrimSpace(m.toolActivity)
 	if toolLog != "" {
@@ -658,13 +665,22 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	switch {
 	case errors.Is(event.Err, context.Canceled):
 		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
+	case event.Err == nil && event.ExitCode == 0 && m.taskOptions.Check != "":
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
+		if event.Session == "" {
+			m.notice = "Task done · executable check already passed · no model turn"
+		} else {
+			m.notice = "Task done · executable check passed · session is replayable"
+		}
 	case event.Err == nil && event.ExitCode == 0:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
 		}
 		m.notice = "Task stopped · replayable session · no executable check"
 	case event.ExitCode == 2:
-		m.notice = "Task not done · Ply stopped at a bound"
+		m.notice = "Task not done · Ply stopped before completion"
 	default:
 		m.notice = filterFailure("ply", event.ExitCode, event.Err, toolLog)
 	}
@@ -1149,7 +1165,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/skills", "browse and build Brief skills", width),
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
 		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),
-		helpRow(t, "/status", "show mode, model, and active skill count", width),
+		helpRow(t, "/status", "show mode, model, skills, and work policy", width),
 		helpRow(t, "/help · /quit", "show this contract or exit", width),
 		helpRow(t, "//text", "send a message beginning with one slash", width),
 		"",
@@ -1166,6 +1182,9 @@ func (m *Model) renderHelp(width int) string {
 		"",
 		t.muted.Render(grantHelp),
 		t.code.Width(max(10, width-4)).Render("ask replay -check " + m.session),
+		"",
+		t.muted.Render("Configured work policy:"),
+		t.code.Width(max(10, width-4)).Render(m.taskPolicyDisplay()),
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 }
@@ -1354,7 +1373,7 @@ func (m *Model) View() tea.View {
 		if m.skillRunState == skillRunPassed {
 			detail = "Strict lint exited zero. Inspect the resulting SKILL.md with enter."
 		} else if m.skillRunState == skillRunNotDone {
-			detail = "The strict check still fails or a bound stopped the loop."
+			detail = "Ply stopped before the strict check passed."
 		}
 		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
 	} else if m.picking {

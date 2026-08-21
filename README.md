@@ -80,7 +80,7 @@ The opening screen is a task composer, not an agent-requirements form. By
 default, `enter` starts the equivalent public process:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [POLICY ...] -- GOAL
 ```
 
 Bench starts `ply` directly. The goal is one literal argv value; it is never
@@ -97,8 +97,22 @@ redirection—use an operating-system sandbox when that boundary matters.
 
 Ply without `-check` exits zero when the model stops, not when an external
 program proves the goal. The TUI therefore says **Task stopped · no executable
-check**, never “done” or “passed.” Checked, repeatable work belongs in an agent
-design whose `DESIGN.md` supplies the executable verdict.
+check**, never “done” or “passed.” An open task may instead start Bench with a
+literal shell-backed `-check COMMAND`; that exact argument is visible through
+`/status`, and only its zero exit status produces **Task done · executable check
+passed**. Bench passes the command as one argv value and never evaluates it
+itself. Agent designs remain the durable home for recurring checked work.
+
+Both the interactive workbench and `bench run` accept Ply's optional policy
+controls: `-cycles N`, `-turns N`, `-timeout DURATION`, `-compact`, and
+`-compactions N`. Omitted controls stay omitted so the installed Ply owns its
+defaults; an explicit zero retains Ply's documented unbounded meaning. For
+checked or compacting work, Ply reports the Ask session it actually used
+through a private `-session-out` control artifact. Its absence on a passing
+pre-check means no model turn or session was created. Bench removes the
+artifact after reading it and directs later TUI work—including Ask-only
+turns—to any reported successor; stdout remains the answer and stderr remains
+the human typescript.
 
 Type `/ask` or `/tools off` for an Ask-only turn. That uses the narrower public seam:
 
@@ -120,6 +134,7 @@ git diff | bench -m openai-codex/your-model 'review this patch'
 go test ./... 2>&1 | bench run 'fix the smallest root cause' >answer.md 2>tools.log
 build.log | bench ask 'explain the first useful failure' | less
 bench run -t .bench/tools -s go-review -f review.jsonl 'review this tree'
+bench run -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
 ```
 
 For both headless commands, piped bytes are stdin evidence, the answer alone is

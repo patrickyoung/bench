@@ -2,11 +2,13 @@ package plyexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRefineKeepsSourceOnStdinAndFeedbackLiteral(t *testing.T) {
@@ -138,5 +140,152 @@ func TestWorkUsesOnlyAnExplicitToolbox(t *testing.T) {
 	}
 	if strings.Contains(string(got), "-sh") || !strings.Contains(string(got), "-t\n"+toolbox+"\n") {
 		t.Fatalf("args=%q", got)
+	}
+}
+
+func TestWorkPassesTrackedPolicyLiterallyAndFollowsCompactedSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > args
+session_out=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -session-out ]; then
+    session_out=$2
+    shift 2
+    continue
+  fi
+  shift
+done
+printf '%s\n' "$NEXT_SESSION" > "$session_out"
+printf answer
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(dir, "sessions", "source.jsonl")
+	next := filepath.Join(dir, "sessions", "compacted.jsonl")
+	t.Setenv("NEXT_SESSION", next)
+	check := `test "$(printf literal)" = literal; # remains one argv value`
+	var done Event
+	for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "finish", Session: session,
+		Options: TaskOptions{
+			Check:  check,
+			Cycles: 0, HasCycles: true,
+			Turns: 12, HasTurns: true,
+			Timeout: 45 * time.Second, HasTimeout: true,
+			Compact:     true,
+			Compactions: 0, HasCompactions: true,
+		},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Err != nil || done.ExitCode != 0 || done.Session != next {
+		t.Fatalf("done=%#v, want successor %q", done, next)
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"-check\n" + check + "\n",
+		"-cycles\n0\n",
+		"-turns\n12\n",
+		"-timeout\n45s\n",
+		"-compact\n",
+		"-compactions\n0\n",
+		"-session-out\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args missing %q:\n%s", want, got)
+		}
+	}
+	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(session), ".bench-ply-session-*")); err != nil || len(matches) != 0 {
+		t.Fatalf("session result was not cleaned up: matches=%v err=%v", matches, err)
+	}
+}
+
+func TestWorkRecognizesPassingPrecheckWithoutASession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var done Event
+	for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "already true", Session: filepath.Join(dir, "sessions", "unused.jsonl"),
+		Options: TaskOptions{Check: "test -f result"},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Err != nil || done.ExitCode != 0 || done.Session != "" {
+		t.Fatalf("precheck outcome=%#v", done)
+	}
+}
+
+func TestWorkPreservesPlyFailureWhenSessionResultWasNeverWritten(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf 'ply diagnostic\\n' >&2\nexit 2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var done Event
+	for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "stop", Session: filepath.Join(dir, "sessions", "unused.jsonl"),
+		Options: TaskOptions{Compact: true},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.ExitCode != 2 || done.Err == nil || strings.Contains(done.Err.Error(), "session result") {
+		t.Fatalf("Ply failure was replaced: %#v", done)
+	}
+}
+
+func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\ntouch \"$STARTED\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STARTED", started)
+	for _, options := range []TaskOptions{
+		{Cycles: -1, HasCycles: true},
+		{Turns: -1, HasTurns: true},
+		{Timeout: 0, HasTimeout: true},
+		{Compactions: -1, HasCompactions: true},
+	} {
+		var done Event
+		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+			Dir: dir, Goal: "invalid", Session: filepath.Join(dir, "task.jsonl"), Options: options,
+		}) {
+			if event.Done {
+				done = event
+			}
+		}
+		if done.ExitCode != 2 || done.Err == nil {
+			t.Fatalf("invalid options outcome=%#v", done)
+		}
+	}
+	if _, err := os.Stat(started); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Ply started for invalid options: %v", err)
 	}
 }

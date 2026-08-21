@@ -40,7 +40,7 @@ implementation. It can yield the terminal to the operator's `$SHELL` or
 default task turn executes the equivalent of:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [POLICY...] -- GOAL
 ```
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
@@ -48,6 +48,20 @@ are repeated `-s SKILL` arguments. Ply owns the Ask→command→result loop and
 records it in the explicit Ask session. Bench renders stderr as visible tool
 evidence and stdout as the answer. Because an unchecked Ply exit zero means
 only that the model stopped, the UI never calls that outcome done or passed.
+`-check COMMAND` deliberately opts an open task into a shell-backed executable
+verdict; Bench passes that command as one literal argument, displays it through
+`/status`, and distinguishes a passing pre-check from a worked, replayable
+session. `-cycles`, `-turns`, `-timeout`, `-compact`, and `-compactions` are
+optional process policy, not a second loop, and omission leaves Ply's defaults
+in charge.
+
+Compaction may move the work into a successor Ask session. For checked or
+compacting work, Bench passes Ply a private `-session-out FILE` artifact path.
+Ply atomically records the absolute current session before model work and after
+each successful transition; a passing pre-check creates neither session nor
+artifact. Bench reads it only with the terminal process event, removes it, and
+makes a reported session authoritative for later interactive turns. Control
+data therefore never competes with answer stdout or typescript stderr.
 
 The full-shell grant is visible at all times. A toolbox is an executable-name
 grant, not confinement; operating-system sandboxing remains a separate
@@ -173,8 +187,9 @@ By default, sessions live under `.bench/sessions` in the working directory.
 `BENCH_DIR` moves that root. The directory is created only when the first
 turn is sent, so opening and quitting leaves the workspace untouched.
 
-One TUI invocation owns one explicit session path shared by tools and Ask-only
-turns. It never changes Ask's
+One TUI invocation owns one explicit session lineage shared by tools and
+Ask-only turns. It begins at the selected path and follows only a successor
+that the invoked Ply reports through `-session-out`; it never changes Ask's
 `current` pointer and never guesses which global conversation the user meant.
 That makes two workspaces, two terminals, and replay all unsurprising.
 

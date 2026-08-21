@@ -63,15 +63,15 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 
 	message := strings.TrimSpace(req.Message)
 	if message == "" && req.Input == "" {
-		events <- Event{Done: true, ExitCode: 1, Err: errors.New("message and stdin are empty")}
+		emitFinal(ctx, events, Event{Done: true, ExitCode: 1, Err: errors.New("message and stdin are empty")})
 		return
 	}
 	if req.Session == "" {
-		events <- Event{Done: true, ExitCode: 1, Err: errors.New("session path is empty")}
+		emitFinal(ctx, events, Event{Done: true, ExitCode: 1, Err: errors.New("session path is empty")})
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(req.Session), 0o700); err != nil {
-		events <- Event{Done: true, ExitCode: 1, Err: err}
+		emitFinal(ctx, events, Event{Done: true, ExitCode: 1, Err: err})
 		return
 	}
 
@@ -86,7 +86,7 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 	if len(req.Skills) > 0 {
 		system, outcome := r.skilledSystem(ctx, path, req.Skills, events)
 		if outcome.Err != nil || outcome.ExitCode != 0 {
-			events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}
+			emitFinal(ctx, events, Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err})
 			return
 		}
 		args = append(args, "-S", system)
@@ -97,7 +97,7 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: args, Stdin: req.Input}, func(stream Stream, text string) {
 		emit(ctx, events, Event{Stream: stream, Text: text})
 	})
-	events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}
+	emitFinal(ctx, events, Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err})
 }
 
 func (r Runner) skilledSystem(ctx context.Context, askPath string, skills []string, events chan<- Event) (string, filterexec.Outcome) {
@@ -150,7 +150,7 @@ func (r Runner) Replay(ctx context.Context, session string) <-chan Event {
 	go func() {
 		defer close(events)
 		if strings.TrimSpace(session) == "" {
-			events <- Event{Done: true, ExitCode: 1, Err: errors.New("session path is empty")}
+			emitFinal(ctx, events, Event{Done: true, ExitCode: 1, Err: errors.New("session path is empty")})
 			return
 		}
 		path := r.Path
@@ -161,13 +161,13 @@ func (r Runner) Replay(ctx context.Context, session string) <-chan Event {
 			emit(ctx, events, Event{Stream: Stderr, Text: text})
 		})
 		if checked.Err != nil {
-			events <- Event{Done: true, ExitCode: checked.ExitCode, Err: checked.Err}
+			emitFinal(ctx, events, Event{Done: true, ExitCode: checked.ExitCode, Err: checked.Err})
 			return
 		}
 		rendered := filterexec.Execute(ctx, filterexec.Spec{Path: path, Args: []string{"replay", session}}, func(stream Stream, text string) {
 			emit(ctx, events, Event{Stream: stream, Text: text})
 		})
-		events <- Event{Done: true, ExitCode: rendered.ExitCode, Err: rendered.Err}
+		emitFinal(ctx, events, Event{Done: true, ExitCode: rendered.ExitCode, Err: rendered.Err})
 	}()
 	return events
 }
@@ -176,5 +176,21 @@ func emit(ctx context.Context, dst chan<- Event, event Event) {
 	select {
 	case dst <- event:
 	case <-ctx.Done():
+	}
+}
+
+func emitFinal(ctx context.Context, dst chan<- Event, event Event) {
+	select {
+	case dst <- event:
+		return
+	default:
+	}
+	select {
+	case dst <- event:
+	case <-ctx.Done():
+		select {
+		case dst <- event:
+		default:
+		}
 	}
 }

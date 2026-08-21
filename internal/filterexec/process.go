@@ -53,7 +53,7 @@ func Start(ctx context.Context, spec Spec) <-chan Event {
 		outcome := Execute(ctx, spec, func(stream Stream, text string) {
 			emit(ctx, events, Event{Stream: stream, Text: text})
 		})
-		events <- Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err}
+		emitFinal(ctx, events, Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err})
 	}()
 	return events
 }
@@ -149,5 +149,25 @@ func emit(ctx context.Context, dst chan<- Event, event Event) {
 	select {
 	case dst <- event:
 	case <-ctx.Done():
+	}
+}
+
+// emitFinal delivers the outcome when an active consumer has room, including
+// after cancellation, but never strands the process goroutine behind an
+// abandoned full event channel. Stream chunks are already best-effort after
+// cancellation; the terminal event must follow the same ownership rule.
+func emitFinal(ctx context.Context, dst chan<- Event, event Event) {
+	select {
+	case dst <- event:
+		return
+	default:
+	}
+	select {
+	case dst <- event:
+	case <-ctx.Done():
+		select {
+		case dst <- event:
+		default:
+		}
 	}
 }

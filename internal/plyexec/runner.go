@@ -4,14 +4,27 @@ package plyexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/patrickyoung/bench/internal/filterexec"
 )
 
-type Event = filterexec.Event
+// Event preserves Ply's ordinary streams and exit status. Session is set on
+// the terminal event when Ply reports the Ask session it actually finished
+// in through its explicit -session-out artifact.
+type Event struct {
+	Stream   filterexec.Stream
+	Text     string
+	Done     bool
+	ExitCode int
+	Err      error
+	Session  string
+}
 
 const (
 	Stdout = filterexec.Stdout
@@ -38,6 +51,23 @@ type TaskRequest struct {
 	Skills  []string
 	Toolbox string
 	Model   string
+	Options TaskOptions
+}
+
+// TaskOptions are optional Ply policy controls. The Has fields preserve the
+// distinction between an omitted option (Ply owns its default) and an
+// explicit zero (Ply documents zero as unbounded).
+type TaskOptions struct {
+	Check          string
+	Cycles         int
+	HasCycles      bool
+	Turns          int
+	HasTurns       bool
+	Timeout        time.Duration
+	HasTimeout     bool
+	Compact        bool
+	Compactions    int
+	HasCompactions bool
 }
 
 type Client interface {
@@ -71,6 +101,29 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if session == "" {
 		return failed("task session is empty")
 	}
+	if req.Options.Check != "" && strings.TrimSpace(req.Options.Check) == "" {
+		return failed("task check is empty")
+	}
+	if req.Options.HasCycles && req.Options.Cycles < 0 {
+		return failed("task cycles cannot be negative")
+	}
+	if req.Options.HasTurns && req.Options.Turns < 0 {
+		return failed("task turns cannot be negative")
+	}
+	if req.Options.HasTimeout && req.Options.Timeout <= 0 {
+		return failed("task timeout must be positive")
+	}
+	if req.Options.HasCompactions && req.Options.Compactions < 0 {
+		return failed("task compactions cannot be negative")
+	}
+	skills := make([]string, 0, len(req.Skills))
+	for _, skill := range req.Skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			return failed("skill name is empty")
+		}
+		skills = append(skills, skill)
+	}
 	if err := os.MkdirAll(filepath.Dir(session), 0o700); err != nil {
 		return failed(err.Error())
 	}
@@ -84,15 +137,49 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	} else {
 		args = append(args, "-sh")
 	}
+	if req.Options.Check != "" {
+		args = append(args, "-check", req.Options.Check)
+	}
+	if req.Options.HasCycles {
+		args = append(args, "-cycles", strconv.Itoa(req.Options.Cycles))
+	}
+	if req.Options.HasTurns {
+		args = append(args, "-turns", strconv.Itoa(req.Options.Turns))
+	}
+	if req.Options.HasTimeout {
+		args = append(args, "-timeout", req.Options.Timeout.String())
+	}
+	if req.Options.Compact {
+		args = append(args, "-compact")
+	}
+	if req.Options.HasCompactions {
+		args = append(args, "-compactions", strconv.Itoa(req.Options.Compactions))
+	}
+
+	// A compacting Ply run can move to a new Ask session. Keep that control
+	// result out of the human stdout/stderr contract: Ply writes one path to
+	// a caller-owned file and Work attaches it to the terminal event.
+	sessionOut := ""
+	if req.Options.Compact || req.Options.Check != "" {
+		f, err := os.CreateTemp(filepath.Dir(session), ".bench-ply-session-*")
+		if err != nil {
+			return failed(fmt.Sprintf("create Ply session result: %v", err))
+		}
+		sessionOut = f.Name()
+		if err := f.Close(); err != nil {
+			_ = os.Remove(sessionOut)
+			return failed(fmt.Sprintf("close Ply session result: %v", err))
+		}
+		if err := os.Remove(sessionOut); err != nil {
+			return failed(fmt.Sprintf("prepare Ply session result: %v", err))
+		}
+		args = append(args, "-session-out", sessionOut)
+	}
 	args = append(args, "-C", dir, "-f", session)
 	if model := strings.TrimSpace(req.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	for _, skill := range req.Skills {
-		skill = strings.TrimSpace(skill)
-		if skill == "" {
-			return failed("skill name is empty")
-		}
+	for _, skill := range skills {
 		args = append(args, "-s", skill)
 	}
 	args = append(args, "--", goal)
@@ -103,7 +190,104 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if brief := strings.TrimSpace(r.BriefPath); brief != "" {
 		env = append(env, "BRIEF="+brief)
 	}
-	return filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env, Stdin: req.Input})
+	processEvents := filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env, Stdin: req.Input})
+	if sessionOut == "" {
+		return adapt(ctx, processEvents)
+	}
+	return withSessionResult(ctx, processEvents, sessionOut, req.Options.Check != "")
+}
+
+func withSessionResult(ctx context.Context, source <-chan filterexec.Event, resultPath string, checked bool) <-chan Event {
+	events := make(chan Event, 16)
+	go func() {
+		defer close(events)
+		defer os.Remove(resultPath)
+		for processEvent := range source {
+			event := eventFrom(processEvent)
+			if !event.Done {
+				emit(ctx, events, event)
+				continue
+			}
+			session, err := readSessionResult(resultPath)
+			switch {
+			case err == nil:
+				event.Session = session
+			case errors.Is(event.Err, context.Canceled):
+				// An interrupt may arrive before Ply establishes a session.
+			case checked && event.Err == nil && event.ExitCode == 0 && errors.Is(err, os.ErrNotExist):
+				// Ply's passing pre-check intentionally creates no Ask session.
+			case event.Err != nil || event.ExitCode != 0:
+				// Preserve Ply's actual failure. A missing control artifact is
+				// expected when it could not start or rejected the invocation.
+			default:
+				event.ExitCode = 1
+				event.Err = fmt.Errorf("read Ply session result: %w", err)
+			}
+			emitFinal(ctx, events, event)
+		}
+	}()
+	return events
+}
+
+func adapt(ctx context.Context, source <-chan filterexec.Event) <-chan Event {
+	events := make(chan Event, 16)
+	go func() {
+		defer close(events)
+		for processEvent := range source {
+			event := eventFrom(processEvent)
+			if event.Done {
+				emitFinal(ctx, events, event)
+				continue
+			}
+			emit(ctx, events, event)
+		}
+	}()
+	return events
+}
+
+func eventFrom(event filterexec.Event) Event {
+	return Event{Stream: event.Stream, Text: event.Text, Done: event.Done, ExitCode: event.ExitCode, Err: event.Err}
+}
+
+func readSessionResult(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	text := string(body)
+	if strings.HasSuffix(text, "\n") {
+		text = strings.TrimSuffix(text, "\n")
+	}
+	if text == "" || strings.ContainsAny(text, "\r\n\x00") {
+		return "", errors.New("invalid session path record")
+	}
+	if !filepath.IsAbs(text) {
+		return "", fmt.Errorf("session path is not absolute: %q", text)
+	}
+	return text, nil
+}
+
+func emit(ctx context.Context, dst chan<- Event, event Event) {
+	select {
+	case dst <- event:
+	case <-ctx.Done():
+	}
+}
+
+func emitFinal(ctx context.Context, dst chan<- Event, event Event) {
+	select {
+	case dst <- event:
+		return
+	default:
+	}
+	select {
+	case dst <- event:
+	case <-ctx.Done():
+		select {
+		case dst <- event:
+		default:
+		}
+	}
 }
 
 // Refine lets ply edit the ordinary skill directory. The fixed check invokes
@@ -143,13 +327,13 @@ func (r Runner) Refine(ctx context.Context, req RefineRequest) <-chan Event {
 		args = append(args, "-m", model)
 	}
 	args = append(args, goal)
-	return filterexec.Start(ctx, filterexec.Spec{
+	return adapt(ctx, filterexec.Start(ctx, filterexec.Spec{
 		Path:  path,
 		Args:  args,
 		Dir:   dir,
 		Env:   []string{"BRIEF=" + briefPath, "PLY_DIR=" + sessions, "SOURCE_ROOT=" + sourceRoot},
 		Stdin: req.Source,
-	})
+	}))
 }
 
 func failed(message string) <-chan Event {

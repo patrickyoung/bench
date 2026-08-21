@@ -111,6 +111,81 @@ func TestHeadlessExitStatusPassesThrough(t *testing.T) {
 	}
 }
 
+func TestHeadlessRunPassesOnlyExplicitPlyPolicyFlags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	capture := filepath.Join(dir, "args")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$CAPTURE"
+session_out=
+session=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -session-out) session_out=$2; shift 2 ;;
+    -f) session=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$session" > "$session_out"
+printf checked-answer
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_PLY", fixture)
+	t.Setenv("CAPTURE", capture)
+	check := `go test ./...; printf '$(literal)'`
+	var stdout, stderr strings.Builder
+	code := run([]string{
+		"run", "-C", dir, "-check", check, "-cycles", "0", "-turns", "9",
+		"-timeout", "35s", "-compact", "-compactions", "2", "finish it",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stdout.String() != "checked-answer" || stderr.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	args, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"-check\n" + check + "\n", "-cycles\n0\n", "-turns\n9\n",
+		"-timeout\n35s\n", "-compact\n", "-compactions\n2\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	started := filepath.Join(dir, "started")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\ntouch \"$STARTED\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_PLY", fixture)
+	t.Setenv("STARTED", started)
+	for _, flagAndValue := range [][2]string{{"-turns", "-1"}, {"-cycles", "-1"}, {"-compactions", "-1"}, {"-timeout", "0s"}} {
+		var stdout, stderr strings.Builder
+		code := run([]string{"run", "-C", dir, flagAndValue[0], flagAndValue[1], "goal"}, strings.NewReader(""), &stdout, &stderr)
+		if code != 2 || stderr.Len() == 0 {
+			t.Fatalf("%v: code=%d stderr=%q", flagAndValue, code, stderr.String())
+		}
+	}
+	if _, err := os.Stat(started); !os.IsNotExist(err) {
+		t.Fatalf("Ply started for invalid policy: %v", err)
+	}
+}
+
 func TestPlainBenchAutomaticallyComposesWhenPiped(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")

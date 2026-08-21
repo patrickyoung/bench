@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOverlayEnvReplacesRatherThanDuplicates(t *testing.T) {
@@ -19,6 +20,25 @@ func TestOverlayEnvReplacesRatherThanDuplicates(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("env = %#v, want %#v", got, want)
 		}
+	}
+}
+
+func TestTerminalEventDoesNotBlockOnCanceledFullChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan Event, 1)
+	events <- Event{Stream: Stdout, Text: "unread"}
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		emitFinal(ctx, events, Event{Done: true, ExitCode: 130, Err: context.Canceled})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("terminal send blocked behind an abandoned full channel")
 	}
 }
 

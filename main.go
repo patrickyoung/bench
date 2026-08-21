@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
+	"github.com/patrickyoung/bench/internal/filterexec"
 	"github.com/patrickyoung/bench/internal/honeexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
@@ -71,6 +73,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.startNew, "n", false, "start new instead of showing saved sessions")
 	fs.BoolVar(&o.startNew, "new", false, "start new instead of showing saved sessions")
 	fs.StringVar(&o.project, "project", "", "open an existing agent project")
+	addTaskFlags(fs, &o.task)
 	fs.Usage = func() { printUsage(stderr) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -142,6 +145,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		InitialPrompt: initial,
 		Toolbox:       o.toolbox.value,
 		ActiveSkills:  append([]string(nil), o.skills...),
+		TaskOptions:   o.task.options(),
 	})
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return report(stderr, err)
@@ -154,6 +158,7 @@ type tuiOptions struct {
 	toolbox                           trackedString
 	skills                            stringList
 	shell, startNew                   bool
+	task                              taskFlags
 }
 
 func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -163,6 +168,7 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 	var toolbox trackedString
 	var skills stringList
 	var shell bool
+	var task taskFlags
 	fs.StringVar(&model, "m", os.Getenv("ASK_MODEL"), "provider/model")
 	fs.StringVar(&workspace, "C", "", "workspace directory")
 	fs.StringVar(&file, "f", "", "explicit replayable session file")
@@ -170,6 +176,7 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 	if mode == "run" {
 		fs.Var(&toolbox, "t", "ply toolbox directory")
 		fs.BoolVar(&shell, "sh", false, "use Ply's full-shell mode")
+		addTaskFlags(fs, &task)
 	}
 	fs.Usage = func() { printHeadlessUsage(stderr, mode) }
 	if err := fs.Parse(args); err != nil {
@@ -222,24 +229,52 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	events := (plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}).Work(ctx, plyexec.TaskRequest{
 		Dir: work, Goal: message, Input: input, Session: file, Skills: skills,
-		Toolbox: toolbox.value, Model: strings.TrimSpace(model),
+		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
 	})
-	return streamEvents(ctx, events, stdout, stderr)
+	return streamPlyEvents(ctx, events, stdout, stderr)
 }
 
-// streamEvents preserves the filter contract without interpreting either
-// stream. askexec.Event and plyexec.Event are aliases of the same event type.
+// streamEvents preserves Ask's filter contract without interpreting either
+// stream.
 func streamEvents(ctx context.Context, events <-chan askexec.Event, stdout, stderr io.Writer) int {
+	return streamOutput(ctx, func() (outputEvent, bool) {
+		event, ok := <-events
+		return outputEvent{Stream: event.Stream, Text: event.Text, Done: event.Done, ExitCode: event.ExitCode, Err: event.Err}, ok
+	}, stdout, stderr)
+}
+
+// streamPlyEvents preserves the same filter contract while ignoring the
+// terminal session metadata used only by the long-lived TUI process.
+func streamPlyEvents(ctx context.Context, events <-chan plyexec.Event, stdout, stderr io.Writer) int {
+	return streamOutput(ctx, func() (outputEvent, bool) {
+		event, ok := <-events
+		return outputEvent{Stream: event.Stream, Text: event.Text, Done: event.Done, ExitCode: event.ExitCode, Err: event.Err}, ok
+	}, stdout, stderr)
+}
+
+type outputEvent struct {
+	Stream   filterexec.Stream
+	Text     string
+	Done     bool
+	ExitCode int
+	Err      error
+}
+
+func streamOutput(ctx context.Context, next func() (outputEvent, bool), stdout, stderr io.Writer) int {
 	sawErrorText := false
 	code := 1
 	var finalErr error
-	for event := range events {
+	for {
+		event, ok := next()
+		if !ok {
+			break
+		}
 		if event.Done {
 			code, finalErr = event.ExitCode, event.Err
 			continue
 		}
 		var err error
-		if event.Stream == askexec.Stdout {
+		if event.Stream == filterexec.Stdout {
 			_, err = io.WriteString(stdout, event.Text)
 		} else {
 			sawErrorText = sawErrorText || strings.TrimSpace(event.Text) != ""
@@ -367,6 +402,89 @@ func (s *stringList) Set(value string) error {
 	return nil
 }
 
+type taskFlags struct {
+	check       string
+	cycles      trackedInt
+	turns       trackedInt
+	timeout     trackedDuration
+	compact     bool
+	compactions trackedInt
+}
+
+func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
+	task.cycles.name = "cycles"
+	task.turns.name = "turns"
+	task.compactions.name = "compactions"
+	task.timeout.name = "timeout"
+	fs.StringVar(&task.check, "check", "", "literal shell-backed Ply check")
+	fs.Var(&task.cycles, "cycles", "failed checks before Ply stops (0 = unbounded)")
+	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
+	fs.Var(&task.timeout, "timeout", "per-command Ply timeout")
+	fs.BoolVar(&task.compact, "compact", false, "let Ply continue through full context")
+	fs.Var(&task.compactions, "compactions", "Ply compactions before stopping (0 = unbounded)")
+}
+
+func (f taskFlags) options() plyexec.TaskOptions {
+	return plyexec.TaskOptions{
+		Check:  f.check,
+		Cycles: f.cycles.value, HasCycles: f.cycles.set,
+		Turns: f.turns.value, HasTurns: f.turns.set,
+		Timeout: f.timeout.value, HasTimeout: f.timeout.set,
+		Compact:     f.compact,
+		Compactions: f.compactions.value, HasCompactions: f.compactions.set,
+	}
+}
+
+type trackedInt struct {
+	name  string
+	value int
+	set   bool
+}
+
+func (v *trackedInt) String() string {
+	if !v.set {
+		return ""
+	}
+	return strconv.Itoa(v.value)
+}
+
+func (v *trackedInt) Set(text string) error {
+	n, err := strconv.Atoi(text)
+	if err != nil {
+		return fmt.Errorf("%s must be an integer", v.name)
+	}
+	if n < 0 {
+		return fmt.Errorf("%s cannot be negative", v.name)
+	}
+	v.value, v.set = n, true
+	return nil
+}
+
+type trackedDuration struct {
+	name  string
+	value time.Duration
+	set   bool
+}
+
+func (v *trackedDuration) String() string {
+	if !v.set {
+		return ""
+	}
+	return v.value.String()
+}
+
+func (v *trackedDuration) Set(text string) error {
+	d, err := time.ParseDuration(text)
+	if err != nil {
+		return fmt.Errorf("%s must be a duration: %w", v.name, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s must be positive", v.name)
+	}
+	v.value, v.set = d, true
+	return nil
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `bench — AI-assisted workbench and Unix filter
 
@@ -386,6 +504,12 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
+  -check command      literal shell-backed check for each open task turn
+  -cycles n           failed checks before Ply stops (0 = unbounded)
+  -turns n            model turns before Ply stops (0 = unbounded)
+  -timeout duration   per-command Ply timeout
+  -compact            continue through full context by compacting
+  -compactions n      compactions before Ply stops (0 = unbounded)
 
 Inside the TUI, Enter runs and Alt/Shift+Enter inserts a newline. Type /help
 for commands. Ctrl-C interrupts or quits; Ctrl-D exits an empty prompt;
@@ -400,7 +524,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-C dir] [-t tools | -sh] [-s skill] [-f session] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

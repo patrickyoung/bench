@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -200,5 +201,28 @@ func (m *Model) statusLine() string {
 	} else if len(m.activeSkills) > 1 {
 		skills = fmt.Sprintf("%d skills", len(m.activeSkills))
 	}
-	return m.modeDisplay() + " · " + m.modelDisplay() + " · " + skills
+	return m.modeDisplay() + " · " + m.modelDisplay() + " · " + skills + " · " + m.taskPolicyDisplay()
+}
+
+func (m *Model) taskPolicyDisplay() string {
+	parts := []string{"work has no executable check"}
+	if m.taskOptions.Check != "" {
+		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)
+	}
+	if m.taskOptions.HasCycles {
+		parts = append(parts, fmt.Sprintf("cycles=%d", m.taskOptions.Cycles))
+	}
+	if m.taskOptions.HasTurns {
+		parts = append(parts, fmt.Sprintf("turns=%d", m.taskOptions.Turns))
+	}
+	if m.taskOptions.HasTimeout {
+		parts = append(parts, "timeout="+m.taskOptions.Timeout.String())
+	}
+	if m.taskOptions.Compact {
+		parts = append(parts, "compact")
+	}
+	if m.taskOptions.HasCompactions {
+		parts = append(parts, fmt.Sprintf("compactions=%d", m.taskOptions.Compactions))
+	}
+	return strings.Join(parts, " · ")
 }

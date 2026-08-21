@@ -562,7 +562,7 @@ func (m *Model) updateSkillRunProcess(event plyexec.Event) (tea.Model, tea.Cmd) 
 		m.notice = ""
 	case event.ExitCode == 2:
 		m.skillRunState = skillRunNotDone
-		m.notice = "Not done · strict lint still fails or a bound was reached"
+		m.notice = "Not done · Ply stopped before strict lint passed"
 	default:
 		m.skillRunState = skillRunFailed
 		m.notice = filterFailure("ply", event.ExitCode, event.Err, m.skillRunLog)

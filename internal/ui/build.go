@@ -100,7 +100,7 @@ func (m *Model) updateBuildProcess(event draftexec.Event) (tea.Model, tea.Cmd) {
 		m.notice = ""
 	case event.ExitCode == 2:
 		m.buildState = buildNotDone
-		m.notice = "Not done · the check still fails or a bound was reached"
+		m.notice = "Not done · draft/Ply stopped before the build check passed"
 	default:
 		m.buildState = buildFailed
 		m.notice = filterFailure("draft build", event.ExitCode, event.Err, m.buildLog)

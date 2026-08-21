@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
@@ -84,6 +86,69 @@ func TestTaskExitTwoRemainsNotDone(t *testing.T) {
 	}
 	if len(m.messages) != 2 || m.messages[1].role != roleTools || !strings.Contains(m.messages[1].text, "FAIL") {
 		t.Fatalf("failed task evidence=%#v", m.messages)
+	}
+}
+
+func TestTaskPolicyPropagatesAndCheckedSuccessNamesTheVerdict(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	options := plyexec.TaskOptions{
+		Check:  "go test ./...",
+		Cycles: 0, HasCycles: true,
+		Turns: 20, HasTurns: true,
+		Timeout: time.Minute, HasTimeout: true,
+		Compact:     true,
+		Compactions: 2, HasCompactions: true,
+	}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "finish it", TaskOptions: options})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.req.Options != options {
+		t.Fatalf("task options=%#v, want %#v", task.req.Options, options)
+	}
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0, Session: "/tmp/compacted.jsonl"})
+	m = updated.(*Model)
+	if m.session != "/tmp/compacted.jsonl" || !strings.Contains(m.notice, "check passed") || !strings.Contains(m.notice, "replayable") {
+		t.Fatalf("session=%q notice=%q", m.session, m.notice)
+	}
+}
+
+func TestPassingPrecheckDoesNotClaimAReplayableModelTurn(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/not-created.jsonl", Workspace: "/work", InitialPrompt: "already done",
+		TaskOptions: plyexec.TaskOptions{Check: "test -f result"},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "already passed") || !strings.Contains(m.notice, "no model turn") || strings.Contains(m.notice, "replayable") {
+		t.Fatalf("notice=%q", m.notice)
+	}
+}
+
+func TestCompactedTaskSessionOwnsLaterAskOnlyTurn(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	runner := &fakeRunner{events: make(chan askexec.Event)}
+	m := New(Config{
+		Task: task, Runner: runner, Session: "/tmp/source.jsonl", Workspace: "/work", InitialPrompt: "work",
+		TaskOptions: plyexec.TaskOptions{Compact: true},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/successor.jsonl"})
+	m = updated.(*Model)
+	if m.session != "/tmp/successor.jsonl" || !strings.Contains(m.notice, "not done") {
+		t.Fatalf("session=%q notice=%q", m.session, m.notice)
+	}
+	m.composer.SetValue("/ask")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	m.composer.SetValue("continue")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || runner.req.Session != "/tmp/successor.jsonl" {
+		t.Fatalf("later Ask session=%q", runner.req.Session)
 	}
 }
 
@@ -200,6 +265,22 @@ func TestSlashCommandsAreDiscoverableAndNeverAccidentalModelCalls(t *testing.T) 
 	help := m.renderHelp(m.viewport.Width())
 	if !m.showHelp || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/shell") {
 		t.Fatalf("help=%q", help)
+	}
+}
+
+func TestStatusShowsTheExactConfiguredWorkCheck(t *testing.T) {
+	check := `go test ./... && printf "literal spaces"`
+	m := New(Config{TaskOptions: plyexec.TaskOptions{Check: check}})
+	m.taskMode = false
+	m.composer.SetValue("/status")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Ask · no model-run tools") || !strings.Contains(m.notice, "work check "+strconv.Quote(check)) {
+		t.Fatalf("status=%q", m.notice)
+	}
+	help := m.renderHelp(80)
+	if !strings.Contains(help, strconv.Quote(check)) {
+		t.Fatalf("help omitted configured check: %q", help)
 	}
 }
 
