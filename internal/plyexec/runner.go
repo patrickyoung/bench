@@ -4,6 +4,8 @@ package plyexec
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/patrickyoung/bench/internal/filterexec"
@@ -24,13 +26,78 @@ type RefineRequest struct {
 	SessionDir string
 }
 
+// TaskRequest is one open-ended workspace task. An empty Toolbox deliberately
+// means ply's full-shell mode; callers must make that grant visible rather than
+// presenting it as a sandbox.
+type TaskRequest struct {
+	Dir     string
+	Goal    string
+	Session string
+	Skills  []string
+	Toolbox string
+}
+
 type Client interface {
 	Refine(context.Context, RefineRequest) <-chan Event
 }
 
+type Worker interface {
+	Work(context.Context, TaskRequest) <-chan Event
+}
+
 type Runner struct {
 	Path      string
+	AskPath   string
 	BriefPath string
+}
+
+// Work lets ply compose Ask with ordinary programs in the workspace. The
+// goal and paths are literal argv values; no user text is evaluated by bench.
+// With no explicit toolbox, -sh is intentional: ply documents that this is a
+// full shell grant and the TUI labels it as such.
+func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
+	dir := strings.TrimSpace(req.Dir)
+	goal := strings.TrimSpace(req.Goal)
+	session := strings.TrimSpace(req.Session)
+	if dir == "" {
+		return failed("task workspace is empty")
+	}
+	if goal == "" {
+		return failed("task goal is empty")
+	}
+	if session == "" {
+		return failed("task session is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(session), 0o700); err != nil {
+		return failed(err.Error())
+	}
+	path := r.Path
+	if path == "" {
+		path = "ply"
+	}
+	args := []string{}
+	if toolbox := strings.TrimSpace(req.Toolbox); toolbox != "" {
+		args = append(args, "-t", toolbox)
+	} else {
+		args = append(args, "-sh")
+	}
+	args = append(args, "-C", dir, "-f", session)
+	for _, skill := range req.Skills {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			return failed("skill name is empty")
+		}
+		args = append(args, "-s", skill)
+	}
+	args = append(args, "--", goal)
+	env := []string{}
+	if ask := strings.TrimSpace(r.AskPath); ask != "" {
+		env = append(env, "ASK="+ask)
+	}
+	if brief := strings.TrimSpace(r.BriefPath); brief != "" {
+		env = append(env, "BRIEF="+brief)
+	}
+	return filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env})
 }
 
 // Refine lets ply edit the ordinary skill directory. The fixed check invokes

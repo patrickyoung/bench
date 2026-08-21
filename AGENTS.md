@@ -21,10 +21,14 @@ When changing `bench`:
   state machine; tests must not require a model, credentials, or a network;
 - run `go test ./...` before reporting success.
 
-The implemented product boundary is deliberately compositional: `ask`
-conversation, `draft new/check/build/prove`, and `hone -into` are separate
-programs with visible evidence and exit-status verdicts. The Skills workbench
-likewise composes `brief ls/path/cat/new/lint`, passes sources to `ply` on
-stdin, and uses strict lint as the only refinement verdict. Further build,
-evaluation, and learning features belong here only as real compositions of
-existing filters, added one verified vertical slice at a time.
+The implemented product boundary is deliberately compositional. Open tasks
+run through `ply` with one explicit Ask session; the full-shell or toolbox
+grant and the resulting typescript stay visible, while unchecked exit zero is
+only a model stop, never a completed verdict. `ctrl+t` uses direct `ask` for a
+no-tools turn in that same session. `draft new/check/build/prove` and
+`hone -into` remain separate programs for promoted agent work, with visible
+evidence and exit-status verdicts. The Skills workbench likewise composes
+`brief ls/path/cat/new/lint`, passes sources to `ply` on stdin, and uses strict
+lint as the only refinement verdict. Further task, build, evaluation, and
+learning features belong here only as real compositions of existing filters,
+added one verified vertical slice at a time.

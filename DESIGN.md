@@ -1,11 +1,20 @@
 # bench design
 
-`bench` is a terminal workbench for building agents out of Unix filters.
-The TUI is the glass; the filters remain the machine.
+`bench` is a terminal workbench for open tasks and agent-building, composed
+from Unix filters. The TUI is the glass; the filters remain the machine.
 
 ## The product loop
 
-An agent project grows through five mechanically distinct stages:
+The default product is an open task loop:
+
+```
+task <-> tools
+ ask      ply
+```
+
+Ply carries Ask through commands and results in one replayable session. When
+the work is recurring or needs an executable definition of done, that same
+task can be promoted through five mechanically distinct stages:
 
 ```
 requirements -> design -> build -> evaluate -> learn
@@ -14,24 +23,42 @@ requirements -> design -> build -> evaluate -> learn
 ```
 
 Each arrow is an artifact or a process boundary, not an in-memory framework
-call. A user can begin with a few requirements, inspect everything the model
+call. A user can begin with an ordinary task, inspect everything the model
 said and every command that ran, and keep adding checks and capabilities
 without changing runtimes.
 
 The first vertical slice was `ask`: a polished, resumable conversation backed
-by one explicit append-only ask session. The same boundary now carries the
-project through Design, Build, Prove, and Learn.
+by one explicit append-only Ask session. Ply now makes that session useful for
+open tool-backed tasks, and the same evidence boundary carries promoted work
+through Design, Build, Prove, and Learn.
 
 ## Non-negotiable boundary
 
-The TUI does not become a model client, an agent runtime, or a shell. For an
-unskilled turn it executes the equivalent of:
+The TUI does not become a model client, an agent runtime, or a shell. Its
+default task turn executes the equivalent of:
+
+```sh
+ply -sh -C WORKSPACE -f SESSION -- GOAL
+```
+
+With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
+are repeated `-s SKILL` arguments. Ply owns the Ask→command→result loop and
+records it in the explicit Ask session. Bench renders stderr as visible tool
+evidence and stdout as the answer. Because an unchecked Ply exit zero means
+only that the model stopped, the UI never calls that outcome done or passed.
+
+The full-shell grant is visible at all times. A toolbox is an executable-name
+grant, not confinement; operating-system sandboxing remains a separate
+composition rather than a misleading TUI boolean.
+
+Ask-only is the deliberately narrower toggle. For an unskilled turn it
+executes the equivalent of:
 
 ```sh
 ask -f .bench/sessions/SESSION.jsonl -- "$message"
 ```
 
-With explicit skills selected, the seam is still ordinary composition:
+With explicit skills selected, its seam is still ordinary composition:
 
 ```sh
 ask -S "$(ask system; brief cat SKILL...)" \
@@ -42,15 +69,15 @@ It captures stdout as the answer, renders stderr as transient activity, and
 treats the exit code as the outcome. The JSONL session is authoritative. A
 failed turn stays failed even if its output sounds confident.
 
-This boundary is what lets later screens compose rather than accrete:
+These boundaries are what let later screens compose rather than accrete:
 
-- Build configures and observes `ply`; it does not copy its loop.
+- Open tasks and Build configure and observe `ply`; neither copies its loop.
 - Procedures come from `brief`, not a hidden prompt library. Selected skill
   names are visible, and Ask records the exact composed prompt per turn.
 - Evaluation runs named checks and mutation suites; it does not ask the model
   if it won.
 - Learning admits only `hone` output from verified recoveries.
-- Approval and confinement will be `may` and `cage`, not booleans in UI
+- Approval and confinement are separate `may` and `cage` compositions, not booleans in UI
   state.
 
 ## The agent project already has a format
@@ -77,16 +104,19 @@ leaving an ordinary file or command behind.
 
 ## Interaction model
 
-The whole first screen is one conversation. There is no dashboard before the
-work and no command palette full of promises.
+The whole first screen is one open task. There is no dashboard before the work
+and no command palette full of promises.
 
 - The transcript is primary and scrollable.
 - The composer is always visible.
-- `ctrl+s` sends; `enter` remains available for writing requirements.
+- `ctrl+s` runs the task; `enter` remains available for writing it.
+- `ctrl+t` toggles the visible grant between Ask + tools and Ask-only.
+- `ctrl+d` promotes only user-authored task text into an agent design; tool
+  output and assistant prose are never requirements silently.
 - `esc` interrupts a running process.
 - `ctrl+c` interrupts first and quits only when idle.
 - `f1` shows the complete keyboard contract.
-- The active model, process state, and durable session path are visible.
+- The active model, tool grant, process state, and durable session path are visible.
 
 The layout collapses at narrow widths instead of clipping a decorative side
 rail. Colour is semantic garnish; labels and spacing carry the hierarchy.
@@ -123,11 +153,12 @@ By default, sessions live under `.bench/sessions` in the working directory.
 `BENCH_DIR` moves that root. The directory is created only when the first
 turn is sent, so opening and quitting leaves the workspace untouched.
 
-One TUI invocation owns one explicit session path. It never changes ask's
+One TUI invocation owns one explicit session path shared by tools and Ask-only
+turns. It never changes Ask's
 `current` pointer and never guesses which global conversation the user meant.
 That makes two workspaces, two terminals, and replay all unsurprising.
 
-Saved conversations are discovered only by filename and filesystem metadata.
+Saved task sessions are discovered only by filename and filesystem metadata.
 Opening one is the ordinary filter sequence `ask replay -check SESSION`
 followed by `ask replay SESSION`. A failed proof returns to the picker. The
 human rendering from the second command is shown verbatim (with terminal
@@ -146,7 +177,7 @@ and writes the brief skill. There is no TUI memory schema.
 
 ## Growth order
 
-1. **Done:** make the ask process boundary, cancellation, resize behaviour,
+1. **Done:** make the Ask process boundary, cancellation, resize behaviour,
    empty and error states excellent.
 2. **Done:** restore only sessions proven and rendered through `ask replay`,
    without parsing private ask internals.
@@ -165,6 +196,9 @@ and writes the brief skill. There is no TUI memory schema.
 9. **Done:** integrate `brief` as a progressive-disclosure Skills workbench,
    compose source-driven refinement through `ply`, and let selected skills
    shape replayable Ask turns without a private catalogue or prompt store.
+10. **Done:** make open tasks the default, composing Ask + tools through Ply,
+    retaining visible tool evidence, exposing the full-shell/toolbox grant,
+    and preserving Ask-only and agent-design promotion as deliberate paths.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

@@ -170,13 +170,13 @@ func TestBriefLintExitOneIsAnInspectableIssue(t *testing.T) {
 	}
 }
 
-func TestSkillCanBeExplicitlyToggledForAsk(t *testing.T) {
+func TestSkillCanBeExplicitlyToggledForFutureTasks(t *testing.T) {
 	m := New(Config{})
 	m.screen = screenSkillDetail
 	m.skillDetailName = "go-review"
 	updated, _ := m.Update(key("u"))
 	m = updated.(*Model)
-	if len(m.activeSkills) != 1 || m.activeSkills[0] != "go-review" || !strings.Contains(m.notice, "future Ask") {
+	if len(m.activeSkills) != 1 || m.activeSkills[0] != "go-review" || !strings.Contains(m.notice, "future task") {
 		t.Fatalf("active=%#v notice=%q", m.activeSkills, m.notice)
 	}
 	updated, _ = m.Update(key("u"))

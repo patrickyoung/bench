@@ -788,12 +788,12 @@ func (m *Model) toggleActiveSkill(name string) {
 	for i, active := range m.activeSkills {
 		if active == name {
 			m.activeSkills = append(m.activeSkills[:i], m.activeSkills[i+1:]...)
-			m.notice = name + " removed from future Ask turns"
+			m.notice = name + " removed from future task turns"
 			return
 		}
 	}
 	m.activeSkills = append(m.activeSkills, name)
-	m.notice = name + " will shape future Ask turns through brief cat"
+	m.notice = name + " will shape future task turns through brief"
 }
 
 func (m *Model) skillIsActive(name string) bool {

@@ -21,11 +21,11 @@ import (
 	"github.com/patrickyoung/bench/internal/ui"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "usage: bench [-new | -session id-or-path | -project dir] [initial requirements]")
+		fmt.Fprintln(flag.CommandLine.Output(), "usage: bench [-new | -session id-or-path | -project dir] [initial task]")
 		fmt.Fprintln(flag.CommandLine.Output(), "\nA terminal workbench over the bench Unix filters.")
 		flag.PrintDefaults()
 	}
@@ -76,6 +76,7 @@ func main() {
 	if plyPath == "" {
 		plyPath = "ply"
 	}
+	toolbox := os.Getenv("BENCH_TOOLS")
 	modelName := os.Getenv("ASK_MODEL")
 	if modelName == "" {
 		modelName = "ask default"
@@ -87,7 +88,7 @@ func main() {
 	}
 	initial := strings.Join(flag.Args(), " ")
 	if *project != "" && initial != "" {
-		fatal(fmt.Errorf("initial requirements cannot be combined with -project"))
+		fatal(fmt.Errorf("initial task cannot be combined with -project"))
 	}
 	projectDir := ""
 	if *project != "" {
@@ -103,12 +104,14 @@ func main() {
 		active = session.Resolve(sessionsDir, *resume)
 	}
 
+	plyRunner := plyexec.Runner{Path: plyPath, AskPath: askPath, BriefPath: briefPath}
 	m := ui.New(ui.Config{
 		Runner:        askexec.Runner{Path: askPath, BriefPath: briefPath},
+		Task:          plyRunner,
 		Draft:         draftexec.Runner{Path: draftPath, WorkDir: cwd},
 		Hone:          honeexec.Runner{Path: honePath, WorkDir: cwd},
 		Brief:         briefexec.Runner{Binary: briefPath, WorkDir: cwd},
-		Ply:           plyexec.Runner{Path: plyPath, BriefPath: briefPath},
+		Ply:           plyRunner,
 		Session:       active,
 		NewSession:    newPath,
 		Resume:        resuming,
@@ -119,6 +122,7 @@ func main() {
 		DataDir:       root,
 		Project:       projectDir,
 		InitialPrompt: initial,
+		Toolbox:       toolbox,
 	})
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fatal(err)

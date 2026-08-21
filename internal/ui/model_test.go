@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
 )
 
@@ -15,6 +16,16 @@ type fakeRunner struct {
 	replayEvents chan askexec.Event
 	req          askexec.Request
 	replayPath   string
+}
+
+type fakeTask struct {
+	events chan plyexec.Event
+	req    plyexec.TaskRequest
+}
+
+func (f *fakeTask) Work(_ context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
+	f.req = req
+	return f.events
 }
 
 func (f *fakeRunner) Replay(_ context.Context, path string) <-chan askexec.Event {
@@ -27,46 +38,82 @@ func (f *fakeRunner) Start(_ context.Context, req askexec.Request) <-chan askexe
 	return f.events
 }
 
-func TestSubmitAndSuccessfulTurn(t *testing.T) {
-	runner := &fakeRunner{events: make(chan askexec.Event, 3)}
-	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", Model: "test/model", InitialPrompt: "build it"})
+func TestDefaultSubmitRunsReplayableTaskAndKeepsToolActivity(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event, 4)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", Model: "test/model", InitialPrompt: "build it"})
 	updated, cmd := m.Update(key("ctrl+s"))
 	m = updated.(*Model)
 	if cmd == nil || !m.running {
-		t.Fatal("submit did not start a turn")
+		t.Fatal("submit did not start a task")
 	}
-	if runner.req.Message != "build it" || runner.req.Session != "/tmp/run.jsonl" {
-		t.Fatalf("request = %#v", runner.req)
+	if task.req.Goal != "build it" || task.req.Session != "/tmp/run.jsonl" || task.req.Dir != "/work" {
+		t.Fatalf("request = %#v", task.req)
 	}
 
-	updated, _ = m.Update(processEvent{Stream: askexec.Stderr, Text: "thinking"})
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stderr, Text: "$ rg TODO\nfound one\n"})
 	m = updated.(*Model)
-	updated, _ = m.Update(processEvent{Stream: askexec.Stdout, Text: "working agent"})
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stdout, Text: "working result"})
 	m = updated.(*Model)
-	updated, _ = m.Update(processEvent{Done: true, ExitCode: 0})
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0})
 	m = updated.(*Model)
 
-	if m.running || len(m.messages) != 2 {
+	if m.running || len(m.messages) != 3 || m.messages[1].role != roleTools {
 		t.Fatalf("running=%v messages=%#v", m.running, m.messages)
 	}
-	if got := m.messages[1].text; got != "working agent" {
+	if got := m.messages[2].text; got != "working result" {
 		t.Fatalf("answer = %q", got)
 	}
-	if !strings.Contains(m.notice, "replayable") {
+	if !strings.Contains(m.messages[1].text, "rg TODO") || !strings.Contains(m.notice, "no executable check") {
 		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestTaskExitTwoRemainsNotDone(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "finish it"})
+	updated, _ := m.Update(key("ctrl+s"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stderr, Text: "$ go test ./...\nFAIL\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Err: &fakeExitError{}})
+	m = updated.(*Model)
+	if m.running || !strings.Contains(m.notice, "not done") || strings.Contains(strings.ToLower(m.notice), "passed") {
+		t.Fatalf("running=%v notice=%q", m.running, m.notice)
+	}
+	if len(m.messages) != 2 || m.messages[1].role != roleTools || !strings.Contains(m.messages[1].text, "FAIL") {
+		t.Fatalf("failed task evidence=%#v", m.messages)
+	}
+}
+
+func TestCtrlTTogglesToAskOnly(t *testing.T) {
+	runner := &fakeRunner{events: make(chan askexec.Event)}
+	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "explain it"})
+	updated, _ := m.Update(key("ctrl+t"))
+	m = updated.(*Model)
+	if m.taskMode || !strings.Contains(m.notice, "Ask only") {
+		t.Fatalf("taskMode=%v notice=%q", m.taskMode, m.notice)
+	}
+	if got := m.View(); got.WindowTitle != "bench · ask" || !strings.Contains(got.Content, "ASK ONLY · NO TOOLS") {
+		t.Fatalf("Ask-only grant is not visible: title=%q\n%s", got.WindowTitle, got.Content)
+	}
+	updated, cmd := m.Update(key("ctrl+s"))
+	m = updated.(*Model)
+	if cmd == nil || m.job != jobTurn || runner.req.Message != "explain it" {
+		t.Fatalf("job=%v request=%#v", m.job, runner.req)
 	}
 }
 
 func TestSubmitPassesOnlyExplicitlyActiveBriefSkills(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event)}
-	m := New(Config{Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "review it"})
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Runner: runner, Session: "/tmp/run.jsonl", InitialPrompt: "review it"})
 	m.activeSkills = []string{"go-review", "house-style"}
 	updated, cmd := m.Update(key("ctrl+s"))
 	m = updated.(*Model)
 	if cmd == nil || !m.running {
 		t.Fatal("skilled turn did not start")
 	}
-	if got := strings.Join(runner.req.Skills, ","); got != "go-review,house-style" {
+	if got := strings.Join(task.req.Skills, ","); got != "go-review,house-style" {
 		t.Fatalf("skills = %q", got)
 	}
 }
@@ -89,8 +136,40 @@ func TestResizeKeepsComposerAndTranscriptUsable(t *testing.T) {
 		t.Fatalf("viewport is unusable: %dx%d", m.viewport.Width(), m.viewport.Height())
 	}
 	view := m.View()
-	if !view.AltScreen || !strings.Contains(view.Content, "REQUIREMENTS") {
+	if !view.AltScreen || view.WindowTitle != "bench · task" || !strings.Contains(view.Content, "TASK · FULL SHELL") {
 		t.Fatalf("view missing terminal contract: %#v", view)
+	}
+}
+
+func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
+	m := New(Config{Workspace: "/work", Session: "/work/.bench/sessions/task.jsonl", Model: "test/model"})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(*Model)
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if got := m.View().Content; !strings.Contains(got, "What are we working on?") || !strings.Contains(got, "FULL SHELL") {
+		t.Fatalf("default task contract is not visible:\n%s", got)
+	}
+
+	m.messages = []message{
+		{role: roleUser, text: "Find the failing check and fix the smallest root cause."},
+		{role: roleTools, text: strings.Repeat("$ rg failure\ninternal/check.go:42: failure\n", 24)},
+		{role: roleAssistant, text: "The parser accepted an empty verdict; I tightened it and the focused test now passes."},
+	}
+	m.notice = "Task stopped · replayable session · no executable check"
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if got := m.View().Content; !strings.Contains(got, "TOOLS · END") || !strings.Contains(got, "no executable check") {
+		t.Fatalf("completed task evidence is not visible:\n%s", got)
+	}
+}
+
+func TestExplicitToolboxIsVisibleInsteadOfFullShell(t *testing.T) {
+	m := New(Config{Workspace: "/work", Toolbox: "/work/.bench/tools"})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(*Model)
+	got := m.View().Content
+	if !strings.Contains(got, "TASK · TOOLBOX tools") || strings.Contains(got, "TASK · FULL SHELL") {
+		t.Fatalf("toolbox grant is ambiguous:\n%s", got)
 	}
 }
 
@@ -190,7 +269,7 @@ func TestReplayProgressDoesNotShowTheEmptyState(t *testing.T) {
 	m.activity = "verifying session"
 	m.syncContent()
 	content := m.viewport.View()
-	if !strings.Contains(content, "SESSION") || strings.Contains(content, "Start with requirements") {
+	if !strings.Contains(content, "SESSION") || strings.Contains(content, "What are we working on") {
 		t.Fatalf("replay progress = %q", content)
 	}
 }

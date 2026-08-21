@@ -33,6 +33,7 @@ type role uint8
 const (
 	roleUser role = iota + 1
 	roleAssistant
+	roleTools
 )
 
 type message struct {
@@ -43,6 +44,7 @@ type message struct {
 // Config supplies values bench has already resolved at the command boundary.
 type Config struct {
 	Runner        askClient
+	Task          plyexec.Worker
 	Draft         draftexec.Client
 	Hone          honeexec.Client
 	Brief         briefexec.Client
@@ -57,6 +59,7 @@ type Config struct {
 	DataDir       string
 	Project       string
 	InitialPrompt string
+	Toolbox       string
 }
 
 // Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
@@ -64,6 +67,7 @@ type Config struct {
 // commands are running.
 type Model struct {
 	runner     askClient
+	task       plyexec.Worker
 	draft      draftexec.Client
 	hone       honeexec.Client
 	brief      briefexec.Client
@@ -73,6 +77,8 @@ type Model struct {
 	modelName  string
 	workspace  string
 	dataDir    string
+	toolbox    string
+	taskMode   bool
 
 	composer       textarea.Model
 	project        textinput.Model
@@ -126,23 +132,24 @@ type Model struct {
 	skillRunSession string
 	activeSkills    []string
 
-	width       int
-	height      int
-	dark        bool
-	ready       bool
-	running     bool
-	showHelp    bool
-	spinner     int
-	stdout      strings.Builder
-	activity    string
-	notice      string
-	cancel      context.CancelFunc
-	events      <-chan askexec.Event
-	draftEvents <-chan draftexec.Event
-	honeEvents  <-chan honeexec.Event
-	briefEvents <-chan briefexec.Event
-	plyEvents   <-chan plyexec.Event
-	job         job
+	width        int
+	height       int
+	dark         bool
+	ready        bool
+	running      bool
+	showHelp     bool
+	spinner      int
+	stdout       strings.Builder
+	activity     string
+	toolActivity string
+	notice       string
+	cancel       context.CancelFunc
+	events       <-chan askexec.Event
+	draftEvents  <-chan draftexec.Event
+	honeEvents   <-chan honeexec.Event
+	briefEvents  <-chan briefexec.Event
+	plyEvents    <-chan plyexec.Event
+	job          job
 }
 
 type processEvent askexec.Event
@@ -176,6 +183,7 @@ const (
 	jobBriefLint
 	jobBriefNew
 	jobPlyRefine
+	jobPlyTask
 )
 
 type screen uint8
@@ -300,6 +308,7 @@ func New(cfg Config) *Model {
 
 	m := Model{
 		runner:         cfg.Runner,
+		task:           cfg.Task,
 		draft:          cfg.Draft,
 		hone:           cfg.Hone,
 		brief:          cfg.Brief,
@@ -309,6 +318,8 @@ func New(cfg Config) *Model {
 		modelName:      cfg.Model,
 		workspace:      cfg.Workspace,
 		dataDir:        cfg.DataDir,
+		toolbox:        cfg.Toolbox,
+		taskMode:       true,
 		composer:       composer,
 		project:        project,
 		skill:          skill,
@@ -375,6 +386,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case briefProcessEvent:
 		return m.updateBriefProcess(briefexec.Event(msg))
 	case plyProcessEvent:
+		if m.job == jobPlyTask {
+			return m.updateTaskProcess(plyexec.Event(msg))
+		}
 		return m.updateSkillRunProcess(plyexec.Event(msg))
 	case tickMsg:
 		if m.running {
@@ -417,6 +431,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key == "ctrl+b" && !m.running && !m.picking && !isSkillScreen(m.screen) {
 			return m.openSkills()
+		}
+		if key == "ctrl+t" && !m.running && !m.picking && m.screen == screenAsk {
+			m.taskMode = !m.taskMode
+			if m.taskMode {
+				m.notice = "Tools on · Ply can act in this workspace"
+			} else {
+				m.notice = "Ask only · no commands will run"
+			}
+			m.syncContent()
+			return m, nil
 		}
 		if isSkillScreen(m.screen) {
 			return m.updateSkills(msg, key)
@@ -479,10 +503,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.composer.Value())
 	if text == "" {
-		m.notice = "Write a requirement before sending."
+		m.notice = "Describe a task before sending."
 		return m, nil
 	}
-	if m.runner == nil {
+	if m.taskMode && m.task == nil {
+		m.notice = "ply task runner is unavailable"
+		return m, nil
+	}
+	if !m.taskMode && m.runner == nil {
 		m.notice = "ask runner is unavailable"
 		return m, nil
 	}
@@ -492,11 +520,21 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	m.composer.Blur()
 	m.stdout.Reset()
 	m.activity = ""
+	m.toolActivity = ""
 	m.notice = ""
 	m.running = true
 	m.spinner = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	if m.taskMode {
+		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
+			Dir: m.workspace, Goal: text, Session: m.session,
+			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox,
+		})
+		m.job = jobPlyTask
+		m.syncContent()
+		return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
+	}
 	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session, Skills: append([]string(nil), m.activeSkills...)})
 	m.job = jobTurn
 	m.syncContent()
@@ -562,6 +600,49 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 	return m, waitEvent(m.events)
 }
 
+func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
+	if !event.Done {
+		switch event.Stream {
+		case plyexec.Stdout:
+			m.stdout.WriteString(safeText(event.Text))
+		case plyexec.Stderr:
+			text := safeText(event.Text)
+			m.toolActivity = appendVisibleOutput(m.toolActivity, text, activityLimit,
+				"[earlier tool activity omitted from this view; the session is authoritative]\n")
+			m.appendActivity(text)
+		}
+		m.syncContent()
+		return m, waitPlyEvent(m.plyEvents)
+	}
+
+	m.running = false
+	m.cancel = nil
+	answer := strings.TrimSpace(m.stdout.String())
+	toolLog := strings.TrimSpace(m.toolActivity)
+	if toolLog != "" {
+		m.messages = append(m.messages, message{role: roleTools, text: toolLog})
+	}
+	switch {
+	case errors.Is(event.Err, context.Canceled):
+		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
+	case event.Err == nil && event.ExitCode == 0:
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
+		m.notice = "Task stopped · replayable session · no executable check"
+	case event.ExitCode == 2:
+		m.notice = "Task not done · Ply stopped at a bound"
+	default:
+		m.notice = filterFailure("ply", event.ExitCode, event.Err, toolLog)
+	}
+	m.activity = ""
+	m.toolActivity = ""
+	m.job = 0
+	m.syncContent()
+	cmd := m.composer.Focus()
+	return m, cmd
+}
+
 func (m *Model) startReplay(path string) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		m.notice = "ask runner is unavailable"
@@ -614,7 +695,7 @@ func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.restored = ""
 	m.messages = nil
 	m.picking = false
-	m.notice = "New conversation"
+	m.notice = "New task session"
 	m.syncContent()
 	cmd := m.composer.Focus()
 	return m, cmd
@@ -634,6 +715,8 @@ func (m *Model) interrupt() {
 			name = "brief"
 		case jobPlyRefine:
 			name = "ply"
+		case jobPlyTask:
+			name = "task"
 		}
 		m.notice = "Interrupting " + name + "…"
 		m.cancel()
@@ -813,11 +896,19 @@ func spinnerFrame(n int) string {
 func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
-		title := t.hero.Render("Start with requirements.")
-		body := t.muted.Width(max(20, width-8)).Render(
-			"bench keeps the conversation in an append-only ask session. " +
-				"Tell it what the agent should do, who it serves, and what would prove it works.")
-		examples := t.faint.Render("Try:  Build an agent that reviews Go patches and proves them with go test ./…")
+		titleText := "What are we working on?"
+		bodyText := "Ask can inspect and act through Ply's ordinary workspace tools. Every command and result stays in a replayable session. Press ctrl+t for Ask-only, or ctrl+d to promote the task into an agent design."
+		exampleText := "Try:  Find why the tests fail and fix the smallest root cause."
+		if !m.taskMode {
+			titleText = "What should we think through?"
+			bodyText = "Ask-only continues the same replayable session without running commands. Press ctrl+t to restore workspace tools, or ctrl+d to promote your own task text into an agent design."
+			exampleText = "Try:  Explain the tradeoffs in this design before we change it."
+		} else if m.toolbox != "" {
+			bodyText = "Ask can inspect and act through the explicit " + filepath.Base(m.toolbox) + " toolbox. Every command and result stays in a replayable session. Press ctrl+t for Ask-only, or ctrl+d to promote the task into an agent design."
+		}
+		title := t.hero.Render(titleText)
+		body := t.muted.Width(max(20, width-8)).Render(bodyText)
+		examples := t.faint.Render(exampleText)
 		return lipgloss.NewStyle().Padding(1, 2).Render(title + "\n\n" + body + "\n\n" + examples)
 	}
 	blocks := make([]string, 0, len(m.messages)+2)
@@ -835,8 +926,15 @@ func (m *Model) renderTranscript(width int) string {
 		if msg.role == roleAssistant {
 			label = t.askLabel.Render("ASK")
 			bodyStyle = t.askBlock
+		} else if msg.role == roleTools {
+			label = t.sessionLabel.Render("TOOLS")
+			bodyStyle = t.restoredBlock
 		}
-		body := bodyStyle.Width(max(12, width-5)).Render(msg.text)
+		bodyText := msg.text
+		if msg.role == roleTools {
+			bodyText += "\n\nTOOLS · END"
+		}
+		body := bodyStyle.Width(max(12, width-5)).Render(bodyText)
 		blocks = append(blocks, label+"\n"+body)
 	}
 	if m.running {
@@ -846,6 +944,9 @@ func (m *Model) renderTranscript(width int) string {
 		}
 		working := t.working.Render(spinnerFrame(m.spinner) + "  " + line)
 		label := t.askLabel.Render("ASK")
+		if m.job == jobPlyTask {
+			label = t.sessionLabel.Render("TOOLS")
+		}
 		if m.job == jobReplay {
 			label = t.sessionLabel.Render("SESSION")
 		}
@@ -857,10 +958,10 @@ func (m *Model) renderTranscript(width int) string {
 func (m *Model) renderPicker(width int) string {
 	t := makeTheme(m.dark)
 	rows := []string{
-		t.hero.Render("Continue a verified conversation."),
-		t.muted.Render(ansi.Truncate("bench asks ask to prove a session before rendering or continuing it.", max(10, width-4), "…")),
+		t.hero.Render("Continue verified work."),
+		t.muted.Render(ansi.Truncate("bench asks Ask to prove a task session before rendering or continuing it.", max(10, width-4), "…")),
 		"",
-		pickerRow(t, m.selected == 0, "New conversation", "blank append-only session", width),
+		pickerRow(t, m.selected == 0, "New task", "blank append-only session", width),
 	}
 	for i, info := range m.sessions {
 		meta := info.Modified.Format("Jan 02 15:04") + "  ·  " + formatBytes(info.Size)
@@ -907,7 +1008,7 @@ func (m *Model) renderHelp(width int) string {
 				helpRow(t, "ctrl+r", "reload BRIEF_PATH", width))
 		case screenSkillDetail:
 			rows = append(rows,
-				helpRow(t, "u", "toggle this procedure for future Ask turns", width),
+				helpRow(t, "u", "toggle this procedure for future task turns", width),
 				helpRow(t, "e", "refine from pasted sources or feedback", width),
 				helpRow(t, "l", "rerun brief lint -strict", width),
 				helpRow(t, "h", "admit a verified build recovery with hone", width),
@@ -997,11 +1098,20 @@ func (m *Model) renderHelp(width int) string {
 		}
 		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 	}
+	sendHelp := "run the task with Ask + tools"
+	grantHelp := "Tools are Ply programs; without BENCH_TOOLS this is a full shell grant. Replay with:"
+	if !m.taskMode {
+		sendHelp = "send an Ask-only turn; no commands run"
+		grantHelp = "Ask-only and tools mode share one durable session. Replay it with:"
+	} else if m.toolbox != "" {
+		grantHelp = "Ply can name only programs in " + filepath.Base(m.toolbox) + ". Replay the session with:"
+	}
 	rows := []string{
 		t.hero.Render("Keyboard"),
 		"",
-		helpRow(t, "ctrl+s", "send requirements", width),
-		helpRow(t, "ctrl+d", "turn requirements into a DESIGN.md", width),
+		helpRow(t, "ctrl+s", sendHelp, width),
+		helpRow(t, "ctrl+t", "toggle workspace tools / Ask-only", width),
+		helpRow(t, "ctrl+d", "promote this task into an agent DESIGN.md", width),
 		helpRow(t, "ctrl+b", "browse and build brief skills", width),
 		helpRow(t, "enter", "new line in the composer", width),
 		helpRow(t, "pgup / pgdown", "scroll the transcript", width),
@@ -1009,9 +1119,9 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "f1", "close this help", width),
 		helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
 		helpRow(t, "↑ / ↓ or j / k", "choose a saved session", width),
-		helpRow(t, "n", "start a new conversation", width),
+		helpRow(t, "n", "start a new task session", width),
 		"",
-		t.muted.Render("The durable session is the source of truth. Replay it with:"),
+		t.muted.Render(grantHelp),
 		t.code.Width(max(10, width-4)).Render("ask replay -check " + m.session),
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
@@ -1028,7 +1138,10 @@ func (m *Model) View() tea.View {
 	t := makeTheme(m.dark)
 	w := max(24, m.width)
 	state := "ready"
-	section := "ask"
+	section := "task"
+	if !m.taskMode {
+		section = "ask"
+	}
 	if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		section = "design"
 	} else if m.screen == screenBuild {
@@ -1095,10 +1208,23 @@ func (m *Model) View() tea.View {
 	header := "  " + headerLeft + strings.Repeat(" ", gap) + headerRight + "  "
 	header = t.header.Width(w).Render(header)
 
-	composerLabel := t.faint.Render(" REQUIREMENTS ")
+	composerLabel := t.warning.Render(" TASK · FULL SHELL ")
+	if m.toolbox != "" {
+		composerLabel = t.sessionLabel.Render(" TASK · TOOLBOX " + filepath.Base(m.toolbox) + " ")
+	}
+	if !m.taskMode {
+		composerLabel = t.askLabel.Render(" ASK ONLY · NO TOOLS ")
+	}
 	composerContent := m.composer.View()
 	if m.screen == screenAsk && len(m.activeSkills) > 0 {
-		composerLabel = t.askLabel.Render(fmt.Sprintf(" REQUIREMENTS · %d BRIEF SKILL(S) ", len(m.activeSkills)))
+		mode := "FULL SHELL"
+		if m.toolbox != "" {
+			mode = "TOOLBOX " + filepath.Base(m.toolbox)
+		}
+		if !m.taskMode {
+			mode = "ASK ONLY"
+		}
+		composerLabel = t.askLabel.Render(fmt.Sprintf(" TASK · %s · %d BRIEF SKILL(S) ", mode, len(m.activeSkills)))
 	}
 	if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
@@ -1196,7 +1322,7 @@ func (m *Model) View() tea.View {
 		} else if m.screen == screenSkills {
 			notice = "type filter   ↑/↓ choose   enter inspect   ctrl+n new   esc back"
 		} else if m.screen == screenSkillDetail {
-			notice = "u use in Ask   e refine   l lint   h verified lesson   esc catalogue"
+			notice = "u use in tasks   e refine   l lint   h verified lesson   esc catalogue"
 		} else if m.screen == screenSkillForm {
 			notice = "tab move   ctrl+s run   esc back   f1 help"
 		} else if m.screen == screenSkillRun {
@@ -1204,7 +1330,7 @@ func (m *Model) View() tea.View {
 		} else if m.picking {
 			notice = "Nothing opens until ask replay -check succeeds"
 		} else {
-			notice = "ctrl+s send   ctrl+d design   ctrl+b skills   pgup scroll   f1 help"
+			notice = "ctrl+s run   ctrl+t tools/ask   ctrl+d agent design   ctrl+b skills   f1 help"
 		}
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")
@@ -1249,18 +1375,7 @@ func (m *Model) View() tea.View {
 	content := header + "\n" + m.viewport.View() + "\n" + composerLabel + "\n" + composer + "\n" + footer
 	view := tea.NewView(content)
 	view.AltScreen = true
-	view.WindowTitle = "bench · ask"
-	if section == "design" {
-		view.WindowTitle = "bench · design"
-	} else if section == "build" {
-		view.WindowTitle = "bench · build"
-	} else if section == "prove" {
-		view.WindowTitle = "bench · prove"
-	} else if section == "learn" {
-		view.WindowTitle = "bench · learn"
-	} else if section == "skills" {
-		view.WindowTitle = "bench · skills"
-	}
+	view.WindowTitle = "bench · " + section
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
 }

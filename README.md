@@ -1,13 +1,17 @@
 # bench
 
-A modern terminal workbench for building agents from the bench Unix filters.
+A modern terminal workbench for getting open tasks done with Ask and ordinary
+tools, then promoting recurring work into agents when it deserves a durable
+design.
 
-The working loop is **Ask → Design → Build → Prove → Learn**. Conversation is
-an explicit, replayable `ask` session; the agent project is draft's ordinary
-`DESIGN.md`; building and evaluation are `draft build/prove`; durable lessons
-are admitted by `hone` into an ordinary `brief` skill. `bench` is not a second
-model client, build runtime, evaluator, or memory store. It runs the installed
-filters and respects their stdout/stderr/exit-status contracts.
+The default loop is **Task ↔ Tools**: `ply` composes Ask with programs in the
+current workspace and records commands, results, and the final answer in one
+explicit Ask session. **Task → Design → Build → Prove → Learn** is the promotion
+path for agent work: the project is draft's ordinary `DESIGN.md`; building and
+evaluation are `draft build/prove`; durable lessons are admitted by `hone` into
+an ordinary `brief` skill. `bench` is not a second model client, tool runtime,
+evaluator, or memory store. It runs the installed filters and respects their
+stdout/stderr/exit-status contracts.
 
 ## Run
 
@@ -15,6 +19,7 @@ Requirements:
 
 - Go 1.26 or newer
 - `ask` on `PATH` and configured with a model
+- `ply` on `PATH` for the default Ask + tools task mode
 - `draft` on `PATH` for agent-project creation (`ask`, `brief`, `ply`, and
   `hone` are draft's own dependencies)
 - `brief` and `ply` on `PATH` to browse, author, and refine skills
@@ -22,16 +27,17 @@ Requirements:
 
 ```sh
 go run .
-go run . 'Start with these requirements…'
+go run . 'Find why the tests fail and fix the smallest root cause.'
 go run . -session 20260820-154753-32d9f393
 go run . -new
 go run . -project path/to/existing-agent
 ```
 
-Inside the TUI, press `ctrl+s` to send, `enter` for a newline, `f1` for help,
-and `ctrl+c` to quit. While a turn is running, `esc` or `ctrl+c` interrupts
-the process. Press `ctrl+d` to promote the user requirements into an agent
-project, or `ctrl+b` from any idle stage to open the Skills workbench.
+Inside the TUI, press `ctrl+s` to run the task, `enter` for a newline, `f1` for
+help, and `ctrl+c` to quit. While a turn is running, `esc` or `ctrl+c`
+interrupts the process. Press `ctrl+t` to toggle between the default tools mode
+and Ask-only, `ctrl+d` to promote the user-authored task into an agent project,
+or `ctrl+b` from any idle stage to open the Skills workbench.
 
 Sessions are written to `.bench/sessions` only after the first message is
 sent. Set `BENCH_DIR` to place them elsewhere, or `BENCH_ASK` to use a
@@ -43,11 +49,46 @@ running from the bench checkout before installing `draft/bin/draft` on
 
 `BENCH_HONE` likewise selects the `hone` executable used by the Learn stage.
 `BENCH_BRIEF` and `BENCH_PLY` select the executables used by the Skills
-workbench. They are also useful for exercising the complete flow offline with
-fake filters.
+workbench and default task loop. They are also useful for exercising the
+complete flow offline with fake filters.
+
+## Open tasks with Ask + tools
+
+The opening screen is a task composer, not an agent-requirements form. By
+default, `ctrl+s` starts the equivalent public process:
+
+```sh
+ply -sh -C WORKSPACE -f SESSION [-s SKILL ...] -- GOAL
+```
+
+Bench starts `ply` directly. The goal is one literal argv value; it is never
+evaluated by Bench as shell text. Ply asks the model, runs the shell blocks it
+writes, returns command output to the model, and repeats. Bench renders Ply's
+typescript as a durable **TOOLS** block and its stdout as the **ASK** answer.
+Both are recoverable from the explicit Ask session with `ask replay`.
+
+`-sh` is a full-shell grant, not a sandbox, and the yellow **TASK · FULL
+SHELL** label keeps that authority visible. Set `BENCH_TOOLS` to an ordinary
+toolbox directory to replace `-sh` with `ply -t DIR`; the label then names that
+toolbox. A toolbox limits program names but does not confine shell builtins or
+redirection—use an operating-system sandbox when that boundary matters.
+
+Ply without `-check` exits zero when the model stops, not when an external
+program proves the goal. The TUI therefore says **Task stopped · no executable
+check**, never “done” or “passed.” Checked, repeatable work belongs in an agent
+design whose `DESIGN.md` supplies the executable verdict.
+
+Press `ctrl+t` for an Ask-only turn. That uses the narrower public seam:
+
+```sh
+ask -f SESSION -- MESSAGE
+```
+
+Toggling does not fork or hide state; both modes continue the same explicit,
+replayable session.
 
 When saved sessions exist, `bench` opens an explicit session picker. It does
-not guess that the newest one is current. Before a selected conversation is
+not guess that the newest one is current. Before selected work is
 shown or continued, bench runs:
 
 ```sh
@@ -109,22 +150,22 @@ and no model sentence can override either. On an existing skill, press `e` to
 run the same refinement loop against new source or feedback, or `l` to lint
 without changing anything.
 
-Press `u` on a skill to toggle it for future Ask turns. For each such turn,
-bench composes the public values `ask system` and `brief cat SKILL`, then
-passes the result as one literal `ask -S` argument. Ask records the exact
-system prompt in that request event, so the procedure that shaped an answer
-is replayable rather than hidden in TUI state.
+Press `u` on a skill to toggle it for future task turns. In tools mode Bench
+passes each name as a literal `ply -s SKILL`; in Ask-only mode it composes the
+public values `ask system` and `brief cat SKILL` into one literal `ask -S`
+argument. Ask records the exact system prompt in either request, so the
+procedure that shaped a run is replayable rather than hidden in TUI state.
 
 Arbitrary source and verified learning are deliberately different. Source
 may refine instructions, but only `hone` may admit a lesson from a replayable
 failed-then-passed build recovery. Press `h` from a skill after Build and
 Prove to send that evidence to `hone -into`.
 
-## From requirements to a checked design
+## From an open task to a checked design
 
-`ctrl+d` opens the Design stage. It copies only user-authored requirements
-from the current in-memory conversation; assistant prose never becomes a
-requirement silently. The user reviews the project path and description, and
+`ctrl+d` opens the Design stage. It copies only user-authored task text from
+the current in-memory session; tool output and assistant prose never become
+requirements silently. The user reviews the project path and description, and
 `ctrl+s` runs the equivalent of:
 
 ```sh
