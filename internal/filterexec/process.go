@@ -5,11 +5,9 @@ package filterexec
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -80,24 +78,15 @@ func Execute(ctx context.Context, spec Spec, onChunk func(Stream, string)) Outco
 	}
 	cmd.WaitDelay = 2 * time.Second
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return Outcome{ExitCode: 1, Err: err}
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return Outcome{ExitCode: 1, Err: err}
-	}
+	// Non-file writers make os/exec own the copy goroutines. Wait then returns
+	// only after both streams are drained, avoiding the StdoutPipe race where
+	// Wait may close a short-lived process's pipe before our reader sees it.
+	cmd.Stdout = chunkWriter{stream: Stdout, onChunk: onChunk}
+	cmd.Stderr = chunkWriter{stream: Stderr, onChunk: onChunk}
 	if err := cmd.Start(); err != nil {
 		return Outcome{ExitCode: 1, Err: err}
 	}
-
-	var readers sync.WaitGroup
-	readers.Add(2)
-	go copyChunks(&readers, stdout, Stdout, onChunk)
-	go copyChunks(&readers, stderr, Stderr, onChunk)
 	waitErr := cmd.Wait()
-	readers.Wait()
 
 	code := 0
 	if waitErr != nil {
@@ -131,18 +120,16 @@ func overlayEnv(base, overrides []string) []string {
 	return base
 }
 
-func copyChunks(wg *sync.WaitGroup, src io.Reader, stream Stream, onChunk func(Stream, string)) {
-	defer wg.Done()
-	buf := make([]byte, 4096)
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			onChunk(stream, string(buf[:n]))
-		}
-		if err != nil {
-			return
-		}
+type chunkWriter struct {
+	stream  Stream
+	onChunk func(Stream, string)
+}
+
+func (w chunkWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		w.onChunk(w.stream, string(p))
 	}
+	return len(p), nil
 }
 
 func emit(ctx context.Context, dst chan<- Event, event Event) {

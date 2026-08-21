@@ -63,3 +63,29 @@ func TestStdinReachesFilterWithoutBecomingAnArgument(t *testing.T) {
 		t.Fatalf("outcome=%#v stdout=%q", outcome, stdout.String())
 	}
 }
+
+func TestExecuteDrainsShortLivedStreamsBeforeReturning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "short-output")
+	script := "#!/bin/sh\nprintf 'answer\\n'\nprintf 'evidence\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		var stdout, stderr strings.Builder
+		outcome := Execute(context.Background(), Spec{Path: fixture}, func(stream Stream, text string) {
+			switch stream {
+			case Stdout:
+				stdout.WriteString(text)
+			case Stderr:
+				stderr.WriteString(text)
+			}
+		})
+		if outcome.ExitCode != 1 || outcome.Err == nil || stdout.String() != "answer\n" || stderr.String() != "evidence\n" {
+			t.Fatalf("attempt %d: outcome=%#v stdout=%q stderr=%q", attempt, outcome, stdout.String(), stderr.String())
+		}
+	}
+}
