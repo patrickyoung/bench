@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/patrickyoung/bench/internal/contractexec"
+	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
 	"github.com/patrickyoung/bench/internal/suite"
 )
@@ -29,8 +31,11 @@ func TestHeadlessRunCompilesIntentBeforeWorkByDefault(t *testing.T) {
 	askScript := `#!/bin/sh
 set -eu
 if [ "${1-}" = note ]; then
-  printf '%s\n' "$@" > "$CAPTURE.record.args"
-  cat > "$CAPTURE.record.stdin"
+  n=1
+  if [ -f "$CAPTURE.record.count" ]; then n=$(( $(cat "$CAPTURE.record.count") + 1 )); fi
+  printf '%s' "$n" > "$CAPTURE.record.count"
+  printf '%s\n' "$@" > "$CAPTURE.record.$n.args"
+  cat > "$CAPTURE.record.$n.stdin"
   exit 0
 fi
 printf '%s\n' "$@" > "$CAPTURE.ask.args"
@@ -40,6 +45,16 @@ printf '%s' "$CONTRACT_FIXTURE"
 	plyScript := `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > "$CAPTURE.ply.args"
+session_out=
+session=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -session-out) session_out=$2; shift 2 ;;
+    -f) session=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "$session" > "$session_out"
 printf 'worked answer\n'
 `
 	for path, body := range map[string]string{ask: askScript, ply: plyScript} {
@@ -47,14 +62,14 @@ printf 'worked answer\n'
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("CONTRACT_FIXTURE", `{"version":1,"outcome":"A complete poem gallery exists.","deliverables":["gallery.html"],"invariants":["poem.md remains unchanged"],"criteria":[{"id":"exists","requirement":"gallery exists","evidence":"inspect gallery.html","judge":"executable"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`)
+	t.Setenv("CONTRACT_FIXTURE", `{"version":2,"outcome":"A complete poem gallery exists.","deliverables":["gallery.html"],"invariants":["poem.md remains unchanged"],"criteria":[{"id":"exists","requirement":"gallery exists","evidence":"the configured check exits zero","judge":"check"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`)
 	var stdout, stderr strings.Builder
 	session := filepath.Join(dir, "sessions", "run.jsonl")
-	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
-	if code != 0 || stdout.String() != "worked answer\n" {
+	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "-check", "test -s gallery.html", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
+	if code != 2 || stdout.String() != "worked answer\n" || !strings.Contains(stderr.String(), "Ready for review") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "OUTCOME CONTRACT v1") {
+	if !strings.Contains(stderr.String(), "OUTCOME CONTRACT v2") {
 		t.Fatalf("contract was not visible on stderr:\n%s", stderr.String())
 	}
 	askArgs := string(mustRead(t, capture+".ask.args"))
@@ -67,18 +82,40 @@ printf 'worked answer\n'
 	if !strings.Contains(askInput, "poem.md") || !strings.Contains(askInput, "source evidence") {
 		t.Fatalf("contract evidence:\n%s", askInput)
 	}
-	recordArgs := string(mustRead(t, capture+".record.args"))
-	if !strings.Contains(recordArgs, "-k\nbench.contract/v1\n") || !strings.Contains(recordArgs, "-seal\n") {
+	recordArgs := string(mustRead(t, capture+".record.1.args"))
+	if !strings.Contains(recordArgs, "-k\nbench.contract/v2\n") || !strings.Contains(recordArgs, "-seal\n") {
 		t.Fatalf("contract was not sealed: %s", recordArgs)
 	}
-	if record := string(mustRead(t, capture+".record.stdin")); !strings.Contains(record, `"status":"admitted"`) {
-		t.Fatalf("contract admission record: %s", record)
+	if record := string(mustRead(t, capture+".record.1.stdin")); !strings.Contains(record, `"status":"compiled"`) {
+		t.Fatalf("compiled contract record: %s", record)
+	}
+	if result := string(mustRead(t, capture+".record.2.stdin")); !strings.Contains(result, `"status":"review_required"`) || !strings.Contains(result, `"proposed_check_coverage":["exists"]`) || strings.Contains(result, `"status":"complete"`) {
+		t.Fatalf("contract result record: %s", result)
 	}
 	plyArgs := string(mustRead(t, capture+".ply.args"))
-	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v1", "sha256"} {
+	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v2", "sha256"} {
 		if !strings.Contains(plyArgs, want) {
 			t.Errorf("ply args missing %q:\n%s", want, plyArgs)
 		}
+	}
+}
+
+func TestHeadlessContractReviewPreservesReportAndReturnsNotDone(t *testing.T) {
+	events := make(chan plyexec.Event, 2)
+	events <- plyexec.Event{Stream: plyexec.Stdout, Text: "worker report\n"}
+	events <- plyexec.Event{
+		Done: true, ExitCode: 2, Stream: plyexec.Stderr,
+		Text: "Ready for review · configured check passed 1/3 criteria · 2 require inspection/human review · session is replayable\n",
+		ContractResult: &plyexec.ContractResult{
+			Status: "review_required", CheckConfigured: true, CheckPassed: true, ProposedCheckCoverage: []string{"exists"},
+			Outstanding: []plyexec.ContractCriterion{{ID: "layout", Judge: "inspection"}, {ID: "quality", Judge: "human"}},
+		},
+	}
+	close(events)
+	var stdout, stderr strings.Builder
+	code := streamPlyEvents(context.Background(), events, &stdout, &stderr)
+	if code != 2 || stdout.String() != "worker report\n" || !strings.Contains(stderr.String(), "Ready for review") || strings.Contains(strings.ToLower(stderr.String()), "outcome complete") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
 

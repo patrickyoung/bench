@@ -43,9 +43,15 @@ type message struct {
 	text string
 }
 
+type contractDecision struct {
+	Intent    string
+	Questions []string
+}
+
 // Config supplies values bench has already resolved at the command boundary.
 type Config struct {
 	Runner        askClient
+	Recorder      askexec.Recorder
 	Task          plyexec.Worker
 	Draft         draftexec.Client
 	Hone          honeexec.Client
@@ -70,22 +76,26 @@ type Config struct {
 // widgets carry live cursor state, so the root model must not be copied while
 // commands are running.
 type Model struct {
-	runner       askClient
-	task         plyexec.Worker
-	draft        draftexec.Client
-	hone         honeexec.Client
-	brief        briefexec.Client
-	ply          plyexec.Client
-	session      string
-	newSession   string
-	subagentsDir string
-	modelName    string
-	modelDefault string
-	workspace    string
-	dataDir      string
-	toolbox      string
-	taskOptions  plyexec.TaskOptions
-	taskMode     bool
+	runner           askClient
+	recorder         askexec.Recorder
+	task             plyexec.Worker
+	draft            draftexec.Client
+	hone             honeexec.Client
+	brief            briefexec.Client
+	ply              plyexec.Client
+	session          string
+	newSession       string
+	subagentsDir     string
+	modelName        string
+	modelDefault     string
+	workspace        string
+	dataDir          string
+	toolbox          string
+	taskOptions      plyexec.TaskOptions
+	pendingContract  *plyexec.ContractResult
+	pendingDecision  *contractDecision
+	activeTaskIntent string
+	taskMode         bool
 
 	composer       textarea.Model
 	project        textinput.Model
@@ -316,6 +326,7 @@ func New(cfg Config) *Model {
 
 	m := Model{
 		runner:         cfg.Runner,
+		recorder:       cfg.Recorder,
 		task:           cfg.Task,
 		draft:          cfg.Draft,
 		hone:           cfg.Hone,
@@ -402,6 +413,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTaskProcess(plyexec.Event(msg))
 		}
 		return m.updateSkillRunProcess(plyexec.Event(msg))
+	case contractAcceptanceMsg:
+		return m.updateContractAcceptance(msg)
 	case shellReturnedMsg:
 		if msg.err != nil {
 			m.notice = "Shell exited with an error · " + msg.err.Error()
@@ -551,9 +564,18 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		m.notice = "ply task runner is unavailable"
 		return m, nil
 	}
+	if m.taskMode && m.pendingContract != nil {
+		m.notice = "Review pending · /accept after inspection · /continue to revise · /check -- CMD to strengthen the verifier"
+		m.syncContent()
+		return m, nil
+	}
 	if !m.taskMode && m.runner == nil {
 		m.notice = "ask runner is unavailable"
 		return m, nil
+	}
+	goal := text
+	if m.taskMode && m.pendingDecision != nil {
+		goal = resolvedDecisionGoal(*m.pendingDecision, text)
 	}
 
 	m.messages = append(m.messages, message{role: roleUser, text: text})
@@ -568,10 +590,13 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	if m.taskMode {
+		options := m.taskOptions
+		m.taskOptions.Force = false
+		m.activeTaskIntent = goal
 		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
-			Dir: m.workspace, Goal: text, Session: m.session, SubagentsDir: m.subagentsPath(),
+			Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
 			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
-			Options: m.taskOptions,
+			Options: options,
 		})
 		m.job = jobPlyTask
 		m.syncContent()
@@ -581,6 +606,21 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	m.job = jobTurn
 	m.syncContent()
 	return m, tea.Batch(waitEvent(m.events), tick())
+}
+
+func resolvedDecisionGoal(decision contractDecision, answer string) string {
+	var b strings.Builder
+	b.WriteString("Resolve and pursue this previously paused outcome. The decision below answers the compiler's consequential question; it does not replace the original intent.\n\nORIGINAL USER INTENT\n")
+	b.WriteString(decision.Intent)
+	b.WriteString("\n\nOPEN QUESTIONS\n")
+	for _, question := range decision.Questions {
+		b.WriteString("- ")
+		b.WriteString(question)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nUSER DECISION\n")
+	b.WriteString(answer)
+	return b.String()
 }
 
 func (m *Model) subagentsPath() string {
@@ -649,8 +689,8 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
 		if event.Contract != "" {
-			m.messages = append(m.messages, message{role: roleContract, text: event.Contract})
-			m.notice = "Outcome contract admitted · work continues under " + shortDigest(event.ContractDigest)
+			m.messages = append(m.messages, message{role: roleContract, text: safeText(event.Contract)})
+			m.notice = "Outcome contract compiled · work continues under " + shortDigest(event.ContractDigest)
 			m.syncContent()
 			return m, waitPlyEvent(m.plyEvents)
 		}
@@ -678,9 +718,45 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if toolLog != "" {
 		m.messages = append(m.messages, message{role: roleTools, text: toolLog})
 	}
+	if event.ContractResult != nil && event.ContractResult.Status != "needs_decision" {
+		m.pendingDecision = nil
+	}
 	switch {
 	case errors.Is(event.Err, context.Canceled):
 		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
+	case event.ContractResult != nil && event.ContractResult.Status == "review_required":
+		pending := *event.ContractResult
+		m.pendingContract = &pending
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" {
+			total := len(event.ContractResult.Outstanding)
+			m.notice = fmt.Sprintf("Ready for review · proposed check coverage %d/%d criteria · %d remain", len(event.ContractResult.ProposedCheckCoverage), total, len(event.ContractResult.Outstanding))
+		}
+	case event.ContractResult != nil && event.ContractResult.Status == "needs_decision":
+		m.pendingContract = nil
+		questions := append([]string{}, event.ContractResult.OpenQuestions...)
+		for _, approval := range event.ContractResult.PendingApprovals {
+			questions = append(questions, "Approval required before work: "+approval+". Do you approve?")
+		}
+		m.pendingDecision = &contractDecision{
+			Intent: m.activeTaskIntent, Questions: questions,
+		}
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" {
+			m.notice = fmt.Sprintf("Needs decision · resolve %d question(s)/approval(s) before work begins", len(questions))
+		}
+	case m.taskOptions.IntentContract && event.ContractResult == nil:
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
+		m.notice = "Task not accepted · contracted work ended without a sealed contract result"
+		if event.Err != nil {
+			m.notice += " · " + event.Err.Error()
+		}
+		m.notice += " · check retained"
 	case event.Err == nil && event.ExitCode == 0 && checked:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
@@ -761,6 +837,10 @@ func (m *Model) updatePicker(key string) (tea.Model, tea.Cmd) {
 func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.session = m.newSession
 	m.subagentsDir = session.SubagentsDir(m.dataDir, m.newSession)
+	m.pendingContract = nil
+	m.pendingDecision = nil
+	m.activeTaskIntent = ""
+	m.taskOptions.Force = false
 	m.restored = ""
 	m.messages = nil
 	m.picking = false
@@ -1195,6 +1275,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
 		helpRow(t, "/contract on|off", "compile a visible outcome contract before work", width),
 		helpRow(t, "/check -- CMD", "set one verifier for the next work outcome; /check off clears", width),
+		helpRow(t, "/accept · /continue", "accept reviewed criteria, or revise the pending outcome", width),
 		helpRow(t, "/skills", "browse and build Brief skills", width),
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
 		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),

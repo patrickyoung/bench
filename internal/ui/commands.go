@@ -58,6 +58,10 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m.commandCheck(line)
 	case "contract":
 		return m.commandContract(args)
+	case "accept":
+		return m.commandAccept(args)
+	case "continue":
+		return m.commandContinue(args)
 	case "skills":
 		m.composer.SetValue("")
 		return m.openSkills()
@@ -104,6 +108,9 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.notice = "Outcome contracts on · the next intent will be compiled and logged before work"
 	case "off":
 		m.taskOptions.IntentContract = false
+		m.pendingContract = nil
+		m.pendingDecision = nil
+		m.taskOptions.Force = false
 		m.notice = "Outcome contracts off · the next intent will go directly to Ply"
 	default:
 		m.notice = "usage: /contract on|off"
@@ -132,6 +139,8 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 	}
 	if strings.EqualFold(rest, "off") {
 		m.taskOptions.Check = ""
+		m.pendingContract = nil
+		m.taskOptions.Force = false
 		m.composer.SetValue("")
 		m.notice = "Check cleared · the next work outcome will be unchecked"
 		m.syncContent()
@@ -150,6 +159,8 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.taskOptions.Check = check
+		m.pendingContract = nil
+		m.taskOptions.Force = false
 		m.composer.SetValue("")
 		m.notice = "Check set for the next outcome · " + strconv.Quote(check)
 		m.syncContent()
@@ -294,6 +305,11 @@ func (m *Model) taskPolicyDisplay() string {
 	parts := []string{"work runs unchecked", contract}
 	if m.taskOptions.Check != "" {
 		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)
+	}
+	if m.pendingContract != nil {
+		parts = append(parts, "review pending")
+	} else if m.taskOptions.Force {
+		parts = append(parts, "continue armed")
 	}
 	if m.taskOptions.HasCycles {
 		parts = append(parts, fmt.Sprintf("cycles=%d", m.taskOptions.Cycles))

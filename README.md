@@ -68,6 +68,8 @@ The prompt accepts explicit, discoverable commands:
 /contract on|off        enable or bypass intent compilation for later work
 /check -- COMMAND       set a verifier for the next work outcome
 /check off              clear the pending verifier
+/accept                 accept every criterion after reviewing the result
+/continue               revise a pending result even if its check already passes
 /skills                 browse and build Brief skills
 /agent [description]    promote user task text into a checked design
 /shell                  open $SHELL in the workspace; exit returns
@@ -92,23 +94,36 @@ complete flow offline with fake filters.
 
 Outcome contracts are on by default. `/contract off` is the explicit direct-Ply
 compatibility path; `bench run -contract=false` is its headless equivalent.
-The compiler receives the exact user intent, configured verifier, a bounded
-read-only workspace inventory, and piped evidence. Its JSON Schema travels
+The compiler receives the exact user intent, configured verifier, selected
+Brief skills, a bounded read-only workspace inventory, and piped evidence.
+Skills supply reusable domain procedure and review expectations to both the
+compiler and Ply; they never replace the verifier or count as evidence. Its JSON Schema travels
 through Ask's native structured-output boundary. The validated canonical
 contract is shown before work and repeated verbatim in Ply's first user
 message, so later request digests bind the work to that exact contract and
-its admission is also a sealed `bench.contract/v1` record. Ply binds every
-sealed `ply.verifier/v1` receipt to the contract digest. `ask replay -check`
+its compilation is also a sealed `bench.contract/v2` record. Ply binds every
+sealed `ply.verifier/v1` receipt to the contract envelope ID. `ask replay -check`
 verifies conversation folds, event sequence, and those record-prefix seals.
-The contract contains no generated shell command and is not itself a
-completion verdict.
+The contract contains no generated shell command. After Ply stops, Bench seals
+`bench.contract-result/v1`: model-assigned `check` labels are proposed
+coverage, never authority. A consequential open question or ungranted approval
+stops before work. The next reply is compiled with the full original intent,
+exact questions/approvals, and the user's answer; a short answer never replaces
+the requested outcome.
+After inspection, `/accept` seals the interactive user's acceptance; `/continue`
+starts a revision even when the retained check already passes. The acceptance
+record binds the contract ID, exact contract-result digest, and accepted
+criterion IDs. Headless work
+remains review-required/exit 2; automation that intentionally treats its check
+as the whole verdict uses `-contract=false`.
 
 Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
 to the next outcome; Bench displays it beside the composer and passes it to
 Ply without executing or reparsing it. `/check` shows the exact pending value
-and `/check off` clears it. A checked success consumes the verifier so it
-cannot silently judge an unrelated next request. A rejection, interruption,
-or broken verifier retains it for the same outcome. Promote work whose
+and `/check off` clears it. Contracted review-required, rejection,
+interruption, or broken verification retains it for the same outcome. The
+explicit direct-Ply compatibility path keeps its ordinary checked-success
+semantics. Promote work whose
 definition of done needs design and review with `/agent` instead.
 
 Model choice follows the filters' existing convention. `-m provider/model`
@@ -121,7 +136,7 @@ replayable. `/model default` restores the startup choice.
 
 The opening screen is a task composer, not an agent-requirements form. By
 default, `enter` first runs the structured contract turn in the same explicit
-session, then starts the equivalent public process with the admitted canonical
+session, then starts the equivalent public process with the canonical compiled
 contract included in `GOAL`:
 
 ```sh
@@ -148,21 +163,27 @@ toolbox. A toolbox limits program names but does not confine shell builtins or
 redirection—use an operating-system sandbox when that boundary matters.
 
 Ply without `-check` exits zero when the model stops, not when an external
-program proves the goal. The TUI therefore says **Task stopped · no executable
-check**, never “done” or “passed.” An open task may instead start Bench with a
+program proves the goal. On the direct compatibility path, the TUI therefore
+says **Task stopped · no executable check**, never “done” or “passed.” A
+contracted run instead becomes **Ready for review** and exits 2 while its
+compiled criteria still await operator or admitted judgment. An open task may start Bench with a
 literal shell-backed `-check COMMAND` or set one interactively with `/check --
 COMMAND`; that exact argument is visible through `/check`, `/status`, and the
-composer, and only its zero exit status produces **Task done · executable check
-passed**. Bench passes the command as one argv value and never evaluates it
-itself. Agent designs remain the durable home for recurring checked work.
+composer. Its zero exit status is recorded alongside the compiler's proposed
+`check` coverage, but the contracted outcome remains **Ready for review** and
+exits 2; neither model output nor skill text admits semantic coverage. Bench
+passes the command as one argv value and never evaluates it itself. Agent
+designs remain the durable home for recurring checked work.
 
 Both the interactive workbench and `bench run` accept `-contract=true|false`
 and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
 `-compact`, and `-compactions N`. Bench passes effort names literally through
 Ply; Ask and its provider decide which names are supported. Omitted controls
 stay omitted so the installed Ply owns its defaults; an explicit zero retains
-Ply's documented unbounded meaning. For
-checked or compacting work, Ply reports the Ask session it actually used
+Ply's documented unbounded meaning. Contracted compaction is rejected until
+Bench can independently verify successor lineage; use `-contract=false` for
+Ply's existing compaction behavior. On that direct path, checked or compacting
+work reports the Ask session it actually used
 through a private `-session-out` control artifact. With contract compilation
 enabled, the contract turn has already created the session even when Ply's
 passing pre-check needs no worker turn. With contracts disabled, absence on a
@@ -194,8 +215,11 @@ Ply processes for bounded, read-heavy jobs, wait for their indexed results,
 and synthesize them before it edits or answers. Children inherit the resolved
 workspace, model, and tool grant, but not the root's Brief skills or check; the
 root must give each child a self-contained task and remains the sole writer and
-synthesizer. The root's executable check, when configured, still decides done.
-For genuinely independent writes, use separate worktrees.
+synthesizer. The root's executable check, when configured, still supplies the
+literal pass/reject gate. Contracted work remains ready for review until its
+criteria are separately admitted; the direct compatibility path retains the
+check-as-completion behavior. For genuinely independent writes, use separate
+worktrees.
 
 There is no hidden team service or provider-specific runtime. A child is
 `$PLY`, stdout is its distilled result, stderr is its typescript, and its exit

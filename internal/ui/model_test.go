@@ -23,13 +23,27 @@ type fakeRunner struct {
 }
 
 type fakeTask struct {
-	events chan plyexec.Event
-	req    plyexec.TaskRequest
+	events   chan plyexec.Event
+	req      plyexec.TaskRequest
+	requests []plyexec.TaskRequest
+	calls    int
 }
 
 func (f *fakeTask) Work(_ context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
 	f.req = req
+	f.requests = append(f.requests, req)
+	f.calls++
 	return f.events
+}
+
+type fakeRecorder struct {
+	req askexec.RecordRequest
+	err error
+}
+
+func (f *fakeRecorder) Record(_ context.Context, req askexec.RecordRequest) error {
+	f.req = req
+	return f.err
 }
 
 func (f *fakeRunner) Replay(_ context.Context, path string) <-chan askexec.Event {
@@ -119,6 +133,161 @@ func TestTaskPolicyPropagatesAndCheckedSuccessNamesTheVerdict(t *testing.T) {
 	}
 	if m.taskOptions.Check != "" || !strings.Contains(m.notice, "check cleared") {
 		t.Fatalf("successful outcome retained check=%q notice=%q", m.taskOptions.Check, m.notice)
+	}
+}
+
+func TestContractedMixedEvidenceIsReadyForReviewNotDone(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "make art",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "test -s gallery.html"},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	result := &plyexec.ContractResult{
+		Status: "review_required", CheckConfigured: true, CheckPassed: true, ProposedCheckCoverage: []string{"exists"},
+		Outstanding: []plyexec.ContractCriterion{{ID: "layout", Judge: "inspection"}, {ID: "quality", Judge: "human"}},
+	}
+	updated, _ = m.Update(plyProcessEvent{
+		Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", ContractResult: result,
+		Text: "Ready for review · configured check passed 1/3 criteria · 2 require inspection/human review · session is replayable\n",
+	})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Ready for review") || strings.Contains(strings.ToLower(m.notice), "task done") || strings.Contains(strings.ToLower(m.notice), "outcome complete") {
+		t.Fatalf("notice=%q", m.notice)
+	}
+	if m.taskOptions.Check == "" {
+		t.Fatal("review-required outcome cleared its configured check")
+	}
+}
+
+func TestContractedAllCheckProposalStillNeedsAcceptance(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./..."},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", Text: "Ready for review · configured check passed · proposed coverage 2/2 criteria · 2 remain unaccepted · session is replayable\n", ContractResult: &plyexec.ContractResult{
+		Status: "review_required", CheckConfigured: true, CheckPassed: true, ProposedCheckCoverage: []string{"tests", "artifact"}, Outstanding: []plyexec.ContractCriterion{{ID: "tests", Judge: "check"}, {ID: "artifact", Judge: "check"}},
+	}})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Ready for review") || !strings.Contains(m.notice, "remain unaccepted") || m.taskOptions.Check == "" || strings.Contains(strings.ToLower(m.notice), "outcome complete") {
+		t.Fatalf("notice=%q check=%q", m.notice, m.taskOptions.Check)
+	}
+}
+
+func TestAcceptSealsInteractiveDecisionAndClearsCheck(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	recorder := &fakeRecorder{}
+	m := New(Config{
+		Task: task, Recorder: recorder, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./..."},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:contract", Status: "review_required", CheckConfigured: true, CheckPassed: true,
+		ProposedCheckCoverage: []string{"tests"}, Outstanding: []plyexec.ContractCriterion{{ID: "tests", Judge: "check"}, {ID: "quality", Judge: "human"}},
+	}})
+	m = updated.(*Model)
+	m.composer.SetValue("/accept")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || !m.running {
+		t.Fatal("accept did not start a record operation")
+	}
+	updated, _ = m.Update(cmd().(contractAcceptanceMsg))
+	m = updated.(*Model)
+	if recorder.req.Session != "/tmp/run.jsonl" || recorder.req.Kind != "bench.contract-acceptance/v1" || recorder.req.Source != "bench-user" || !strings.Contains(recorder.req.JSON, `"result_sha256":"sha256:`) || !strings.Contains(recorder.req.JSON, `"criteria":["tests","quality"]`) {
+		t.Fatalf("record=%#v", recorder.req)
+	}
+	if m.pendingContract != nil || m.taskOptions.Check != "" || !strings.Contains(m.notice, "Outcome accepted") {
+		t.Fatalf("pending=%#v check=%q notice=%q", m.pendingContract, m.taskOptions.Check, m.notice)
+	}
+}
+
+func TestReviewBlocksOrdinaryWorkUntilExplicitContinue(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "true"},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:contract", Status: "review_required", Outstanding: []plyexec.ContractCriterion{{ID: "quality", Judge: "human"}},
+	}})
+	m = updated.(*Model)
+	m.composer.SetValue("fix the mobile layout")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.calls != 1 || !strings.Contains(m.notice, "Review pending") {
+		t.Fatalf("calls=%d notice=%q", task.calls, m.notice)
+	}
+	m.composer.SetValue("/continue")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.pendingContract != nil || !m.taskOptions.Force {
+		t.Fatalf("pending=%#v force=%v", m.pendingContract, m.taskOptions.Force)
+	}
+	m.composer.SetValue("fix the mobile layout")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.calls != 2 || !task.req.Options.Force || !strings.Contains(task.req.Goal, "fix the mobile layout") || m.taskOptions.Force {
+		t.Fatalf("calls=%d req=%#v retained force=%v", task.calls, task.req, m.taskOptions.Force)
+	}
+}
+
+func TestContractedTerminalWithoutResultFailsClosedInUI(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "true"},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0, Session: "/tmp/run.jsonl"})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "without a sealed contract result") || strings.Contains(strings.ToLower(m.notice), "task done") || m.taskOptions.Check == "" {
+		t.Fatalf("notice=%q check=%q", m.notice, m.taskOptions.Check)
+	}
+}
+
+func TestContractOpenQuestionPausesBeforeWork(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "print it", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", Text: "Needs decision · 1 open question(s) and 1 approval(s) must be resolved before work begins\n", ContractResult: &plyexec.ContractResult{
+		Status: "needs_decision", OpenQuestions: []string{"Which printer?"}, PendingApprovals: []string{"Send an external print job"}, Outstanding: []plyexec.ContractCriterion{{ID: "printed", Judge: "human"}},
+	}})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Needs decision") || !strings.Contains(m.notice, "before work begins") || strings.Contains(strings.ToLower(m.notice), "done") {
+		t.Fatalf("notice=%q", m.notice)
+	}
+	m.composer.SetValue("Office printer")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.calls != 2 {
+		t.Fatalf("task calls=%d", task.calls)
+	}
+	resolved := task.requests[1].Goal
+	for _, want := range []string{"print it", "Which printer?", "Send an external print job", "Do you approve?", "Office printer", "does not replace the original intent"} {
+		if !strings.Contains(resolved, want) {
+			t.Errorf("resolved intent missing %q:\n%s", want, resolved)
+		}
+	}
+	if resolved == "Office printer" {
+		t.Fatal("decision replaced the original intent")
+	}
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:resolved", Status: "review_required", Outstanding: []plyexec.ContractCriterion{{ID: "printed", Judge: "human"}},
+	}})
+	m = updated.(*Model)
+	if m.pendingDecision != nil || m.pendingContract == nil {
+		t.Fatalf("decision=%#v review=%#v", m.pendingDecision, m.pendingContract)
 	}
 }
 
@@ -402,7 +571,7 @@ func TestTaskShowsCompiledContractBeforeWorkEvidence(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("task did not start")
 	}
-	task.events <- plyexec.Event{Contract: "OUTCOME CONTRACT v1 · abcdef\nBuild the artifact.", ContractDigest: "abcdef"}
+	task.events <- plyexec.Event{Contract: "OUTCOME CONTRACT v2 · abcdef\nBuild the artifact.", ContractDigest: "abcdef"}
 	updated, _ = m.Update(plyProcessEvent(<-task.events))
 	m = updated.(*Model)
 	if len(m.messages) < 2 || m.messages[1].role != roleContract || !strings.Contains(m.messages[1].text, "Build the artifact") {
@@ -514,6 +683,18 @@ func TestSafeTextDropsTerminalControlSequences(t *testing.T) {
 	got := safeText("ok\x1b[2J\x00\rnext")
 	if got != "ok\nnext" {
 		t.Fatalf("safe text = %q", got)
+	}
+}
+
+func TestContractPresentationDropsTerminalControlSequences(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "work", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Contract: "OUTCOME\x1b[2J\x1b]0;spoof\a\x00\nvisible", ContractDigest: "abc"})
+	m = updated.(*Model)
+	if len(m.messages) != 2 || m.messages[1].role != roleContract || m.messages[1].text != "OUTCOME\nvisible" {
+		t.Fatalf("messages=%#v", m.messages)
 	}
 }
 

@@ -140,19 +140,15 @@ func (r Runner) runTurn(ctx context.Context, req Request, events chan<- Event) {
 	if effort := strings.TrimSpace(req.Effort); effort != "" {
 		args = append(args, "-effort", effort)
 	}
-	if req.System != "" && len(req.Skills) > 0 {
-		emitFinal(ctx, events, Event{Done: true, ExitCode: 1, Err: errors.New("explicit system and skills cannot be combined")})
-		return
-	}
-	if req.System != "" {
-		args = append(args, "-S", req.System)
-	} else if len(req.Skills) > 0 {
-		system, outcome := r.skilledSystem(ctx, path, req.Skills, events)
+	if len(req.Skills) > 0 {
+		system, outcome := r.skilledSystem(ctx, path, req.System, req.Skills, events)
 		if outcome.Err != nil || outcome.ExitCode != 0 {
 			emitFinal(ctx, events, Event{Done: true, ExitCode: outcome.ExitCode, Err: outcome.Err})
 			return
 		}
 		args = append(args, "-S", system)
+	} else if req.System != "" {
+		args = append(args, "-S", req.System)
 	}
 	if req.Schema != "" {
 		schema, err := writeSchema(filepath.Dir(req.Session), req.Schema)
@@ -199,21 +195,26 @@ func writeSchema(dir, schema string) (string, error) {
 	return path, nil
 }
 
-func (r Runner) skilledSystem(ctx context.Context, askPath string, skills []string, events chan<- Event) (string, filterexec.Outcome) {
+func (r Runner) skilledSystem(ctx context.Context, askPath, base string, skills []string, events chan<- Event) (string, filterexec.Outcome) {
 	var parts []string
-	var system strings.Builder
-	outcome := filterexec.Execute(ctx, filterexec.Spec{Path: askPath, Args: []string{"system"}}, func(stream Stream, text string) {
-		if stream == Stdout {
-			system.WriteString(text)
-		} else {
-			emit(ctx, events, Event{Stream: Stderr, Text: text})
-		}
-	})
-	if outcome.Err != nil || outcome.ExitCode != 0 {
-		return "", outcome
-	}
-	if value := strings.TrimSpace(system.String()); value != "" {
+	var outcome filterexec.Outcome
+	if value := strings.TrimSpace(base); value != "" {
 		parts = append(parts, value)
+	} else {
+		var system strings.Builder
+		outcome = filterexec.Execute(ctx, filterexec.Spec{Path: askPath, Args: []string{"system"}}, func(stream Stream, text string) {
+			if stream == Stdout {
+				system.WriteString(text)
+			} else {
+				emit(ctx, events, Event{Stream: Stderr, Text: text})
+			}
+		})
+		if outcome.Err != nil || outcome.ExitCode != 0 {
+			return "", outcome
+		}
+		if value := strings.TrimSpace(system.String()); value != "" {
+			parts = append(parts, value)
+		}
 	}
 	briefPath := r.BriefPath
 	if briefPath == "" {

@@ -97,7 +97,7 @@ printf 'task answer\n'
 	for event := range (Runner{Path: fixture, AskPath: "/opt/tools/ask", BriefPath: "/opt/tools/brief"}).Work(context.Background(), TaskRequest{
 		Dir: dir, Goal: goal, Input: "piped evidence\n", Session: session, SubagentsDir: subagents,
 		Model: "openai/test-model", Skills: []string{"go-review", "house-style"},
-		Options: TaskOptions{Effort: "xhigh"},
+		Options: TaskOptions{Effort: "xhigh", Force: true},
 	}) {
 		switch event.Stream {
 		case Stdout:
@@ -115,7 +115,7 @@ printf 'task answer\n'
 	if stdout.String() != "task answer\n" || stderr.String() != "ran rg and git\n" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	wantArgs := strings.Join([]string{"-sh", "-effort", "xhigh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
+	wantArgs := strings.Join([]string{"-sh", "-B", "-effort", "xhigh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
 	for file, want := range map[string]string{
 		"args": wantArgs, "ask": "/opt/tools/ask", "brief": "/opt/tools/brief",
 		"ask-model": "openai/test-model", "ply-effort": "xhigh",
@@ -312,6 +312,7 @@ func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
 		{Turns: -1, HasTurns: true},
 		{Timeout: 0, HasTimeout: true},
 		{Compactions: -1, HasCompactions: true},
+		{IntentContract: true, Compact: true},
 	} {
 		var done Event
 		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{

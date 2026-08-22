@@ -127,11 +127,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	paths := filterPaths()
+	askRunner := askexec.Runner{Path: paths.ask, BriefPath: paths.brief}
 	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
-	taskRunner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}
+	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner}
 	m := ui.New(ui.Config{
-		Runner: askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
-		Task:   taskRunner,
+		Runner:   askRunner,
+		Recorder: askRunner,
+		Task:     taskRunner,
 		Draft: draftexec.Runner{
 			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
 			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
@@ -279,20 +281,22 @@ func streamOutput(ctx context.Context, next func() (outputEvent, bool), stdout, 
 		if !ok {
 			break
 		}
+		if event.Text != "" {
+			var err error
+			if event.Stream == filterexec.Stdout {
+				_, err = io.WriteString(stdout, event.Text)
+			} else {
+				sawErrorText = sawErrorText || strings.TrimSpace(event.Text) != ""
+				_, err = io.WriteString(stderr, event.Text)
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, "bench: writing process output:", err)
+				return 1
+			}
+		}
 		if event.Done {
 			code, finalErr = event.ExitCode, event.Err
 			continue
-		}
-		var err error
-		if event.Stream == filterexec.Stdout {
-			_, err = io.WriteString(stdout, event.Text)
-		} else {
-			sawErrorText = sawErrorText || strings.TrimSpace(event.Text) != ""
-			_, err = io.WriteString(stderr, event.Text)
-		}
-		if err != nil {
-			fmt.Fprintln(stderr, "bench: writing process output:", err)
-			return 1
 		}
 	}
 	if ctx.Err() != nil {

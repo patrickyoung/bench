@@ -1,6 +1,7 @@
 // Package contractexec composes one structured Ask turn in front of Ply.
 // Ask turns intent into a small outcome contract; Ply remains the only owner
-// of the tool loop and the configured verifier remains the only owner of done.
+// of the tool loop. Bench mechanically aggregates the configured verifier's
+// narrow coverage with criteria that still require review.
 package contractexec
 
 import (
@@ -15,7 +16,7 @@ import (
 	"strings"
 )
 
-const Version = 1
+const Version = 2
 
 type Criterion struct {
 	ID          string `json:"id"`
@@ -46,7 +47,7 @@ const Schema = `{
   "additionalProperties": false,
   "required": ["version", "outcome", "deliverables", "invariants", "criteria", "approvals", "assumptions", "open_questions", "limits"],
   "properties": {
-    "version": {"type": "integer", "const": 1},
+    "version": {"type": "integer", "const": 2},
     "outcome": {"type": "string", "minLength": 1, "maxLength": 500},
     "deliverables": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
     "invariants": {"type": "array", "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
@@ -59,7 +60,7 @@ const Schema = `{
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
           "requirement": {"type": "string", "minLength": 1, "maxLength": 500},
           "evidence": {"type": "string", "minLength": 1, "maxLength": 500},
-          "judge": {"type": "string", "enum": ["executable", "inspection", "human"]}
+          "judge": {"type": "string", "enum": ["check", "inspection", "human"]}
         }
       }
     },
@@ -72,9 +73,11 @@ const Schema = `{
 
 const System = `You are Bench's outcome compiler. Convert the person's intent and the read-only workspace evidence into the smallest useful outcome contract. Do not solve the task, write code, or emit shell commands.
 
-Use ordinary, reversible defaults. Infer routine deliverables and quality expectations instead of making the person write a test plan. Put a question in open_questions only when an answer would materially change the deliverable or permission boundary and safe reversible work cannot proceed without it. Put consequential, costly, external, destructive, or irreversible acts in approvals so the worker knows to obtain approval immediately before that act.
+Use ordinary, reversible defaults. Infer routine deliverables and quality expectations instead of making the person write a test plan. Put a question in open_questions only when an answer would materially change the deliverable or permission boundary and safe reversible work cannot proceed without it. Put consequential, costly, external, destructive, or irreversible acts in approvals. Approvals name only actions the person has not yet granted: when USER INTENT contains an explicit answer granting an exact approval requested by the previous contract, do not request that same approval again.
 
-Every acceptance criterion names concrete evidence and one judge: executable for a program or exact state check, inspection for a rendered or semantic review, human for irreducibly subjective acceptance. Do not claim that an executable check proves more than it observes. Preserve named source material by default. If the requested outcome is an answer rather than a filesystem effect, make the returned answer a deliverable and name evidence appropriate to its claims.
+Every acceptance criterion names concrete evidence and one judge: check only when the operator's configured verifier directly establishes that exact criterion, inspection for a rendered or semantic review, human for irreducibly subjective acceptance. When no verifier is configured, do not emit a check criterion. Do not claim that a check proves more than it observes. Preserve named source material by default. If the requested outcome is an answer rather than a filesystem effect, make the returned answer a deliverable and name evidence appropriate to its claims.
+
+Selected skills are domain procedure and evidence guidance. They may improve deliverables, invariants, conventions, and review expectations. They do not configure or replace the operator's verifier, grant permission, supply evidence, or decide that a criterion is complete.
 
 The response must be only the JSON object required by the supplied schema.`
 
@@ -152,7 +155,7 @@ func (c *Contract) validate() error {
 		if len([]rune(v.Requirement)) > 500 || len([]rune(v.Evidence)) > 500 {
 			return fmt.Errorf("outcome contract criterion %q exceeds the text limit", v.ID)
 		}
-		if v.Judge != "executable" && v.Judge != "inspection" && v.Judge != "human" {
+		if v.Judge != "check" && v.Judge != "inspection" && v.Judge != "human" {
 			return fmt.Errorf("outcome contract criterion %q has unknown judge %q", v.ID, v.Judge)
 		}
 	}
@@ -175,10 +178,16 @@ func Render(c Contract, digest string) string {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
 	}
-	b.WriteString("\nDone means:\n")
+	b.WriteString("\nAcceptance evidence:\n")
+	checkCount := 0
 	for _, item := range c.Criteria {
 		fmt.Fprintf(&b, "- [%s] %s — evidence: %s\n", item.Judge, item.Requirement, item.Evidence)
+		if item.Judge == "check" {
+			checkCount++
+		}
 	}
+	fmt.Fprintf(&b, "\nProposed coverage: configured check %d/%d · review %d/%d\n",
+		checkCount, len(c.Criteria), len(c.Criteria)-checkCount, len(c.Criteria))
 	if len(c.Approvals) > 0 {
 		b.WriteString("\nApproval boundaries:\n")
 		for _, item := range c.Approvals {

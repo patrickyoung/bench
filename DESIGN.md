@@ -36,9 +36,10 @@ When a user explicitly asks for subagents, the same process boundary grows a
 flat fan-out rather than a second runtime. The root Ply may start up to three
 nested `$PLY` processes for independent, read-heavy work. Each child owns a
 fresh Ask session and indexed stdout/stderr/status artifacts under
-`.bench/subagents`; only the root synthesizes and writes in the shared tree,
-while the configured root check remains the completion verdict. Nested prompts
-do not advertise further delegation.
+`.bench/subagents`; only the root synthesizes and writes in the shared tree.
+The configured root check remains the literal verifier gate; in contracted
+work it does not by itself admit semantic completion. Nested prompts do not
+advertise further delegation.
 
 ## Non-negotiable boundary
 
@@ -46,9 +47,11 @@ The TUI does not become a model client, an agent runtime, or a shell
 implementation. It composes one native structured-output Ask turn before open
 work. That turn receives the exact intent, configured verifier, piped evidence,
 and a bounded read-only workspace inventory, and returns a small canonical
-outcome contract. The contract contains no executable command. It is rendered
-to the operator, sealed as a typed admission record, and repeated in the next
-user message to Ply. Every Ply verifier receipt names its digest, so Ask replay
+outcome contract. The contract contains no executable command. Selected Brief
+skills are composed into the compiler policy and then passed again to Ply:
+they shape domain procedure but never verdicts. The contract is rendered to
+the operator, sealed as a typed compiled record, and repeated in the next user
+message to Ply. Every Ply verifier receipt names its digest, so Ask replay
 checks request folds, event sequence, and the exact sealed record prefixes.
 `/contract off` and `-contract=false` retain an explicit direct-Ply seam.
 
@@ -61,23 +64,37 @@ ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [POLICY...] -- GOAL
 ```
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
-are repeated `-s SKILL` arguments. The outcome contract guides quality but
-does not decide completion. Ply owns the Ask→command→result loop and
+are repeated `-s SKILL` arguments. Ply owns the Ask→command→result loop and
 records it in the explicit Ask session. That boundary consumes one complete
 shell block per model turn, returns its real result, and visibly defers any
 later actions or claims written before the result existed. Bench neither
 reimplements nor weakens that rule: it renders stderr as visible tool evidence
 and stdout as the answer. Because an unchecked Ply exit zero means only that
 the model stopped, the UI never calls that outcome done or passed.
-`-check COMMAND` deliberately opts an open task into a shell-backed executable
-verdict; Bench passes that command as one literal argument, displays it through
-`/status`, and distinguishes a passing pre-check from a worked, replayable
-session. `-effort`, `-cycles`, `-turns`, `-timeout`, `-compact`, and
+`-check COMMAND` deliberately opts an open task into a shell-backed verifier;
+Bench passes that command as one literal argument and displays it through
+`/status`. A contract criterion uses judge `check` only to propose that the
+exact verifier directly establishes it. After Ply's factual verifier receipt,
+Bench mechanically seals `bench.contract-result/v1`. Model-assigned coverage
+is never authority: contracted work remains review-required and exits 2 until
+the interactive user explicitly accepts every pending criterion. `/continue`
+instead begins a revision with Ply's public `-B` behavior so a retained passing
+check cannot suppress requested work. Bench does
+not infer authority from shell text, skills, or model prose. `-effort`, `-cycles`,
+`-turns`, `-timeout`, `-compact`, and
 `-compactions` are optional process policy, not a second loop, and omission
-leaves Ply's defaults in charge.
+leaves Ply's defaults in charge. Contracted compaction is rejected until
+successor lineage can be independently verified; direct `-contract=false`
+work retains Ply's existing compaction behavior.
 
-Compaction may move the work into a successor Ask session. For checked or
-compacting work, Bench passes Ply a private `-session-out FILE` artifact path.
+Consequential open questions and ungranted approvals stop before Ply receives
+full-shell authority. The user's answer is composed with the full original
+intent and exact pending items into the replacement contract request; it never
+becomes a smaller stand-alone goal.
+
+On the direct compatibility path, compaction may move the work into a successor
+Ask session. For checked or compacting work, Bench passes Ply a private
+`-session-out FILE` artifact path.
 Ply atomically records the absolute current session before model work and after
 each successful transition; a passing pre-check creates neither session nor
 artifact. Bench reads it only with the terminal process event, removes it, and

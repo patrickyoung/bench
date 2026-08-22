@@ -1,0 +1,133 @@
+package ui
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/patrickyoung/bench/internal/askexec"
+)
+
+type contractAcceptanceMsg struct {
+	count int
+	err   error
+}
+
+type contractAcceptance struct {
+	ContractID   string   `json:"contract_id"`
+	ResultSHA256 string   `json:"result_sha256"`
+	Status       string   `json:"status"`
+	Method       string   `json:"method"`
+	Criteria     []string `json:"criteria"`
+}
+
+func (m *Model) commandAccept(args []string) (tea.Model, tea.Cmd) {
+	if len(args) != 0 {
+		m.notice = "usage: /accept"
+		m.syncContent()
+		return m, nil
+	}
+	if m.pendingContract == nil {
+		m.composer.SetValue("")
+		m.notice = "Nothing is awaiting acceptance"
+		m.syncContent()
+		return m, nil
+	}
+	if len(m.pendingContract.OpenQuestions) > 0 {
+		m.notice = "Cannot accept an unresolved decision · answer the contract question first"
+		m.syncContent()
+		return m, nil
+	}
+	if m.recorder == nil {
+		m.notice = "Acceptance recorder is unavailable · review remains pending"
+		m.syncContent()
+		return m, nil
+	}
+	criteria := make([]string, 0, len(m.pendingContract.Outstanding))
+	for _, criterion := range m.pendingContract.Outstanding {
+		criteria = append(criteria, criterion.ID)
+	}
+	resultJSON, err := json.Marshal(m.pendingContract)
+	if err != nil {
+		m.notice = "Acceptance could not bind the pending result · review remains pending"
+		m.syncContent()
+		return m, nil
+	}
+	resultDigest := sha256.Sum256(resultJSON)
+	record, err := json.Marshal(contractAcceptance{
+		ContractID:   m.pendingContract.ContractID,
+		ResultSHA256: fmt.Sprintf("sha256:%x", resultDigest),
+		Status:       "accepted",
+		Method:       "interactive-user",
+		Criteria:     criteria,
+	})
+	if err != nil {
+		m.notice = "Acceptance could not be encoded · review remains pending"
+		m.syncContent()
+		return m, nil
+	}
+	m.composer.SetValue("")
+	m.composer.Blur()
+	m.running = true
+	m.activity = "recording user acceptance"
+	m.notice = "Recording acceptance…"
+	m.syncContent()
+	recorder, session := m.recorder, m.session
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := recorder.Record(ctx, askexec.RecordRequest{
+			Session: session, Source: "bench-user", Kind: "bench.contract-acceptance/v1", JSON: string(record),
+		})
+		return contractAcceptanceMsg{count: len(criteria), err: err}
+	}
+}
+
+func (m *Model) updateContractAcceptance(msg contractAcceptanceMsg) (tea.Model, tea.Cmd) {
+	m.running = false
+	m.activity = ""
+	if msg.err != nil {
+		m.notice = "Acceptance was not recorded · review remains pending · " + msg.err.Error()
+		m.syncContent()
+		return m, m.composer.Focus()
+	}
+	if m.pendingContract == nil {
+		m.notice = "Acceptance record arrived without a pending contract"
+		m.syncContent()
+		return m, m.composer.Focus()
+	}
+	m.pendingContract = nil
+	m.taskOptions.Check = ""
+	m.taskOptions.Force = false
+	m.notice = fmt.Sprintf("Outcome accepted · you accepted %d contract criteria · check cleared · session is replayable", msg.count)
+	m.syncContent()
+	return m, m.composer.Focus()
+}
+
+func (m *Model) commandContinue(args []string) (tea.Model, tea.Cmd) {
+	if len(args) != 0 {
+		m.notice = "usage: /continue"
+		m.syncContent()
+		return m, nil
+	}
+	if m.pendingContract == nil {
+		m.composer.SetValue("")
+		m.notice = "Nothing is awaiting revision"
+		m.syncContent()
+		return m, nil
+	}
+	if m.taskOptions.Check == "" {
+		m.pendingContract = nil
+		m.notice = "Review released · describe the revision to continue"
+	} else {
+		m.pendingContract = nil
+		m.taskOptions.Force = true
+		m.notice = "Continue armed · describe the revision; work will run even if the current check already passes"
+	}
+	m.composer.SetValue("")
+	m.syncContent()
+	return m, nil
+}

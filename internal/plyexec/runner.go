@@ -20,15 +20,37 @@ import (
 type Event struct {
 	Stream filterexec.Stream
 	Text   string
-	// Contract is set by Bench's intent compiler before Ply starts. It is
-	// canonical JSON already present in the same Ask session; Digest names
-	// those exact bytes for concise UI and replay receipts.
+	// Contract is set by Bench's intent compiler before Ply starts. Digest is
+	// the envelope ID binding those canonical bytes to the intent, compiler
+	// evidence, check, and selected skill references.
 	Contract       string
 	ContractDigest string
+	// ContractResult is set by Bench's contract supervisor on the terminal
+	// event. Ply itself remains the authority only for its literal verifier;
+	// this record says which contract criteria that narrow result covered and
+	// which still require another judge.
+	ContractResult *ContractResult
 	Done           bool
 	ExitCode       int
 	Err            error
 	Session        string
+}
+
+type ContractCriterion struct {
+	ID    string `json:"id"`
+	Judge string `json:"judge"`
+}
+
+type ContractResult struct {
+	ContractID            string              `json:"contract_id"`
+	Status                string              `json:"status"`
+	CheckConfigured       bool                `json:"check_configured"`
+	CheckPassed           bool                `json:"check_passed"`
+	WorkerExitCode        int                 `json:"worker_exit_code"`
+	ProposedCheckCoverage []string            `json:"proposed_check_coverage"`
+	Outstanding           []ContractCriterion `json:"outstanding"`
+	OpenQuestions         []string            `json:"open_questions"`
+	PendingApprovals      []string            `json:"pending_approvals"`
 }
 
 const (
@@ -67,6 +89,7 @@ type TaskOptions struct {
 	IntentContract bool
 	ContractID     string
 	Check          string
+	Force          bool
 	Effort         string
 	Cycles         int
 	HasCycles      bool
@@ -127,6 +150,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if req.Options.Check != "" {
 		args = append(args, "-check", req.Options.Check)
+	}
+	if req.Options.Force {
+		args = append(args, "-B")
 	}
 	if contractID := strings.TrimSpace(req.Options.ContractID); contractID != "" {
 		args = append(args, "-contract-id", contractID)
@@ -223,6 +249,11 @@ func Validate(req TaskRequest) error {
 	if req.Options.Check != "" && strings.TrimSpace(req.Options.Check) == "" {
 		return errors.New("task check is empty")
 	}
+	for _, skill := range req.Skills {
+		if strings.TrimSpace(skill) == "" {
+			return errors.New("skill name is empty")
+		}
+	}
 	if req.Options.HasCycles && req.Options.Cycles < 0 {
 		return errors.New("task cycles cannot be negative")
 	}
@@ -235,10 +266,8 @@ func Validate(req TaskRequest) error {
 	if req.Options.HasCompactions && req.Options.Compactions < 0 {
 		return errors.New("task compactions cannot be negative")
 	}
-	for _, skill := range req.Skills {
-		if strings.TrimSpace(skill) == "" {
-			return errors.New("skill name is empty")
-		}
+	if req.Options.IntentContract && req.Options.Compact {
+		return errors.New("contracted compaction needs verified session lineage; use -contract=false or omit -compact")
 	}
 	return nil
 }

@@ -193,21 +193,6 @@ cat > "$ASK_CAPTURE.stdin"
 	}
 }
 
-func TestRunnerRefusesTwoSystemPromptOwners(t *testing.T) {
-	var done Event
-	for event := range (Runner{Path: "does-not-run"}).Start(context.Background(), Request{
-		Message: "compile", Session: filepath.Join(t.TempDir(), "run.jsonl"),
-		System: "contract", Skills: []string{"review"},
-	}) {
-		if event.Done {
-			done = event
-		}
-	}
-	if done.ExitCode != 1 || done.Err == nil || !strings.Contains(done.Err.Error(), "cannot be combined") {
-		t.Fatalf("done=%#v", done)
-	}
-}
-
 func TestRunnerComposesSelectedBriefSkillIntoSystemPrompt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")
@@ -261,6 +246,56 @@ printf 'Run the repository fixture before reporting a finding.\n'
 	}
 	if got := string(system); got != "base system\n\nRun the repository fixture before reporting a finding." {
 		t.Fatalf("system = %q", got)
+	}
+}
+
+func TestRunnerAppendsSkillsToExplicitSystemWithoutAskingForDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	ask := filepath.Join(dir, "fake-ask")
+	brief := filepath.Join(dir, "fake-brief")
+	capture := filepath.Join(dir, "system")
+	t.Setenv("ASK_CAPTURE", capture)
+	askScript := `#!/bin/sh
+set -eu
+[ "${1-}" != system ]
+[ "$1" = -f ]
+[ "$3" = -S ]
+printf '%s' "$4" > "$ASK_CAPTURE"
+printf answer
+`
+	briefScript := `#!/bin/sh
+set -eu
+[ "$1" = cat ]
+case "$2" in
+  web) printf 'Render wide and narrow views.\n' ;;
+  house) printf 'Preserve the source material.\n' ;;
+  *) exit 1 ;;
+esac
+`
+	for path, body := range map[string]string{ask: askScript, brief: briefScript} {
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var done Event
+	for event := range (Runner{Path: ask, BriefPath: brief}).Start(context.Background(), Request{
+		Message: "compile", Session: filepath.Join(dir, "run.jsonl"), System: "contract policy",
+		Skills: []string{"web", "house"},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Err != nil || done.ExitCode != 0 {
+		t.Fatalf("done=%#v", done)
+	}
+	got := string(mustRead(t, capture))
+	want := "contract policy\n\nRender wide and narrow views.\n\nPreserve the source material."
+	if got != want {
+		t.Fatalf("system=%q, want %q", got, want)
 	}
 }
 

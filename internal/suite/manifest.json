@@ -15,7 +15,7 @@
     {
       "name": "ask",
       "repository": "https://github.com/patrickyoung/ask.git",
-      "revision": "0da4638dedbb1942383a29f0283334428b921a50",
+      "revision": "f8642fb7ba772c1ba8e04e5c742b872bf138fbfb",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",

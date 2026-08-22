@@ -23,16 +23,28 @@ When changing `bench`:
 
 The implemented product boundary is deliberately compositional. Open tasks
 first use one native structured-output Ask turn to compile the exact intent,
-bounded read-only workspace inventory, configured verifier, and piped evidence
+bounded read-only workspace inventory, configured verifier, selected Brief
+skills, and piped evidence
 into a visible canonical outcome contract. Bench validates and renders that
 record but never turns model text into a shell command. The exact contract is
-sealed as a typed admission record and repeated in Ply's first user message;
-verifier receipts bind its digest, so one Ask session replays contract,
-actions, observations, answer, and verdict. `/contract off` and
+sealed as a typed compiled record and repeated in Ply's first user message;
+verifier receipts bind its envelope ID, so one Ask session replays contract,
+actions, observations, answer, and verdict. Skills may shape domain procedure
+and evidence expectations, but they never become evidence or completion
+authority. After Ply stops, Bench seals a deterministic contract result.
+Model-assigned `check` criteria are proposed coverage, never authority;
+contracted work remains review-required and exits 2 until the interactive user
+explicitly accepts pending criteria. `/continue` begins a revision even when
+the retained check already passes. `/contract off` and
 `-contract=false` are the explicit direct-Ply compatibility seam. Work then
 runs through `ply` with that one explicit Ask session; the full-shell or toolbox
 grant, deferred unobserved actions, and the resulting typescript stay visible,
 while unchecked exit zero is only a model stop, never a completed verdict.
+Contracted compaction is rejected until successor lineage can be independently
+verified; the direct compatibility seam retains Ply's existing compaction.
+Consequential open questions and ungranted approvals stop before work; the
+next contract request must bind the original intent, exact pending items, and
+the user's answer rather than treating the answer as a replacement goal.
 Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one
 action, returns its evidence, and decides when to ask again. `/ask` uses direct
 `ask` for a no-tools turn in that same session; `bench run` and `bench ask`
@@ -40,8 +52,9 @@ preserve the same boundaries headlessly. `-m` and `/model` must propagate
 through every model-backed stage. Open-task `-effort` passes literally through
 Ply to Ask; Bench must not validate provider-specific effort names.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows
-and forwards it but never evaluates it, clears it only after checked success,
-and retains it after not-done, interruption, or verifier failure. Ask replay
+and forwards it but never evaluates it. Contracted review-required, not-done,
+interruption, or verifier failure retains it; only the explicit direct-Ply
+compatibility seam consumes a checked success. Ask replay
 checks session integrity, not truth or task completion; UI wording must keep
 those claims separate.
 Design review offers `b` for the ordinary Draft build and `B` only for
