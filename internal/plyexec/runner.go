@@ -161,6 +161,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	} else {
 		args = append(args, "-sh")
 	}
+	// Work mode promises tool-mediated pursuit. Ask-only requests take a
+	// different path; a Ply worker that emits only prose has not done this job.
+	args = append(args, "-require-action")
 	if req.Options.Check != "" {
 		args = append(args, "-check", req.Options.Check)
 	}

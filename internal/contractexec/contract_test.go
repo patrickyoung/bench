@@ -215,6 +215,11 @@ func TestRunnerCompilesThenWorksInOneSession(t *testing.T) {
 	if ask.calls != 1 || ask.records != 2 || ply.calls != 1 || contract == "" || len(digest) != 64 {
 		t.Fatalf("ask=%d records=%d ply=%d contract=%q digest=%q", ask.calls, ask.records, ply.calls, contract, digest)
 	}
+	for _, want := range []string{"Brief procedures shaping this outcome and its work", "- web-quality", "do not decide the verdict"} {
+		if !strings.Contains(contract, want) {
+			t.Errorf("visible contract hid procedure %q:\n%s", want, contract)
+		}
+	}
 	if ask.req.Session != req.Session || ply.req.Session != req.Session || ask.req.System != System || ask.req.Schema != Schema || len(ask.req.Skills) != 1 || ask.req.Skills[0] != "web-quality" {
 		t.Fatalf("ask=%#v ply=%#v", ask.req, ply.req)
 	}

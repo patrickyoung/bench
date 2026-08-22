@@ -109,7 +109,7 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		return
 	}
 	digest := strings.TrimPrefix(contractID, "sha256:")
-	emit(ctx, events, plyexec.Event{Contract: Render(contract, digest), ContractDigest: digest})
+	emit(ctx, events, plyexec.Event{Contract: renderWithSkills(contract, digest, req.Skills), ContractDigest: digest})
 	if len(contract.OpenQuestions) > 0 || len(contract.Approvals) > 0 {
 		result := pendingResult(contract, "sha256:"+digest, req.Options.Check != "", "needs_decision")
 		if err := r.recordResult(ctx, req.Session, result); err != nil {
@@ -218,6 +218,21 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		}
 	}
 	emitFinal(ctx, events, *terminal)
+}
+
+func renderWithSkills(contract Contract, digest string, skills []string) string {
+	text := Render(contract, digest)
+	if len(skills) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.WriteString(text)
+	b.WriteString("\n\nBrief procedures shaping this outcome and its work:\n")
+	for _, skill := range skills {
+		fmt.Fprintf(&b, "- %s\n", skill)
+	}
+	b.WriteString("These procedures guide the work; they do not decide the verdict.")
+	return b.String()
 }
 
 func (r Runner) recordResult(ctx context.Context, session string, result plyexec.ContractResult) error {

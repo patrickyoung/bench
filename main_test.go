@@ -195,7 +195,7 @@ printf 'answer only\n'
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := strings.Join([]string{"-sh", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "--", "inspect; $(literal)", ""}, "\n")
+	want := strings.Join([]string{"-sh", "-require-action", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "--", "inspect; $(literal)", ""}, "\n")
 	if string(args) != want {
 		t.Fatalf("args=%q, want %q", args, want)
 	}
