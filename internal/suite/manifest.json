@@ -33,7 +33,7 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "01101c791f7bbbfe5604a414bc05cb02b4332c05",
+      "revision": "2894da270e3ec8ed8ca27f98afcc10749aa24b9d",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -51,7 +51,7 @@
     {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "3eda0b23215a161021722c7a08ee87558c1a9222",
+      "revision": "85a0f92f056580e50308adb95ed911e8a46f9b2a",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",
