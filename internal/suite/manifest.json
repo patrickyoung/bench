@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
