@@ -67,6 +67,7 @@ The prompt accepts explicit, discoverable commands:
 /ask · /work            switch directly between Ask and Ask + Ply
 /contract on|off        enable or bypass intent compilation for later work
 /check -- COMMAND       set a verifier for the next work outcome
+/check all              admit that verifier as judge of every criterion
 /check off              clear the pending verifier
 /accept                 accept every criterion after reviewing the result
 /continue               revise a pending result even if its check already passes
@@ -106,21 +107,27 @@ sealed `ply.verifier/v1` receipt to the contract envelope ID. `ask replay -check
 verifies conversation folds, event sequence, and those record-prefix seals.
 The contract contains no generated shell command. After Ply stops, Bench seals
 `bench.contract-result/v1`: model-assigned `check` labels are proposed
-coverage, never authority. A consequential open question or ungranted approval
+coverage, never authority. With an explicit operator `-check-all` admission,
+Bench first seals `bench.judge-map/v1`, strictly matches Ply's accepted verifier
+receipt, and seals `bench.contract-result/v2`; only that path may automatically
+complete a contracted outcome. A consequential open question or ungranted approval
 stops before work. The next reply is compiled with the full original intent,
 exact questions/approvals, and the user's answer; a short answer never replaces
 the requested outcome.
 After inspection, `/accept` seals the interactive user's acceptance; `/continue`
 starts a revision even when the retained check already passes. The acceptance
 record binds the contract ID, exact contract-result digest, and accepted
-criterion IDs. Headless work
-remains review-required/exit 2; automation that intentionally treats its check
-as the whole verdict uses `-contract=false`.
+criterion IDs. Headless work remains review-required/exit 2 by default.
+Automation may use `-check COMMAND -check-all` to make the explicit blanket
+assertion that this exact command proves every criterion the compiler emits.
+Use it only when that statement is genuinely true.
 
 Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
 to the next outcome; Bench displays it beside the composer and passes it to
 Ply without executing or reparsing it. `/check` shows the exact pending value
-and `/check off` clears it. Contracted review-required, rejection,
+and `/check off` clears it. `/check all` arms the current check as the judge of
+all criteria for one contracted outcome; changing or clearing the check clears
+that admission. Contracted review-required, rejection,
 interruption, or broken verification retains it for the same outcome. The
 explicit direct-Ply compatibility path keeps its ordinary checked-success
 semantics. Promote work whose
@@ -162,6 +169,13 @@ toolbox directory to replace `-sh` with `ply -t DIR`; the label then names that
 toolbox. A toolbox limits program names but does not confine shell builtins or
 redirection—use an operating-system sandbox when that boundary matters.
 
+Ask seals prove log integrity and ordering, not process identity. In ambient
+full-shell mode, automatic check-all completion assumes the finished worker and
+its descendants are not malicious same-user processes rewriting the controller
+session. For adversarial workers, use Draft's admitted May+Cage path with its
+session outside Cage write roots; do not treat ambient replay as authenticated
+producer proof.
+
 Ply without `-check` exits zero when the model stops, not when an external
 program proves the goal. On the direct compatibility path, the TUI therefore
 says **Task stopped · no executable check**, never “done” or “passed.” A
@@ -171,12 +185,16 @@ literal shell-backed `-check COMMAND` or set one interactively with `/check --
 COMMAND`; that exact argument is visible through `/check`, `/status`, and the
 composer. Its zero exit status is recorded alongside the compiler's proposed
 `check` coverage, but the contracted outcome remains **Ready for review** and
-exits 2; neither model output nor skill text admits semantic coverage. Bench
+exits 2; neither model output nor skill text admits semantic coverage. Add
+`-check-all` (or `/check all`) only for the operator's own blanket admission.
+Bench seals that policy before Ply, verifies the exact accepted
+`ply.verifier/v1` receipt after Ply, and releases stdout/exit 0 only after the
+v2 result is durable. Bench
 passes the command as one argv value and never evaluates it itself. Agent
 designs remain the durable home for recurring checked work.
 
-Both the interactive workbench and `bench run` accept `-contract=true|false`
-and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
+Both the interactive workbench and `bench run` accept `-contract=true|false`,
+`-check COMMAND`, `-check-all`, and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
 `-compact`, and `-compactions N`. Bench passes effort names literally through
 Ply; Ask and its provider decide which names are supported. Omitted controls
 stay omitted so the installed Ply owns its defaults; an explicit zero retains

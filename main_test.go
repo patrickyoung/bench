@@ -376,6 +376,16 @@ func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
 			t.Fatalf("%v: code=%d stderr=%q", flagAndValue, code, stderr.String())
 		}
 	}
+	for _, args := range [][]string{
+		{"run", "-C", dir, "-check-all", "goal"},
+		{"run", "-C", dir, "-contract=false", "-check", "true", "-check-all", "goal"},
+	} {
+		var stdout, stderr strings.Builder
+		code := run(args, strings.NewReader(""), &stdout, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "check-all needs") {
+			t.Fatalf("%v: code=%d stderr=%q", args, code, stderr.String())
+		}
+	}
 	if _, err := os.Stat(started); !os.IsNotExist(err) {
 		t.Fatalf("Ply started for invalid policy: %v", err)
 	}

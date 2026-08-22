@@ -77,7 +77,11 @@ Bench passes that command as one literal argument and displays it through
 exact verifier directly establishes it. After Ply's factual verifier receipt,
 Bench mechanically seals `bench.contract-result/v1`. Model-assigned coverage
 is never authority: contracted work remains review-required and exits 2 until
-the interactive user explicitly accepts every pending criterion. `/continue`
+the interactive user explicitly accepts every pending criterion. The separate
+operator-only `-check-all` policy binds the exact check into the contract
+envelope, seals every parsed criterion ID in `bench.judge-map/v1` before Ply,
+then requires a strictly matching sealed Ply receipt before a durable
+`bench.contract-result/v2` may say complete. `/continue`
 instead begins a revision with Ply's public `-B` behavior so a retained passing
 check cannot suppress requested work. Bench does
 not infer authority from shell text, skills, or model prose. `-effort`, `-cycles`,
@@ -104,6 +108,11 @@ data therefore never competes with answer stdout or typescript stderr.
 The full-shell grant is visible at all times. A toolbox is an executable-name
 grant, not confinement; operating-system sandboxing remains a separate
 composition rather than a misleading TUI boolean.
+
+Ask replay proves session integrity and ordering, not truth or producer
+identity. Ambient full-shell check-all therefore assumes a non-malicious
+same-user worker. Adversarial execution needs Draft's admitted May+Cage
+boundary with controller evidence outside Cage write roots.
 
 The same seam is available without a TUI. `bench run` and automatically
 redirected plain invocations pass stdin to Ply, copy stdout and stderr to the

@@ -34,7 +34,11 @@ and evidence expectations, but they never become evidence or completion
 authority. After Ply stops, Bench seals a deterministic contract result.
 Model-assigned `check` criteria are proposed coverage, never authority;
 contracted work remains review-required and exits 2 until the interactive user
-explicitly accepts pending criteria. `/continue` begins a revision even when
+explicitly accepts pending criteria. `-check-all` and `/check all` are the one
+operator-owned exception: they admit the exact configured check for every
+parsed criterion, must be sealed before Ply, and may complete only from a
+strictly matching sealed accepted receipt followed by a durable v2 result.
+Neither a skill nor model output may set or infer that policy. `/continue` begins a revision even when
 the retained check already passes. `/contract off` and
 `-contract=false` are the explicit direct-Ply compatibility seam. Work then
 runs through `ply` with that one explicit Ask session; the full-shell or toolbox
@@ -54,9 +58,11 @@ Ply to Ask; Bench must not validate provider-specific effort names.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows
 and forwards it but never evaluates it. Contracted review-required, not-done,
 interruption, or verifier failure retains it; only the explicit direct-Ply
-compatibility seam consumes a checked success. Ask replay
-checks session integrity, not truth or task completion; UI wording must keep
-those claims separate.
+compatibility seam consumes a checked success. Ask replay checks session
+integrity and ordering, not truth, producer identity, or task completion; UI
+wording must keep those claims separate. Ambient full-shell check-all assumes a
+non-malicious same-user worker. Use Draft's admitted May+Cage composition with
+controller state outside Cage write roots when the worker itself is adversarial.
 Design review offers `b` for the ordinary Draft build and `B` only for
 `draft build -admitted`; retries must preserve which boundary the operator
 selected. Bench does not imitate May admission or Cage confinement.

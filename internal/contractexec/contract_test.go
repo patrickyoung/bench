@@ -59,12 +59,13 @@ func TestContractEnvelopeBindsIntentEvidenceCheckAndSkillRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := envelopeID(canonical, "intent", "inventory and stdin", "test -s out", []string{"web", "house"})
+	base := envelopeID(canonical, "intent", "inventory and stdin", "test -s out", false, []string{"web", "house"})
 	variants := []string{
-		envelopeID(canonical, "changed intent", "inventory and stdin", "test -s out", []string{"web", "house"}),
-		envelopeID(canonical, "intent", "changed evidence", "test -s out", []string{"web", "house"}),
-		envelopeID(canonical, "intent", "inventory and stdin", "true", []string{"web", "house"}),
-		envelopeID(canonical, "intent", "inventory and stdin", "test -s out", []string{"house", "web"}),
+		envelopeID(canonical, "changed intent", "inventory and stdin", "test -s out", false, []string{"web", "house"}),
+		envelopeID(canonical, "intent", "changed evidence", "test -s out", false, []string{"web", "house"}),
+		envelopeID(canonical, "intent", "inventory and stdin", "true", false, []string{"web", "house"}),
+		envelopeID(canonical, "intent", "inventory and stdin", "test -s out", true, []string{"web", "house"}),
+		envelopeID(canonical, "intent", "inventory and stdin", "test -s out", false, []string{"house", "web"}),
 	}
 	for i, got := range variants {
 		if got == base {
@@ -111,18 +112,36 @@ func TestEvidenceIsReadOnlyBoundedAndExcludesBenchState(t *testing.T) {
 }
 
 type fakeAsk struct {
-	req         askexec.Request
-	record      askexec.RecordRequest
-	recordLog   []askexec.RecordRequest
-	answer      string
-	answers     []string
-	reqLog      []askexec.Request
-	exit        int
-	err         error
-	recordErr   error
-	recordErrAt int
-	calls       int
-	records     int
+	req          askexec.Request
+	record       askexec.RecordRequest
+	recordLog    []askexec.RecordRequest
+	answer       string
+	answers      []string
+	reqLog       []askexec.Request
+	exit         int
+	err          error
+	recordErr    error
+	recordErrAt  int
+	calls        int
+	records      int
+	receipt      askexec.VerifierReceipt
+	receiptErr   error
+	receiptCalls int
+}
+
+func (f *fakeAsk) AcceptedVerifier(_ context.Context, _, _, contractID, verifier, candidateSHA, _ string) (askexec.VerifierReceipt, error) {
+	f.receiptCalls++
+	if f.receiptErr != nil {
+		return askexec.VerifierReceipt{}, f.receiptErr
+	}
+	if f.receipt.BodySHA256 != "" {
+		return f.receipt, nil
+	}
+	return askexec.VerifierReceipt{
+		Seq: 7, BodySHA256: "sha256:receipt", SealSHA256: "sha256:seal", ContractID: contractID,
+		Phase: "candidate", CandidateSHA256: candidateSHA, Verifier: verifier,
+		VerifierSHA256: "sha256:verifier", Outcome: "accepted", ExitCode: 0,
+	}, nil
 }
 
 func (f *fakeAsk) Record(_ context.Context, req askexec.RecordRequest) error {
@@ -276,11 +295,137 @@ func TestRunnerKeepsAllModelProposedCheckCoveragePending(t *testing.T) {
 	}
 }
 
+func TestOperatorCheckAllCompletesEveryCriterionFromMatchedReceipt(t *testing.T) {
+	ask := &fakeAsk{answer: fixtureContract}
+	ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "finished\n\n"}, {Done: true, ExitCode: 0}}}
+	req := plyexec.TaskRequest{
+		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
+		Options: plyexec.TaskOptions{IntentContract: true, Check: "./check", CheckAllCriteria: true},
+	}
+	var done plyexec.Event
+	var stdout strings.Builder
+	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), req) {
+		if event.Stream == plyexec.Stdout {
+			stdout.WriteString(event.Text)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+	if done.ExitCode != 0 || done.Err != nil || done.ContractResult == nil || done.ContractResult.Status != "complete" {
+		t.Fatalf("done=%#v", done)
+	}
+	if stdout.String() != "finished\n\n" || ask.receiptCalls != 1 || len(done.ContractResult.AdmittedCheckCoverage) != 2 || len(done.ContractResult.Outstanding) != 0 || done.ContractResult.VerifierReceipt == nil {
+		t.Fatalf("stdout=%q receipts=%d result=%#v", stdout.String(), ask.receiptCalls, done.ContractResult)
+	}
+	if got := ask.receipt.CandidateSHA256; got != "" {
+		t.Fatalf("fixture receipt unexpectedly overrode lookup: %#v", ask.receipt)
+	}
+	if len(ask.recordLog) != 3 {
+		t.Fatalf("records=%#v", ask.recordLog)
+	}
+	wantKinds := []string{"bench.contract/v2", "bench.judge-map/v1", "bench.contract-result/v2"}
+	for i, want := range wantKinds {
+		if ask.recordLog[i].Kind != want {
+			t.Fatalf("record %d kind=%q want %q", i, ask.recordLog[i].Kind, want)
+		}
+	}
+	for _, want := range []string{`"policy":"all"`, `"authority":"operator-check-all"`, `"criterion_ids":["fidelity","layout"]`} {
+		if !strings.Contains(ask.recordLog[1].JSON, want) {
+			t.Errorf("judge map missing %q: %s", want, ask.recordLog[1].JSON)
+		}
+	}
+	for _, want := range []string{`"status":"complete"`, `"admitted_check_coverage":["fidelity","layout"]`, `"outstanding":[]`, `"verifier_receipt":{`} {
+		if !strings.Contains(ask.recordLog[2].JSON, want) {
+			t.Errorf("result missing %q: %s", want, ask.recordLog[2].JSON)
+		}
+	}
+}
+
+func TestOperatorCheckAllNeverCompletesWithoutAcceptedReceipt(t *testing.T) {
+	tests := []struct {
+		name       string
+		terminal   plyexec.Event
+		receiptErr error
+		wantStatus string
+		wantExit   int
+		wantCalls  int
+	}{
+		{name: "check rejected", terminal: plyexec.Event{Done: true, ExitCode: 2}, wantStatus: "not_done", wantExit: 2},
+		{name: "receipt mismatch", terminal: plyexec.Event{Done: true, ExitCode: 0}, receiptErr: errors.New("receipt mismatch"), wantStatus: "failed", wantExit: 1, wantCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ask := &fakeAsk{answer: fixtureContract, receiptErr: tt.receiptErr}
+			ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "unsealed answer"}, tt.terminal}}
+			var done plyexec.Event
+			var stdout strings.Builder
+			for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+				Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
+				Options: plyexec.TaskOptions{IntentContract: true, Check: "./check", CheckAllCriteria: true},
+			}) {
+				if event.Stream == plyexec.Stdout {
+					stdout.WriteString(event.Text)
+				}
+				if event.Done {
+					done = event
+				}
+			}
+			if done.ExitCode != tt.wantExit || done.ContractResult == nil || done.ContractResult.Status != tt.wantStatus || done.ContractResult.CheckPassed || len(done.ContractResult.Outstanding) != 2 || len(done.ContractResult.AdmittedCheckCoverage) != 0 || ask.receiptCalls != tt.wantCalls {
+				t.Fatalf("done=%#v receipt calls=%d", done, ask.receiptCalls)
+			}
+			if tt.receiptErr != nil && stdout.Len() != 0 {
+				t.Fatalf("receipt failure released stdout %q", stdout.String())
+			}
+			if ask.recordLog[len(ask.recordLog)-1].Kind != "bench.contract-result/v2" || strings.Contains(ask.recordLog[len(ask.recordLog)-1].JSON, `"status":"complete"`) || !strings.Contains(ask.recordLog[len(ask.recordLog)-1].JSON, `"check_passed":false`) {
+				t.Fatalf("records=%#v", ask.recordLog)
+			}
+		})
+	}
+}
+
+func TestOperatorCheckAllJudgeMapMustSealBeforeWork(t *testing.T) {
+	ask := &fakeAsk{answer: fixtureContract, recordErr: errors.New("disk full"), recordErrAt: 2}
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
+	var done plyexec.Event
+	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
+		Options: plyexec.TaskOptions{IntentContract: true, Check: "true", CheckAllCriteria: true},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if ply.calls != 0 || done.ExitCode != 1 || done.Err == nil || !strings.Contains(done.Err.Error(), "record judge map") {
+		t.Fatalf("ply=%d done=%#v records=%#v", ply.calls, done, ask.recordLog)
+	}
+}
+
+func TestVerifierCandidateSHAUsesPlysExactStdinNormalization(t *testing.T) {
+	if got, want := verifierCandidateSHA("report\n\n"), sha256Text("report\n"); got != want {
+		t.Fatalf("candidate digest=%q want %q", got, want)
+	}
+	if got, want := verifierCandidateSHA(""), sha256Text(""); got != want {
+		t.Fatalf("empty candidate digest=%q want %q", got, want)
+	}
+}
+
+func TestCheckAllWorkGoalDoesNotContradictOperatorAdmission(t *testing.T) {
+	goal := workGoal("make art", fixtureContract, "digest", "./check", true)
+	if strings.Contains(goal, "pending acceptance") || !strings.Contains(goal, "operator-admitted check decides every criterion") {
+		t.Fatalf("check-all work goal contradicts admission:\n%s", goal)
+	}
+	ordinary := workGoal("make art", fixtureContract, "digest", "./check", false)
+	if !strings.Contains(ordinary, "pending acceptance") || strings.Contains(ordinary, "operator-admitted check decides every criterion") {
+		t.Fatalf("ordinary work goal lost review boundary:\n%s", ordinary)
+	}
+}
+
 func TestResultSummarySurfacesOpenQuestions(t *testing.T) {
 	result := aggregate(Contract{
 		Criteria:      []Criterion{{ID: "exists", Judge: "check"}},
 		OpenQuestions: []string{"Which printer should receive the document?"},
-	}, "sha256:test", true, plyexec.Event{Done: true, ExitCode: 0})
+	}, "sha256:test", true, nil, "", nil, plyexec.Event{Done: true, ExitCode: 0})
 	if result.Status != "review_required" || len(result.OpenQuestions) != 1 {
 		t.Fatalf("result=%#v", result)
 	}

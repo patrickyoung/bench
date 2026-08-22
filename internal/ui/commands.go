@@ -108,6 +108,7 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.notice = "Outcome contracts on · the next intent will be compiled and logged before work"
 	case "off":
 		m.taskOptions.IntentContract = false
+		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
@@ -133,12 +134,16 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 			m.notice = "No check for the next outcome · run unchecked, or set one with /check -- COMMAND"
 		} else {
 			m.notice = "Check for the next outcome · " + strconv.Quote(m.taskOptions.Check)
+			if m.taskOptions.CheckAllCriteria {
+				m.notice += " · operator admits it as judge of all contract criteria"
+			}
 		}
 		m.syncContent()
 		return m, nil
 	}
 	if strings.EqualFold(rest, "off") {
 		m.taskOptions.Check = ""
+		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.taskOptions.Force = false
 		m.composer.SetValue("")
@@ -146,19 +151,33 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
+	if strings.EqualFold(rest, "all") {
+		if m.taskOptions.Check == "" {
+			m.notice = "Set a check first with /check -- COMMAND"
+		} else if !m.taskOptions.IntentContract {
+			m.notice = "/check all needs outcome contracts on"
+		} else {
+			m.taskOptions.CheckAllCriteria = true
+			m.notice = "Check judges all criteria for the next outcome · operator blanket admission is armed"
+		}
+		m.composer.SetValue("")
+		m.syncContent()
+		return m, nil
+	}
 	if rest == "--" {
-		m.notice = "usage: /check -- COMMAND · /check off"
+		m.notice = "usage: /check -- COMMAND · /check all · /check off"
 		m.syncContent()
 		return m, nil
 	}
 	if strings.HasPrefix(rest, "--") && len(rest) > 2 && (rest[2] == ' ' || rest[2] == '\t') {
 		check := strings.TrimLeft(rest[2:], " \t")
 		if strings.TrimSpace(check) == "" {
-			m.notice = "usage: /check -- COMMAND · /check off"
+			m.notice = "usage: /check -- COMMAND · /check all · /check off"
 			m.syncContent()
 			return m, nil
 		}
 		m.taskOptions.Check = check
+		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.taskOptions.Force = false
 		m.composer.SetValue("")
@@ -166,7 +185,7 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
-	m.notice = "usage: /check -- COMMAND · /check off"
+	m.notice = "usage: /check -- COMMAND · /check all · /check off"
 	m.syncContent()
 	return m, nil
 }
@@ -305,6 +324,9 @@ func (m *Model) taskPolicyDisplay() string {
 	parts := []string{"work runs unchecked", contract}
 	if m.taskOptions.Check != "" {
 		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)
+		if m.taskOptions.CheckAllCriteria {
+			parts[0] += " · judges all contract criteria"
+		}
 	}
 	if m.pendingContract != nil {
 		parts = append(parts, "review pending")

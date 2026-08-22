@@ -178,6 +178,29 @@ func TestContractedAllCheckProposalStillNeedsAcceptance(t *testing.T) {
 	}
 }
 
+func TestOperatorAdmittedCheckCompletionConsumesOneShotPolicy(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./...", CheckAllCriteria: true},
+	})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stdout, Text: "Built it."})
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0, Session: "/tmp/run.jsonl", Text: "Outcome complete · operator-admitted check passed 2/2 criteria · session is replayable\n", ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:contract", Status: "complete", CheckConfigured: true, CheckPassed: true,
+		AdmittedCheckCoverage: []string{"tests", "artifact"}, Outstanding: []plyexec.ContractCriterion{},
+	}})
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Outcome complete") || !strings.Contains(m.notice, "2/2") || m.taskOptions.Check != "" || m.taskOptions.CheckAllCriteria || m.pendingContract != nil {
+		t.Fatalf("notice=%q options=%#v pending=%#v", m.notice, m.taskOptions, m.pendingContract)
+	}
+	if len(m.messages) == 0 || m.messages[len(m.messages)-1].text != "Built it." {
+		t.Fatalf("messages=%#v", m.messages)
+	}
+}
+
 func TestAcceptSealsInteractiveDecisionAndClearsCheck(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
 	recorder := &fakeRecorder{}
@@ -488,7 +511,7 @@ func TestSlashCommandsAreDiscoverableAndNeverAccidentalModelCalls(t *testing.T) 
 }
 
 func TestCheckCommandPreservesLiteralVerifierAndCanClearIt(t *testing.T) {
-	m := New(Config{})
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
 	check := `printf '%s  %s\n' "one" "two" | grep -q 'one  two'`
 	m.composer.SetValue("/check -- " + check)
 	updated, cmd := m.Update(key("enter"))
@@ -507,11 +530,47 @@ func TestCheckCommandPreservesLiteralVerifierAndCanClearIt(t *testing.T) {
 		t.Fatalf("show notice=%q", m.notice)
 	}
 
+	m.composer.SetValue("/check all")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if !m.taskOptions.CheckAllCriteria || !strings.Contains(m.notice, "blanket admission") {
+		t.Fatalf("check-all=%v notice=%q", m.taskOptions.CheckAllCriteria, m.notice)
+	}
+	m.width, m.height = 140, 24
+	m.resize()
+	if view := m.View().Content; !strings.Contains(view, "CHECK ALL "+strconv.Quote(check)) {
+		t.Fatalf("composer omitted check-all policy: %q", view)
+	}
+
+	m.composer.SetValue("/check -- true")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.taskOptions.CheckAllCriteria {
+		t.Fatal("changing the check retained blanket admission")
+	}
+
 	m.composer.SetValue("/check off")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if m.taskOptions.Check != "" || !strings.Contains(m.notice, "next work outcome will be unchecked") {
-		t.Fatalf("check=%q notice=%q", m.taskOptions.Check, m.notice)
+	if m.taskOptions.Check != "" || m.taskOptions.CheckAllCriteria || !strings.Contains(m.notice, "next work outcome will be unchecked") {
+		t.Fatalf("check=%q check-all=%v notice=%q", m.taskOptions.Check, m.taskOptions.CheckAllCriteria, m.notice)
+	}
+}
+
+func TestCheckAllNeedsContractAndConfiguredCheck(t *testing.T) {
+	m := New(Config{})
+	m.composer.SetValue("/check all")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Set a check first") || m.taskOptions.CheckAllCriteria {
+		t.Fatalf("notice=%q options=%#v", m.notice, m.taskOptions)
+	}
+	m.taskOptions.Check = "true"
+	m.composer.SetValue("/check all")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "contracts on") || m.taskOptions.CheckAllCriteria {
+		t.Fatalf("notice=%q options=%#v", m.notice, m.taskOptions)
 	}
 }
 

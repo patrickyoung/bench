@@ -313,6 +313,8 @@ func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
 		{Timeout: 0, HasTimeout: true},
 		{Compactions: -1, HasCompactions: true},
 		{IntentContract: true, Compact: true},
+		{IntentContract: true, CheckAllCriteria: true},
+		{Check: "true", CheckAllCriteria: true},
 	} {
 		var done Event
 		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{

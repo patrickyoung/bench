@@ -87,6 +87,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "bench: -sh and -t are mutually exclusive")
 		return 2
 	}
+	if err := validateCheckAllFlags(o.task); err != nil {
+		fmt.Fprintln(stderr, "bench: "+err.Error())
+		return 2
+	}
 	if o.shell {
 		o.toolbox.value = ""
 	}
@@ -195,6 +199,10 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if shell && toolbox.set {
 		fmt.Fprintln(stderr, "bench "+mode+": -sh and -t are mutually exclusive")
+		return 2
+	}
+	if err := validateCheckAllFlags(task); err != nil {
+		fmt.Fprintln(stderr, "bench "+mode+": "+err.Error())
 		return 2
 	}
 	if !toolbox.set && !shell {
@@ -466,6 +474,7 @@ func (s *stringList) Set(value string) error {
 type taskFlags struct {
 	contract    bool
 	check       string
+	checkAll    bool
 	effort      string
 	cycles      trackedInt
 	turns       trackedInt
@@ -481,6 +490,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.timeout.name = "timeout"
 	fs.BoolVar(&task.contract, "contract", true, "compile intent into a replayable outcome contract before work")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
+	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
@@ -491,15 +501,29 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 
 func (f taskFlags) options() plyexec.TaskOptions {
 	return plyexec.TaskOptions{
-		IntentContract: f.contract,
-		Check:          f.check,
-		Effort:         f.effort,
-		Cycles:         f.cycles.value, HasCycles: f.cycles.set,
+		IntentContract:   f.contract,
+		Check:            f.check,
+		CheckAllCriteria: f.checkAll,
+		Effort:           f.effort,
+		Cycles:           f.cycles.value, HasCycles: f.cycles.set,
 		Turns: f.turns.value, HasTurns: f.turns.set,
 		Timeout: f.timeout.value, HasTimeout: f.timeout.set,
 		Compact:     f.compact,
 		Compactions: f.compactions.value, HasCompactions: f.compactions.set,
 	}
+}
+
+func validateCheckAllFlags(f taskFlags) error {
+	if !f.checkAll {
+		return nil
+	}
+	if strings.TrimSpace(f.check) == "" {
+		return errors.New("check-all needs a configured check")
+	}
+	if !f.contract {
+		return errors.New("check-all needs an outcome contract")
+	}
+	return nil
 }
 
 type trackedInt struct {
@@ -573,6 +597,7 @@ Interactive flags:
   -project dir        open and check an existing agent project
   -contract           compile intent into a replayable outcome contract (default true)
   -check command      literal verifier for the next open work outcome
+  -check-all          admit that check as judge of every contract criterion
   -effort level       reasoning effort passed literally through Ply to Ask
   -cycles n           rejected candidates before Ply stops (0 = unbounded)
   -turns n            model turns before Ply stops (0 = unbounded)
@@ -596,7 +621,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-contract=true|false] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-contract=true|false] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

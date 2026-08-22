@@ -101,6 +101,7 @@ func (m *Model) updateContractAcceptance(msg contractAcceptanceMsg) (tea.Model, 
 	}
 	m.pendingContract = nil
 	m.taskOptions.Check = ""
+	m.taskOptions.CheckAllCriteria = false
 	m.taskOptions.Force = false
 	m.notice = fmt.Sprintf("Outcome accepted · you accepted %d contract criteria · check cleared · session is replayable", msg.count)
 	m.syncContent()

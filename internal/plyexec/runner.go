@@ -41,6 +41,15 @@ type ContractCriterion struct {
 	Judge string `json:"judge"`
 }
 
+type VerifierReceiptRef struct {
+	Seq             int    `json:"seq"`
+	BodySHA256      string `json:"body_sha256"`
+	SealSHA256      string `json:"seal_sha256"`
+	Phase           string `json:"phase"`
+	CandidateSHA256 string `json:"candidate_sha256"`
+	VerifierSHA256  string `json:"verifier_sha256"`
+}
+
 type ContractResult struct {
 	ContractID            string              `json:"contract_id"`
 	Status                string              `json:"status"`
@@ -48,7 +57,10 @@ type ContractResult struct {
 	CheckPassed           bool                `json:"check_passed"`
 	WorkerExitCode        int                 `json:"worker_exit_code"`
 	ProposedCheckCoverage []string            `json:"proposed_check_coverage"`
+	AdmittedCheckCoverage []string            `json:"admitted_check_coverage"`
 	Outstanding           []ContractCriterion `json:"outstanding"`
+	JudgeMapSHA256        string              `json:"judge_map_sha256,omitempty"`
+	VerifierReceipt       *VerifierReceiptRef `json:"verifier_receipt,omitempty"`
 	OpenQuestions         []string            `json:"open_questions"`
 	PendingApprovals      []string            `json:"pending_approvals"`
 }
@@ -86,20 +98,21 @@ type TaskRequest struct {
 // distinction between an omitted option (Ply owns its default) and an
 // explicit zero (Ply documents zero as unbounded).
 type TaskOptions struct {
-	IntentContract bool
-	ContractID     string
-	Check          string
-	Force          bool
-	Effort         string
-	Cycles         int
-	HasCycles      bool
-	Turns          int
-	HasTurns       bool
-	Timeout        time.Duration
-	HasTimeout     bool
-	Compact        bool
-	Compactions    int
-	HasCompactions bool
+	IntentContract   bool
+	ContractID       string
+	Check            string
+	CheckAllCriteria bool
+	Force            bool
+	Effort           string
+	Cycles           int
+	HasCycles        bool
+	Turns            int
+	HasTurns         bool
+	Timeout          time.Duration
+	HasTimeout       bool
+	Compact          bool
+	Compactions      int
+	HasCompactions   bool
 }
 
 type Client interface {
@@ -248,6 +261,12 @@ func Validate(req TaskRequest) error {
 	}
 	if req.Options.Check != "" && strings.TrimSpace(req.Options.Check) == "" {
 		return errors.New("task check is empty")
+	}
+	if req.Options.CheckAllCriteria && req.Options.Check == "" {
+		return errors.New("check-all needs a configured check")
+	}
+	if req.Options.CheckAllCriteria && !req.Options.IntentContract {
+		return errors.New("check-all needs an outcome contract")
 	}
 	for _, skill := range req.Skills {
 		if strings.TrimSpace(skill) == "" {

@@ -724,6 +724,18 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	switch {
 	case errors.Is(event.Err, context.Canceled):
 		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
+	case event.ContractResult != nil && event.ContractResult.Status == "complete":
+		m.pendingContract = nil
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" {
+			total := len(event.ContractResult.AdmittedCheckCoverage)
+			m.notice = fmt.Sprintf("Outcome complete · operator-admitted check passed %d/%d criteria · session is replayable", total, total)
+		}
+		m.taskOptions.Check = ""
+		m.taskOptions.CheckAllCriteria = false
 	case event.ContractResult != nil && event.ContractResult.Status == "review_required":
 		pending := *event.ContractResult
 		m.pendingContract = &pending
@@ -1274,7 +1286,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/tools MODE", "show; use shell, off, or a toolbox path", width),
 		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
 		helpRow(t, "/contract on|off", "compile a visible outcome contract before work", width),
-		helpRow(t, "/check -- CMD", "set one verifier for the next work outcome; /check off clears", width),
+		helpRow(t, "/check -- CMD", "set verifier; /check all admits it for every criterion", width),
 		helpRow(t, "/accept · /continue", "accept reviewed criteria, or revise the pending outcome", width),
 		helpRow(t, "/skills", "browse and build Brief skills", width),
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
@@ -1422,6 +1434,9 @@ func (m *Model) View() tea.View {
 		policy := " · NO CHECK · /check -- COMMAND "
 		if m.taskOptions.Check != "" {
 			policy = " · CHECK " + strconv.Quote(m.taskOptions.Check) + " "
+			if m.taskOptions.CheckAllCriteria {
+				policy = " · CHECK ALL " + strconv.Quote(m.taskOptions.Check) + " "
+			}
 		}
 		composerLabel += t.warning.Render(ansi.Truncate(policy, max(12, w-lipgloss.Width(composerLabel)-2), "…"))
 	}

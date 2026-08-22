@@ -77,7 +77,7 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 		return
 	}
-	contractID := envelopeID(canonical, req.Goal, compilerEvidence, req.Options.Check, req.Skills)
+	contractID := envelopeID(canonical, req.Goal, compilerEvidence, req.Options.Check, req.Options.CheckAllCriteria, req.Skills)
 	recordBody, err := json.Marshal(struct {
 		Status       string          `json:"status"`
 		Compiler     string          `json:"compiler"`
@@ -86,6 +86,7 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		IntentSHA256 string          `json:"intent_sha256"`
 		EvidenceSHA  string          `json:"compiler_evidence_sha256"`
 		CheckSHA     string          `json:"check_sha256"`
+		CheckAll     bool            `json:"check_all"`
 		Skills       []string        `json:"skills"`
 		Contract     json.RawMessage `json:"contract"`
 	}{
@@ -93,6 +94,7 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		ContractID: contractID, ContractSHA: "sha256:" + contractDigest,
 		IntentSHA256: sha256Text(req.Goal), EvidenceSHA: sha256Text(compilerEvidence),
 		CheckSHA: sha256Text(req.Options.Check),
+		CheckAll: req.Options.CheckAllCriteria,
 		Skills:   append([]string{}, req.Skills...),
 		Contract: json.RawMessage(canonical),
 	})
@@ -120,10 +122,15 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		})
 		return
 	}
+	admitted, judgeMapSHA, err := r.admitJudge(ctx, req, contract, contractID, "sha256:"+contractDigest)
+	if err != nil {
+		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
+		return
+	}
 
 	work := req
 	work.Options.ContractID = "sha256:" + digest
-	work.Goal = workGoal(req.Goal, canonical, digest, req.Options.Check)
+	work.Goal = workGoal(req.Goal, canonical, digest, req.Options.Check, req.Options.CheckAllCriteria)
 	var terminal *plyexec.Event
 	var heldStdout []plyexec.Event
 	for event := range r.Ply.Work(ctx, work) {
@@ -148,7 +155,32 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: errors.New("ply ended without a terminal result"), Session: req.Session})
 		return
 	}
-	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", *terminal)
+	var candidate strings.Builder
+	for _, event := range heldStdout {
+		candidate.WriteString(event.Text)
+	}
+	var receipt *plyexec.VerifierReceiptRef
+	var receiptErr error
+	if req.Options.CheckAllCriteria && terminal.Err == nil && terminal.ExitCode == 0 {
+		reader, ok := r.Ask.(askexec.VerifierReader)
+		if !ok {
+			receiptErr = errors.New("Ask adapter cannot read verifier receipts")
+		} else {
+			got, err := reader.AcceptedVerifier(ctx, req.Session, judgeMapSHA, contractID, req.Options.Check, verifierCandidateSHA(candidate.String()), req.Dir)
+			if err != nil {
+				receiptErr = err
+			} else {
+				receipt = &plyexec.VerifierReceiptRef{
+					Seq: got.Seq, BodySHA256: got.BodySHA256, SealSHA256: got.SealSHA256, Phase: got.Phase,
+					CandidateSHA256: got.CandidateSHA256, VerifierSHA256: got.VerifierSHA256,
+				}
+			}
+		}
+	}
+	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", admitted, judgeMapSHA, receipt, *terminal)
+	if receiptErr != nil {
+		result.Status = "failed"
+	}
 	// The original request session is controller-owned input and already holds
 	// the compiled contract. Ply's session-out path is worker-visible control
 	// data; do not let it redirect an authoritative Bench record.
@@ -156,19 +188,34 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 		return
 	}
-	for _, event := range heldStdout {
-		emit(ctx, events, event)
+	if receiptErr == nil {
+		for _, event := range heldStdout {
+			emit(ctx, events, event)
+		}
 	}
 	// Do not adopt Ply's worker-visible session-out path as controller state.
 	// Compaction lineage needs an independently verified protocol before Bench
 	// may trust a successor for authoritative records or future turns.
 	terminal.Session = req.Session
 	terminal.ContractResult = &result
-	if result.Status == "review_required" {
+	switch result.Status {
+	case "complete":
+		terminal.ExitCode = 0
+		terminal.Err = nil
+		terminal.Stream = plyexec.Stderr
+		terminal.Text = completeSummary(result)
+	case "review_required":
 		terminal.ExitCode = 2
 		terminal.Err = nil
 		terminal.Stream = plyexec.Stderr
 		terminal.Text = resultSummary(result)
+	case "failed":
+		if receiptErr != nil {
+			terminal.ExitCode = 1
+			terminal.Err = fmt.Errorf("verify accepted Ply receipt: %w", receiptErr)
+			terminal.Stream = plyexec.Stderr
+			terminal.Text = ""
+		}
 	}
 	emitFinal(ctx, events, *terminal)
 }
@@ -180,18 +227,53 @@ func (r Runner) recordResult(ctx context.Context, session string, result plyexec
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	kind := "bench.contract-result/v1"
+	if result.JudgeMapSHA256 != "" {
+		kind = "bench.contract-result/v2"
+	}
 	if err := r.Ask.Record(recordCtx, askexec.RecordRequest{
-		Session: session, Source: "bench", Kind: "bench.contract-result/v1", JSON: string(recordJSON),
+		Session: session, Source: "bench", Kind: kind, JSON: string(recordJSON),
 	}); err != nil {
 		return fmt.Errorf("record contract result: %w", err)
 	}
 	return nil
 }
 
+func (r Runner) admitJudge(ctx context.Context, req plyexec.TaskRequest, contract Contract, contractID, contractSHA string) ([]string, string, error) {
+	if !req.Options.CheckAllCriteria {
+		return []string{}, "", nil
+	}
+	criteria := make([]string, 0, len(contract.Criteria))
+	for _, criterion := range contract.Criteria {
+		criteria = append(criteria, criterion.ID)
+	}
+	body, err := json.Marshal(struct {
+		ContractID   string   `json:"contract_id"`
+		ContractSHA  string   `json:"contract_sha256"`
+		CheckSHA     string   `json:"check_sha256"`
+		Workdir      string   `json:"workdir"`
+		Policy       string   `json:"policy"`
+		Authority    string   `json:"authority"`
+		CriterionIDs []string `json:"criterion_ids"`
+	}{
+		ContractID: contractID, ContractSHA: contractSHA, CheckSHA: sha256Text(req.Options.Check),
+		Workdir: req.Dir, Policy: "all", Authority: "operator-check-all", CriterionIDs: criteria,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("encode judge map: %w", err)
+	}
+	if err := r.Ask.Record(ctx, askexec.RecordRequest{
+		Session: req.Session, Source: "bench", Kind: "bench.judge-map/v1", JSON: string(body),
+	}); err != nil {
+		return nil, "", fmt.Errorf("record judge map: %w", err)
+	}
+	return criteria, sha256Text(string(body)), nil
+}
+
 func pendingResult(contract Contract, contractID string, checkConfigured bool, status string) plyexec.ContractResult {
 	result := plyexec.ContractResult{
 		ContractID: contractID, Status: status, CheckConfigured: checkConfigured,
-		ProposedCheckCoverage: []string{}, Outstanding: []plyexec.ContractCriterion{},
+		ProposedCheckCoverage: []string{}, AdmittedCheckCoverage: []string{}, Outstanding: []plyexec.ContractCriterion{},
 		OpenQuestions: append([]string{}, contract.OpenQuestions...), PendingApprovals: append([]string{}, contract.Approvals...),
 	}
 	for _, criterion := range contract.Criteria {
@@ -200,19 +282,40 @@ func pendingResult(contract Contract, contractID string, checkConfigured bool, s
 	return result
 }
 
-func aggregate(contract Contract, contractID string, checkConfigured bool, terminal plyexec.Event) plyexec.ContractResult {
+func aggregate(contract Contract, contractID string, checkConfigured bool, admitted []string, judgeMapSHA string, receipt *plyexec.VerifierReceiptRef, terminal plyexec.Event) plyexec.ContractResult {
 	result := pendingResult(contract, contractID, checkConfigured, "")
 	result.WorkerExitCode = terminal.ExitCode
+	result.JudgeMapSHA256 = judgeMapSHA
+	result.VerifierReceipt = receipt
 	checkAccepted := checkConfigured && terminal.Err == nil && terminal.ExitCode == 0
+	if judgeMapSHA != "" {
+		checkAccepted = checkAccepted && receipt != nil
+	}
 	result.CheckPassed = checkAccepted
 	for _, criterion := range contract.Criteria {
 		if checkAccepted && criterion.Judge == "check" {
 			result.ProposedCheckCoverage = append(result.ProposedCheckCoverage, criterion.ID)
 		}
 	}
+	if checkAccepted && receipt != nil {
+		accepted := make(map[string]bool, len(admitted))
+		for _, id := range admitted {
+			accepted[id] = true
+			result.AdmittedCheckCoverage = append(result.AdmittedCheckCoverage, id)
+		}
+		pending := result.Outstanding[:0]
+		for _, criterion := range result.Outstanding {
+			if !accepted[criterion.ID] {
+				pending = append(pending, criterion)
+			}
+		}
+		result.Outstanding = pending
+	}
 	switch {
 	case errors.Is(terminal.Err, context.Canceled):
 		result.Status = "interrupted"
+	case terminal.Err == nil && terminal.ExitCode == 0 && len(result.Outstanding) == 0 && receipt != nil:
+		result.Status = "complete"
 	case terminal.Err == nil && terminal.ExitCode == 0:
 		result.Status = "review_required"
 	case terminal.ExitCode == 2:
@@ -221,6 +324,11 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, termi
 		result.Status = "failed"
 	}
 	return result
+}
+
+func completeSummary(result plyexec.ContractResult) string {
+	total := len(result.AdmittedCheckCoverage)
+	return fmt.Sprintf("Outcome complete · operator-admitted check passed %d/%d criteria · session is replayable\n", total, total)
 }
 
 func resultSummary(result plyexec.ContractResult) string {
@@ -248,17 +356,27 @@ func sha256Text(s string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func envelopeID(contract, intent, evidence, check string, skills []string) string {
+// Ply terminates a non-empty report with exactly one newline before sending
+// it to the verifier. Bind the receipt lookup to those exact stdin bytes.
+func verifierCandidateSHA(candidate string) string {
+	if candidate == "" {
+		return sha256Text("")
+	}
+	return sha256Text(strings.TrimRight(candidate, "\n") + "\n")
+}
+
+func envelopeID(contract, intent, evidence, check string, checkAll bool, skills []string) string {
 	body, _ := json.Marshal(struct {
 		Version  int             `json:"version"`
 		Contract json.RawMessage `json:"contract"`
 		Intent   string          `json:"intent_sha256"`
 		Evidence string          `json:"compiler_evidence_sha256"`
 		Check    string          `json:"check_sha256"`
+		CheckAll bool            `json:"check_all"`
 		Skills   []string        `json:"skills"`
 	}{
 		Version: 1, Contract: json.RawMessage(contract), Intent: sha256Text(intent),
-		Evidence: sha256Text(evidence), Check: sha256Text(check), Skills: append([]string{}, skills...),
+		Evidence: sha256Text(evidence), Check: sha256Text(check), CheckAll: checkAll, Skills: append([]string{}, skills...),
 	})
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -268,14 +386,22 @@ func compilerMessage(req plyexec.TaskRequest) string {
 	verifier := "No executable verifier is configured. Distinguish evidence the worker can gather from claims only a person can judge."
 	if req.Options.Check != "" {
 		verifier = "The operator configured this exact verifier. Use judge=check only for criteria it directly establishes, without treating it as broader proof:\n" + req.Options.Check
+		if req.Options.CheckAllCriteria {
+			verifier = "The operator explicitly admits this exact verifier as judge of every contract criterion. Still classify evidence honestly for explanation; the operator policy, never your labels, supplies authority:\n" + req.Options.Check
+		}
 	}
 	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nVERIFIER BOUNDARY\n" + verifier
 }
 
-func workGoal(intent, contract, digest, check string) string {
+func workGoal(intent, contract, digest, check string, checkAll bool) string {
 	verifier := "No executable verifier is configured. You may stop after reporting evidence, but the contracted outcome will remain ready for review rather than complete."
+	inspectionRule := "Report inspection and human criteria as pending acceptance even when you gathered useful evidence."
 	if check != "" {
 		verifier = "The operator's fixed verifier decides only the criteria marked judge=check. Its exact command is:\n" + check
+		if checkAll {
+			verifier = "The operator explicitly admitted the fixed verifier as judge of every criterion. Its exact command is:\n" + check
+			inspectionRule = "Treat model-assigned judge labels as explanatory; the operator-admitted check decides every criterion."
+		}
 	}
 	return fmt.Sprintf(`Pursue the user's outcome under this compiled contract.
 
@@ -289,12 +415,12 @@ sha256 %s
 WORKING RULES
 - Address every deliverable, invariant, and acceptance criterion.
 - Gather the named evidence; do not replace evidence with a claim that work is done.
-- Report inspection and human criteria as pending acceptance even when you gathered useful evidence.
+- %s
 - Approval boundaries remain boundaries: do not cross one without the required approval.
 - Open questions block only the affected irreversible or materially ambiguous step; continue safe reversible work where possible.
 - Do not silently weaken or amend this contract. If evidence makes it wrong or impossible, report the exact proposed amendment and why.
 - %s
-`, intent, Version, digest, contract, verifier)
+`, intent, Version, digest, contract, inspectionRule, verifier)
 }
 
 func emit(ctx context.Context, dst chan<- plyexec.Event, event plyexec.Event) {
