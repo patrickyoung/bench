@@ -42,7 +42,7 @@
     {
       "name": "hone",
       "repository": "https://github.com/patrickyoung/hone.git",
-      "revision": "66aa52f2cee2590cf7730a8e140a365733b9b4a7",
+      "revision": "450af3a1e1a9672da1b9fcddef70eddb8b272be8",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
