@@ -93,6 +93,7 @@ func TestTaskPolicyPropagatesAndCheckedSuccessNamesTheVerdict(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
 	options := plyexec.TaskOptions{
 		Check:  "go test ./...",
+		Effort: "xhigh",
 		Cycles: 0, HasCycles: true,
 		Turns: 20, HasTurns: true,
 		Timeout: time.Minute, HasTimeout: true,

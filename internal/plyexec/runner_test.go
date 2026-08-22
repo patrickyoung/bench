@@ -75,6 +75,7 @@ printf '%s\n' "$@" > args
 printf '%s' "${ASK-}" > ask
 printf '%s' "${BRIEF-}" > brief
 printf '%s' "${ASK_MODEL-}" > ask-model
+printf '%s' "${PLY_EFFORT-}" > ply-effort
 printf '%s' "${PLY_DIR-}" > subagents-env
 if [ -d "${PLY_DIR-}" ]; then
   printf present > subagents-state
@@ -96,6 +97,7 @@ printf 'task answer\n'
 	for event := range (Runner{Path: fixture, AskPath: "/opt/tools/ask", BriefPath: "/opt/tools/brief"}).Work(context.Background(), TaskRequest{
 		Dir: dir, Goal: goal, Input: "piped evidence\n", Session: session, SubagentsDir: subagents,
 		Model: "openai/test-model", Skills: []string{"go-review", "house-style"},
+		Options: TaskOptions{Effort: "xhigh"},
 	}) {
 		switch event.Stream {
 		case Stdout:
@@ -113,10 +115,11 @@ printf 'task answer\n'
 	if stdout.String() != "task answer\n" || stderr.String() != "ran rg and git\n" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	wantArgs := strings.Join([]string{"-sh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
+	wantArgs := strings.Join([]string{"-sh", "-effort", "xhigh", "-C", dir, "-f", session, "-m", "openai/test-model", "-s", "go-review", "-s", "house-style", "--", goal, ""}, "\n")
 	for file, want := range map[string]string{
 		"args": wantArgs, "ask": "/opt/tools/ask", "brief": "/opt/tools/brief",
-		"ask-model": "openai/test-model", "subagents-env": subagents, "subagents-state": "absent",
+		"ask-model": "openai/test-model", "ply-effort": "xhigh",
+		"subagents-env": subagents, "subagents-state": "absent",
 	} {
 		got, err := os.ReadFile(filepath.Join(dir, file))
 		if err != nil || string(got) != want {
@@ -211,6 +214,7 @@ printf answer
 		Dir: dir, Goal: "finish", Session: session,
 		Options: TaskOptions{
 			Check:  check,
+			Effort: "xhigh",
 			Cycles: 0, HasCycles: true,
 			Turns: 12, HasTurns: true,
 			Timeout: 45 * time.Second, HasTimeout: true,
@@ -232,6 +236,7 @@ printf answer
 	got := string(args)
 	for _, want := range []string{
 		"-check\n" + check + "\n",
+		"-effort\nxhigh\n",
 		"-cycles\n0\n",
 		"-turns\n12\n",
 		"-timeout\n45s\n",

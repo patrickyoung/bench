@@ -455,6 +455,7 @@ func (s *stringList) Set(value string) error {
 
 type taskFlags struct {
 	check       string
+	effort      string
 	cycles      trackedInt
 	turns       trackedInt
 	timeout     trackedDuration
@@ -468,6 +469,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
 	fs.StringVar(&task.check, "check", "", "literal shell-backed Ply check")
+	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "failed checks before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
 	fs.Var(&task.timeout, "timeout", "per-command Ply timeout")
@@ -478,6 +480,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 func (f taskFlags) options() plyexec.TaskOptions {
 	return plyexec.TaskOptions{
 		Check:  f.check,
+		Effort: f.effort,
 		Cycles: f.cycles.value, HasCycles: f.cycles.set,
 		Turns: f.turns.value, HasTurns: f.turns.set,
 		Timeout: f.timeout.value, HasTimeout: f.timeout.set,
@@ -556,6 +559,7 @@ Interactive flags:
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
   -check command      literal shell-backed check for each open task turn
+  -effort level       reasoning effort passed literally through Ply to Ask
   -cycles n           failed checks before Ply stops (0 = unbounded)
   -turns n            model turns before Ply stops (0 = unbounded)
   -timeout duration   per-command Ply timeout
@@ -578,7 +582,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

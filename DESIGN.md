@@ -62,9 +62,9 @@ the model stopped, the UI never calls that outcome done or passed.
 `-check COMMAND` deliberately opts an open task into a shell-backed executable
 verdict; Bench passes that command as one literal argument, displays it through
 `/status`, and distinguishes a passing pre-check from a worked, replayable
-session. `-cycles`, `-turns`, `-timeout`, `-compact`, and `-compactions` are
-optional process policy, not a second loop, and omission leaves Ply's defaults
-in charge.
+session. `-effort`, `-cycles`, `-turns`, `-timeout`, `-compact`, and
+`-compactions` are optional process policy, not a second loop, and omission
+leaves Ply's defaults in charge.
 
 Compaction may move the work into a successor Ask session. For checked or
 compacting work, Bench passes Ply a private `-session-out FILE` artifact path.
@@ -177,6 +177,8 @@ and no command palette full of promises.
 Model choice is one value across the product. `-m` seeds it and `/model`
 changes future work. Bench passes it as literal `-m` to Ask and Ply, and as
 `ASK_MODEL` to draft's model-backed stages. Skill refinement uses it too.
+For open tasks, `-effort` similarly passes literally to Ply and Ask rather than
+creating a second provider-policy implementation inside Bench.
 Every underlying Ask request records the actual model, so a mid-session switch
 does not weaken replay evidence.
 

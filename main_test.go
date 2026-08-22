@@ -228,7 +228,7 @@ printf checked-answer
 	check := `go test ./...; printf '$(literal)'`
 	var stdout, stderr strings.Builder
 	code := run([]string{
-		"run", "-C", dir, "-check", check, "-cycles", "0", "-turns", "9",
+		"run", "-C", dir, "-check", check, "-effort", "xhigh", "-cycles", "0", "-turns", "9",
 		"-timeout", "35s", "-compact", "-compactions", "2", "finish it",
 	}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 || stdout.String() != "checked-answer" || stderr.Len() != 0 {
@@ -240,7 +240,7 @@ printf checked-answer
 	}
 	got := string(args)
 	for _, want := range []string{
-		"-check\n" + check + "\n", "-cycles\n0\n", "-turns\n9\n",
+		"-check\n" + check + "\n", "-effort\nxhigh\n", "-cycles\n0\n", "-turns\n9\n",
 		"-timeout\n35s\n", "-compact\n", "-compactions\n2\n",
 	} {
 		if !strings.Contains(got, want) {

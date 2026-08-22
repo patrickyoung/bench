@@ -127,9 +127,11 @@ passed**. Bench passes the command as one argv value and never evaluates it
 itself. Agent designs remain the durable home for recurring checked work.
 
 Both the interactive workbench and `bench run` accept Ply's optional policy
-controls: `-cycles N`, `-turns N`, `-timeout DURATION`, `-compact`, and
-`-compactions N`. Omitted controls stay omitted so the installed Ply owns its
-defaults; an explicit zero retains Ply's documented unbounded meaning. For
+controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
+`-compact`, and `-compactions N`. Bench passes effort names literally through
+Ply; Ask and its provider decide which names are supported. Omitted controls
+stay omitted so the installed Ply owns its defaults; an explicit zero retains
+Ply's documented unbounded meaning. For
 checked or compacting work, Ply reports the Ask session it actually used
 through a private `-session-out` control artifact. Its absence on a passing
 pre-check means no model turn or session was created. Bench removes the

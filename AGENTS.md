@@ -29,7 +29,9 @@ Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one
 action, returns its evidence, and decides when to ask again. `/ask` uses direct
 `ask` for a no-tools turn in that same session; `bench run` and `bench ask`
 preserve the same boundaries headlessly. `-m` and `/model` must propagate
-through every model-backed stage. `draft new/check/build/prove` and
+through every model-backed stage. Open-task `-effort` passes literally through
+Ply to Ask; Bench must not validate provider-specific effort names.
+`draft new/check/build/prove` and
 `hone -into` remain separate programs for promoted agent work, with visible
 evidence and exit-status verdicts. The Skills workbench likewise composes
 `brief ls/path/cat/new/lint`, passes sources to `ply` on stdin, and uses strict

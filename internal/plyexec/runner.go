@@ -60,6 +60,7 @@ type TaskRequest struct {
 // explicit zero (Ply documents zero as unbounded).
 type TaskOptions struct {
 	Check          string
+	Effort         string
 	Cycles         int
 	HasCycles      bool
 	Turns          int
@@ -141,6 +142,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if req.Options.Check != "" {
 		args = append(args, "-check", req.Options.Check)
 	}
+	if effort := strings.TrimSpace(req.Options.Effort); effort != "" {
+		args = append(args, "-effort", effort)
+	}
 	if req.Options.HasCycles {
 		args = append(args, "-cycles", strconv.Itoa(req.Options.Cycles))
 	}
@@ -201,6 +205,11 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	// parent selection so delegation does not silently switch models.
 	if model := strings.TrimSpace(req.Model); model != "" {
 		env = append(env, "ASK_MODEL="+model)
+	}
+	// Keep nested Ply workers on the parent's explicit reasoning policy. Ask
+	// remains the authority for which literal effort names are supported.
+	if effort := strings.TrimSpace(req.Options.Effort); effort != "" {
+		env = append(env, "PLY_EFFORT="+effort)
 	}
 	processEvents := filterexec.Start(ctx, filterexec.Spec{Path: path, Args: args, Dir: dir, Env: env, Stdin: req.Input})
 	if sessionOut == "" {
