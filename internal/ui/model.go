@@ -36,6 +36,8 @@ const (
 	roleAssistant
 	roleTools
 	roleContract
+	roleOutcome
+	roleStatus
 )
 
 type message struct {
@@ -282,7 +284,7 @@ const (
 // New builds an idle workbench without touching the workspace.
 func New(cfg Config) *Model {
 	composer := textarea.New()
-	composer.Placeholder = "Describe a task, or type /help…"
+	composer.Placeholder = "Describe the outcome you want, or type /help…"
 	composer.ShowLineNumbers = false
 	composer.Prompt = "│ "
 	composer.SetHeight(5)
@@ -552,7 +554,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.composer.Value())
 	if text == "" {
-		m.notice = "Describe a task before sending."
+		m.notice = "Describe the outcome you want before sending."
 		return m, nil
 	}
 	if strings.HasPrefix(text, "//") {
@@ -690,6 +692,10 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
 		if event.Contract != "" {
 			m.messages = append(m.messages, message{role: roleContract, text: safeText(event.Contract)})
+			// Compiler progress belongs to the understanding phase. Start the
+			// visible work log cleanly when Ply receives the admitted contract.
+			m.toolActivity = ""
+			m.activity = ""
 			m.notice = "Outcome contract compiled · work continues under " + shortDigest(event.ContractDigest)
 			m.syncContent()
 			return m, waitPlyEvent(m.plyEvents)
@@ -790,12 +796,61 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	default:
 		m.notice = filterFailure("ply", event.ExitCode, event.Err, toolLog)
 	}
+	// Keep the verdict after the answer so it is the last durable card and the
+	// next interaction stays visible without scrolling backward.
+	if event.ContractResult != nil {
+		m.messages = append(m.messages, message{role: roleOutcome, text: safeText(contractResultCard(*event.ContractResult))})
+	}
 	m.activity = ""
 	m.toolActivity = ""
 	m.job = 0
 	m.syncContent()
 	cmd := m.composer.Focus()
 	return m, cmd
+}
+
+func contractResultCard(result plyexec.ContractResult) string {
+	lines := []string{}
+	switch result.Status {
+	case "complete":
+		lines = append(lines, "COMPLETE", fmt.Sprintf("Operator-admitted check settled %d criterion/criteria.", len(result.AdmittedCheckCoverage)))
+		if result.VerifierReceipt != nil {
+			lines = append(lines, "Evidence: terminal Ply verifier receipt · "+shortDigest(result.VerifierReceipt.BodySHA256))
+		}
+		lines = append(lines, "Next: describe the next outcome when you are ready.")
+	case "review_required":
+		lines = append(lines, "READY FOR REVIEW")
+		if result.CheckConfigured && result.CheckPassed {
+			lines = append(lines, "Configured check passed, but it was not admitted as the whole verdict.")
+		} else if result.CheckConfigured {
+			lines = append(lines, "A configured check exists; the outcome still needs judgment.")
+		} else {
+			lines = append(lines, "No executable check was configured for the whole outcome.")
+		}
+		if len(result.Outstanding) > 0 {
+			lines = append(lines, "Still needs acceptance:")
+			for _, criterion := range result.Outstanding {
+				lines = append(lines, fmt.Sprintf("- %s · %s", criterion.ID, criterion.Judge))
+			}
+		}
+		lines = append(lines, "Next: inspect the artifacts, then /accept · or /continue to revise.")
+	case "needs_decision":
+		lines = append(lines, "DECISION NEEDED", "Bench paused before workspace tools ran.")
+		for _, question := range result.OpenQuestions {
+			lines = append(lines, "- "+question)
+		}
+		for _, approval := range result.PendingApprovals {
+			lines = append(lines, "- Approval required: "+approval)
+		}
+		lines = append(lines, "Next: reply normally with the missing decision.")
+	case "not_done":
+		lines = append(lines, "NOT DONE", "Ply stopped before the outcome check accepted the work.", "Next: review the work log, adjust the outcome or check, then continue.")
+	case "interrupted":
+		lines = append(lines, "INTERRUPTED", "Completed observations remain in the replayable session.", "Next: continue when you are ready.")
+	default:
+		lines = append(lines, "NOT ACCEPTED", "Bench could not establish a trustworthy outcome verdict.", "Next: inspect the work log and error; the check remains available for retry.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) startReplay(path string) (tea.Model, tea.Cmd) {
@@ -1057,15 +1112,15 @@ func spinnerFrame(n int) string {
 func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
-		titleText := "What are we working on?"
-		bodyText := "Bench compiles your intent into a visible outcome contract, then Ask + Ply acts through ordinary workspace tools. Contract, commands, results, and verdict stay replayable."
-		exampleText := "Try:  Find why the tests fail and fix the smallest root cause."
+		titleText := "What outcome should we pursue?"
+		bodyText := "1  UNDERSTAND  Agree on a visible outcome contract.\n2  WORK        Use ordinary programs and show their real output.\n3  VERIFY      Let evidence decide: complete, review, or revise."
+		exampleText := "Try: Find why the tests fail and fix the smallest root cause.\nHave a check? /check -- COMMAND  ·  f1 shows the whole map."
 		if !m.taskMode {
 			titleText = "What should we think through?"
-			bodyText = "Ask continues the same replayable session without running commands. Enter sends; /work restores Ask + Ply; /agent promotes your task text into a checked design."
-			exampleText = "Try:  Explain the tradeoffs in this design before we change it."
+			bodyText = "Ask continues the same replayable session without running commands.\nNo workspace program runs until you return with /work."
+			exampleText = "Try: Explain the tradeoffs in this design before we change it.\nNeed durable work? /work  ·  Need an agent project? /agent"
 		} else if m.toolbox != "" {
-			bodyText = "Ask + Ply can inspect and act through the explicit " + filepath.Base(m.toolbox) + " toolbox. Commands and results stay replayable. Enter runs; /ask disables model-run tools."
+			bodyText = "1  UNDERSTAND  Agree on a visible outcome contract.\n2  WORK        Use the " + filepath.Base(m.toolbox) + " toolbox and show real output.\n3  VERIFY      Let evidence decide: complete, review, or revise."
 		}
 		title := t.hero.Render(titleText)
 		body := t.muted.Width(max(20, width-8)).Render(bodyText)
@@ -1075,7 +1130,7 @@ func (m *Model) renderTranscript(width int) string {
 	blocks := make([]string, 0, len(m.messages)+2)
 	if len(m.activeSkills) > 0 {
 		blocks = append(blocks, t.sessionLabel.Render("BRIEF")+"\n"+
-			t.restoredBlock.Width(max(12, width-5)).Render("active for future turns  "+strings.Join(m.activeSkills, " · ")))
+			t.restoredBlock.Width(max(12, width-5)).Render("Shapes understanding and work; never the verdict.\n"+safeText(strings.Join(m.activeSkills, " · "))))
 	}
 	if m.restored != "" {
 		body := t.restoredBlock.Width(max(12, width-5)).Render(m.restored)
@@ -1088,15 +1143,21 @@ func (m *Model) renderTranscript(width int) string {
 			label = t.askLabel.Render("ASK")
 			bodyStyle = t.askBlock
 		} else if msg.role == roleTools {
-			label = t.sessionLabel.Render("TOOLS")
+			label = t.sessionLabel.Render("WORK LOG")
 			bodyStyle = t.restoredBlock
 		} else if msg.role == roleContract {
 			label = t.sessionLabel.Render("CONTRACT")
 			bodyStyle = t.restoredBlock
+		} else if msg.role == roleOutcome {
+			label = t.sessionLabel.Render("OUTCOME")
+			bodyStyle = t.restoredBlock
+		} else if msg.role == roleStatus {
+			label = t.sessionLabel.Render("STATUS")
+			bodyStyle = t.restoredBlock
 		}
 		bodyText := msg.text
 		if msg.role == roleTools {
-			bodyText += "\n\nTOOLS · END"
+			bodyText += "\n\nWORK LOG · END"
 		}
 		body := bodyStyle.Width(max(12, width-5)).Render(bodyText)
 		blocks = append(blocks, label+"\n"+body)
@@ -1104,12 +1165,24 @@ func (m *Model) renderTranscript(width int) string {
 	if m.running {
 		line := lastUsefulLine(m.activity)
 		if line == "" {
-			line = "waiting for ask"
+			line = "waiting for Ask"
 		}
-		working := t.working.Render(spinnerFrame(m.spinner) + "  " + line)
+		workingLine := spinnerFrame(m.spinner) + "  " + line
+		working := t.working.Render(workingLine)
 		label := t.askLabel.Render("ASK")
 		if m.job == jobPlyTask {
-			label = t.sessionLabel.Render("TOOLS")
+			label = t.sessionLabel.Render("WORKING · LIVE")
+			phase := "Understanding the outcome · no workspace command has run yet."
+			if m.currentTaskHasContract() {
+				phase = "Using workspace tools · commands and observations appear below."
+			}
+			live := tailLines(strings.TrimSpace(m.toolActivity), 7)
+			if live == "" {
+				live = phase + "\n\n" + workingLine
+			} else {
+				live = phase + "\n\n" + live + "\n\n" + workingLine
+			}
+			working = t.restoredBlock.Width(max(12, width-5)).Render(live)
 		}
 		if m.job == jobReplay {
 			label = t.sessionLabel.Render("SESSION")
@@ -1117,6 +1190,29 @@ func (m *Model) renderTranscript(width int) string {
 		blocks = append(blocks, label+"\n"+working)
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func (m *Model) currentTaskHasContract() bool {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		switch m.messages[i].role {
+		case roleContract:
+			return true
+		case roleUser:
+			return false
+		}
+	}
+	return false
+}
+
+func tailLines(text string, count int) string {
+	if text == "" || count <= 0 {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > count {
+		lines = append([]string{"… earlier work remains in the replayable session"}, lines[len(lines)-count:]...)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func shortDigest(digest string) string {
@@ -1280,23 +1376,28 @@ func (m *Model) renderHelp(width int) string {
 		grantHelp = "Ply can name only programs in " + filepath.Base(m.toolbox) + ". Replay the session with:"
 	}
 	rows := []string{
-		t.hero.Render("Commands & keys"),
+		t.hero.Render("Working with Bench"),
+		t.muted.Render("Outcome → visible contract → real work → executable evidence or your review."),
 		"",
+		t.sessionLabel.Render("OUTCOME & EVIDENCE"),
+		helpRow(t, "enter", sendHelp, width),
+		helpRow(t, "/check -- CMD", "attach one literal verifier to the next outcome", width),
+		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
+		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
+		helpRow(t, "/continue", "revise pending work, even when its old check passes", width),
+		helpRow(t, "/contract on|off", "show the agreement before work, or use direct Ply", width),
+		"",
+		t.sessionLabel.Render("PARTNER & CAPABILITIES"),
 		helpRow(t, "/model SPEC", "show or switch provider/model", width),
 		helpRow(t, "/tools MODE", "show; use shell, off, or a toolbox path", width),
 		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
-		helpRow(t, "/contract on|off", "compile a visible outcome contract before work", width),
-		helpRow(t, "/check -- CMD", "set verifier; /check all admits it for every criterion", width),
-		helpRow(t, "/accept · /continue", "accept reviewed criteria, or revise the pending outcome", width),
-		helpRow(t, "/skills", "browse and build Brief skills", width),
-		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
-		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),
-		helpRow(t, "/status", "show mode, model, skills, and work policy", width),
+		helpRow(t, "/skills", "procedures that shape understanding and work", width),
+		helpRow(t, "/agent", "promote recurring work into DESIGN.md + durable check", width),
+		helpRow(t, "/shell", "use your own $SHELL; activity is outside the session", width),
+		helpRow(t, "/status", "add the exact authority and evidence paths to transcript", width),
 		helpRow(t, "subagents", "ask for up to 3 read-heavy jobs; root synthesizes", width),
-		helpRow(t, "/help · /quit", "show this contract or exit", width),
-		helpRow(t, "//text", "send a message beginning with one slash", width),
 		"",
-		helpRow(t, "enter", sendHelp, width),
+		t.sessionLabel.Render("KEYBOARD"),
 		helpRow(t, "alt/shift+enter", "insert a newline", width),
 		helpRow(t, "ctrl+s", "run/send alias", width),
 		helpRow(t, "f2", "open Skills", width),
@@ -1306,6 +1407,8 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
 		helpRow(t, "ctrl+d", "exit when the prompt is empty", width),
 		helpRow(t, "ctrl+z", "suspend; fg returns from the parent shell", width),
+		helpRow(t, "/help · /quit", "show this map or exit", width),
+		helpRow(t, "//text", "send a message beginning with one slash", width),
 		"",
 		t.muted.Render(grantHelp),
 		t.code.Width(max(10, width-4)).Render("ask replay -check " + m.session),
@@ -1550,7 +1653,7 @@ func (m *Model) View() tea.View {
 		} else if m.picking {
 			notice = "Nothing opens until ask replay -check verifies session integrity"
 		} else {
-			notice = "enter run   /check   /model   /tools   /skills   /agent   /help"
+			notice = m.defaultWorkHint()
 		}
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")
@@ -1598,6 +1701,25 @@ func (m *Model) View() tea.View {
 	view.WindowTitle = "bench · " + section
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
+}
+
+func (m *Model) defaultWorkHint() string {
+	if !m.taskMode {
+		return "enter ask   /work enables tools   /agent promotes durable work   f1 map"
+	}
+	if m.pendingDecision != nil {
+		return "decision pending   reply normally with the missing answer or approval"
+	}
+	if m.pendingContract != nil {
+		return "review pending   /accept after inspection   /continue to revise"
+	}
+	if m.taskOptions.CheckAllCriteria {
+		return "enter run   current check judges every criterion   /check inspects policy"
+	}
+	if m.taskOptions.Check != "" {
+		return "enter run   check supplies evidence; review stays yours   /check all changes authority"
+	}
+	return "describe an outcome   /check adds evidence   /skills adds procedure   f1 shows the map"
 }
 
 type theme struct {

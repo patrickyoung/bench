@@ -140,7 +140,7 @@ func (m *Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd)
 func (m *Model) backToAsk() (tea.Model, tea.Cmd) {
 	m.screen = screenAsk
 	m.project.Blur()
-	m.composer.Placeholder = "Describe a task, or type /help…"
+	m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 	m.composer.SetValue(m.askComposer)
 	if m.designBody == "" {
 		m.notice = "Design cancelled; nothing was written"

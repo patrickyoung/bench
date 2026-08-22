@@ -35,7 +35,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "status":
 		m.composer.SetValue("")
-		m.notice = m.statusLine()
+		m.messages = append(m.messages, message{role: roleStatus, text: safeText(m.statusReport())})
+		m.notice = "Status shown in the transcript · " + m.statusLine()
 		m.syncContent()
 		return m, nil
 	case "model":
@@ -314,6 +315,38 @@ func (m *Model) statusLine() string {
 		skills = fmt.Sprintf("%d skills", len(m.activeSkills))
 	}
 	return m.modeDisplay() + " · " + m.modelDisplay() + " · " + skills + " · " + m.taskPolicyDisplay() + " · subagents " + m.subagentsPath()
+}
+
+func (m *Model) statusReport() string {
+	tools := "No model-run tools"
+	if m.taskMode {
+		tools = m.toolGrant()
+	}
+	contract := "Off · intent goes directly to Ply"
+	if m.taskOptions.IntentContract {
+		contract = "On · visible contract before workspace work"
+	}
+	check := "None · completion will require review"
+	if m.taskOptions.Check != "" {
+		check = strconv.Quote(m.taskOptions.Check) + " · verifier only"
+		if m.taskOptions.CheckAllCriteria {
+			check = strconv.Quote(m.taskOptions.Check) + " · operator-admitted for every criterion"
+		}
+	}
+	skills := "None"
+	if len(m.activeSkills) > 0 {
+		skills = strings.Join(m.activeSkills, " · ") + " · shape contract and work, never the verdict"
+	}
+	return strings.Join([]string{
+		"Mode: " + m.modeDisplay(),
+		"Model: " + m.modelDisplay(),
+		"Tools: " + tools,
+		"Outcome contract: " + contract,
+		"Check: " + check,
+		"Brief skills: " + skills,
+		"Session evidence: " + m.session,
+		"Subagent evidence: " + m.subagentsPath(),
+	}, "\n")
 }
 
 func (m *Model) taskPolicyDisplay() string {

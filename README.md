@@ -71,14 +71,27 @@ The prompt accepts explicit, discoverable commands:
 /check off              clear the pending verifier
 /accept                 accept every criterion after reviewing the result
 /continue               revise a pending result even if its check already passes
-/skills                 browse and build Brief skills
-/agent [description]    promote user task text into a checked design
+/skills                 browse procedures that shape contracts and work
+/agent [description]    promote recurring work into a checked design
 /shell                  open $SHELL in the workspace; exit returns
-/status                 show mode, model, and active skills
+/status                 show exact authority, policy, and evidence paths
 /help                    show all commands and keys
 /quit                    exit Bench
 //text                   send a message beginning with one literal slash
 ```
+
+The task screen teaches the same flow it executes:
+
+1. **UNDERSTAND** — Bench shows the outcome contract before workspace work.
+2. **WORK** — a rolling **WORKING · LIVE** panel shows commands and real output
+   as Ply observes them; the completed **WORK LOG** stays in the transcript.
+3. **VERIFY** — a durable **OUTCOME** card says complete, ready for review,
+   decision needed, or not accepted, and names the next useful interaction.
+
+`/status` adds a readable status card to the transcript instead of hiding the
+current model, tool grant, contract mode, check authority, Brief skills, and
+evidence paths in a transient footer. The footer stays short and contextual:
+it suggests the next useful action rather than repeating every command.
 
 Sessions are written to `.bench/sessions` only after the first message is
 sent. Set `BENCH_DIR` to place them elsewhere, or `BENCH_ASK` to use a
@@ -159,8 +172,9 @@ that stops the loop. This observation boundary is enforced by Ply, so even a
 model that emits an imagined multi-step workflow must encounter real system
 state between actions.
 
-Bench renders Ply's typescript—including deferrals—as a durable **TOOLS** block
-and its stdout as the **ASK** answer. Both are recoverable from the explicit
+Bench renders Ply's typescript—including deferrals—as a live and durable
+**WORK LOG** and its stdout as the **ASK** answer. Contract results and user
+acceptance remain visible as **OUTCOME** cards. All are recoverable from the explicit
 Ask session with `ask replay`.
 
 `-sh` is a full-shell grant, not a sandbox, and the yellow **ASK + PLY · FULL

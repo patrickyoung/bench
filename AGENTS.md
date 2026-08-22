@@ -17,6 +17,13 @@ When changing `bench`:
   a check that exited zero;
 - keep the interface usable at 80x24, without colour, and with the mouse
   unplugged;
+- keep the task journey self-explanatory: understanding, workspace work, and
+  verdict are distinct visible phases; live observations must not collapse to
+  an opaque spinner, and consequential verdicts must remain in the transcript
+  rather than existing only in a transient footer;
+- make the next useful interaction discoverable in context. Help may be
+  comprehensive, but ordinary work should not require memorizing it or reading
+  a tutorial before the first outcome;
 - test the process boundary with a fake executable and the interface as a
   state machine; tests must not require a model, credentials, or a network;
 - run `go test ./...` before reporting success.

@@ -103,6 +103,7 @@ func (m *Model) updateContractAcceptance(msg contractAcceptanceMsg) (tea.Model, 
 	m.taskOptions.Check = ""
 	m.taskOptions.CheckAllCriteria = false
 	m.taskOptions.Force = false
+	m.messages = append(m.messages, message{role: roleOutcome, text: fmt.Sprintf("ACCEPTED BY YOU\nYou accepted %d remaining contract criterion/criteria after review.\nThe acceptance is sealed in the replayable session.", msg.count)})
 	m.notice = fmt.Sprintf("Outcome accepted · you accepted %d contract criteria · check cleared · session is replayable", msg.count)
 	m.syncContent()
 	return m, m.composer.Focus()

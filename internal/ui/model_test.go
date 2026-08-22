@@ -159,6 +159,12 @@ func TestContractedMixedEvidenceIsReadyForReviewNotDone(t *testing.T) {
 	if m.taskOptions.Check == "" {
 		t.Fatal("review-required outcome cleared its configured check")
 	}
+	transcript := m.renderTranscript(76)
+	for _, want := range []string{"OUTCOME", "READY FOR REVIEW", "layout · inspection", "quality · human", "/accept", "/continue"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("review transcript missing %q:\n%s", want, transcript)
+		}
+	}
 }
 
 func TestContractedAllCheckProposalStillNeedsAcceptance(t *testing.T) {
@@ -196,8 +202,69 @@ func TestOperatorAdmittedCheckCompletionConsumesOneShotPolicy(t *testing.T) {
 	if !strings.Contains(m.notice, "Outcome complete") || !strings.Contains(m.notice, "2/2") || m.taskOptions.Check != "" || m.taskOptions.CheckAllCriteria || m.pendingContract != nil {
 		t.Fatalf("notice=%q options=%#v pending=%#v", m.notice, m.taskOptions, m.pendingContract)
 	}
-	if len(m.messages) == 0 || m.messages[len(m.messages)-1].text != "Built it." {
+	if len(m.messages) < 2 || m.messages[len(m.messages)-2].text != "Built it." || m.messages[len(m.messages)-1].role != roleOutcome {
 		t.Fatalf("messages=%#v", m.messages)
+	}
+	transcript := m.renderTranscript(76)
+	for _, want := range []string{"OUTCOME", "COMPLETE", "Operator-admitted check settled 2", "next outcome"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("complete transcript missing %q:\n%s", want, transcript)
+		}
+	}
+}
+
+func TestEveryTerminalContractStateExplainsWhatHappenedAndWhatComesNext(t *testing.T) {
+	tests := []struct {
+		status string
+		want   []string
+	}{
+		{status: "not_done", want: []string{"NOT DONE", "outcome check", "Next:"}},
+		{status: "interrupted", want: []string{"INTERRUPTED", "replayable session", "Next:"}},
+		{status: "failed", want: []string{"NOT ACCEPTED", "trustworthy outcome verdict", "Next:"}},
+	}
+	for _, test := range tests {
+		t.Run(test.status, func(t *testing.T) {
+			card := contractResultCard(plyexec.ContractResult{Status: test.status})
+			for _, want := range test.want {
+				if !strings.Contains(card, want) {
+					t.Errorf("card missing %q:\n%s", want, card)
+				}
+			}
+		})
+	}
+}
+
+func TestRunningTaskShowsUnderstandingThenLiveWorkspaceEvidence(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "fix it"})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stderr, Text: "compiling outcome contract\n"})
+	m = updated.(*Model)
+	before := m.renderTranscript(76)
+	if !strings.Contains(before, "WORKING · LIVE") || !strings.Contains(before, "Understanding the outcome") || !strings.Contains(before, "compiling outcome contract") {
+		t.Fatalf("understanding phase is opaque:\n%s", before)
+	}
+
+	updated, _ = m.Update(plyProcessEvent{Contract: "OUTCOME CONTRACT v2\nFix the parser.", ContractDigest: "abcdef"})
+	m = updated.(*Model)
+	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stderr, Text: "$ rg parser\nsrc/parser.go:42\n"})
+	m = updated.(*Model)
+	after := m.renderTranscript(76)
+	for _, want := range []string{"CONTRACT", "Using workspace tools", "$ rg parser", "src/parser.go:42"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("live work phase missing %q:\n%s", want, after)
+		}
+	}
+	if strings.Contains(after, "compiling outcome contract") {
+		t.Fatalf("compiler progress leaked into workspace work log:\n%s", after)
+	}
+}
+
+func TestLiveWorkKeepsRecentEvidenceWithoutPretendingEarlierOutputVanished(t *testing.T) {
+	got := tailLines("one\ntwo\nthree\nfour", 2)
+	if !strings.Contains(got, "earlier work remains in the replayable session") || !strings.Contains(got, "three\nfour") || strings.Contains(got, "one") {
+		t.Fatalf("tail=%q", got)
 	}
 }
 
@@ -228,6 +295,9 @@ func TestAcceptSealsInteractiveDecisionAndClearsCheck(t *testing.T) {
 	}
 	if m.pendingContract != nil || m.taskOptions.Check != "" || !strings.Contains(m.notice, "Outcome accepted") {
 		t.Fatalf("pending=%#v check=%q notice=%q", m.pendingContract, m.taskOptions.Check, m.notice)
+	}
+	if transcript := m.renderTranscript(76); !strings.Contains(transcript, "ACCEPTED BY YOU") || !strings.Contains(transcript, "sealed in the replayable session") {
+		t.Fatalf("acceptance is not durable in transcript:\n%s", transcript)
 	}
 }
 
@@ -289,6 +359,15 @@ func TestContractOpenQuestionPausesBeforeWork(t *testing.T) {
 	m = updated.(*Model)
 	if !strings.Contains(m.notice, "Needs decision") || !strings.Contains(m.notice, "before work begins") || strings.Contains(strings.ToLower(m.notice), "done") {
 		t.Fatalf("notice=%q", m.notice)
+	}
+	decision := m.renderTranscript(76)
+	for _, want := range []string{"DECISION NEEDED", "paused before workspace tools ran", "Which printer?", "Approval required: Send an external print job", "reply normally"} {
+		if !strings.Contains(decision, want) {
+			t.Errorf("decision transcript missing %q:\n%s", want, decision)
+		}
+	}
+	if hint := m.defaultWorkHint(); !strings.Contains(hint, "decision pending") || !strings.Contains(hint, "reply normally") {
+		t.Fatalf("decision footer contradicts the outcome card: %q", hint)
 	}
 	m.composer.SetValue("Office printer")
 	updated, _ = m.Update(key("enter"))
@@ -505,7 +584,7 @@ func TestSlashCommandsAreDiscoverableAndNeverAccidentalModelCalls(t *testing.T) 
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
 	help := m.renderHelp(m.viewport.Width())
-	if !m.showHelp || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/check -- CMD") || !strings.Contains(help, "/shell") {
+	if !m.showHelp || !strings.Contains(help, "OUTCOME & EVIDENCE") || !strings.Contains(help, "PARTNER & CAPABILITIES") || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/check -- CMD") || !strings.Contains(help, "/check all") || !strings.Contains(help, "/accept") || !strings.Contains(help, "/continue") || !strings.Contains(help, "/shell") {
 		t.Fatalf("help=%q", help)
 	}
 }
@@ -587,6 +666,12 @@ func TestStatusShowsTheExactConfiguredWorkCheck(t *testing.T) {
 	if !strings.Contains(m.notice, "subagents ") || !strings.Contains(m.notice, filepath.Join("subagents", "session-")) {
 		// An empty session still has a stable hashed evidence directory.
 		t.Fatalf("status omitted subagent evidence path: %q", m.notice)
+	}
+	transcript := m.renderTranscript(80)
+	for _, want := range []string{"STATUS", "Mode: Ask", "Tools: No model-run tools", "Outcome contract: Off", "Check: " + strconv.Quote(check), "Session evidence:", "Subagent evidence:"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("status transcript missing %q:\n%s", want, transcript)
+		}
 	}
 	help := m.renderHelp(80)
 	if !strings.Contains(help, strconv.Quote(check)) || !strings.Contains(help, "up to 3 read-heavy jobs; root synthesizes") {
@@ -683,7 +768,7 @@ func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(*Model)
 	assertTerminalBounds(t, m.View().Content, 80, 24)
-	if got := m.View().Content; !strings.Contains(got, "What are we working on?") || !strings.Contains(got, "FULL SHELL") {
+	if got := m.View().Content; !strings.Contains(got, "What outcome should we pursue?") || !strings.Contains(got, "UNDERSTAND") || !strings.Contains(got, "VERIFY") || !strings.Contains(got, "/check -- COMMAND") || !strings.Contains(got, "FULL SHELL") {
 		t.Fatalf("default task contract is not visible:\n%s", got)
 	}
 
@@ -695,13 +780,35 @@ func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
 	m.notice = "Task stopped · replayable session · no executable check"
 	m.syncContent()
 	assertTerminalBounds(t, m.View().Content, 80, 24)
-	if got := m.View().Content; !strings.Contains(got, "TOOLS · END") || !strings.Contains(got, "no executable check") {
+	if got := m.View().Content; !strings.Contains(got, "WORK LOG · END") || !strings.Contains(got, "no executable check") {
 		t.Fatalf("completed task evidence is not visible:\n%s", got)
 	}
 
 	m.showHelp = true
 	m.syncContent()
 	assertTerminalBounds(t, m.View().Content, 80, 24)
+}
+
+func TestPartnerJourneyKeepsVerdictAndNextActionVisibleAtEightyByTwentyFour(t *testing.T) {
+	m := New(Config{Workspace: "/work", Session: "/work/.bench/sessions/task.jsonl", Model: "test/model"})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = updated.(*Model)
+	m.messages = []message{
+		{role: roleUser, text: "Make the gallery readable on mobile."},
+		{role: roleContract, text: "OUTCOME CONTRACT v2\nA readable gallery exists."},
+		{role: roleTools, text: strings.Repeat("$ inspect gallery\nviewport evidence\n", 20)},
+		{role: roleAssistant, text: "I updated the layout and gathered viewport evidence."},
+		{role: roleOutcome, text: "READY FOR REVIEW\nStill needs acceptance:\n- mobile-layout · inspection\nNext: inspect the artifacts, then /accept · or /continue to revise."},
+	}
+	m.notice = "Ready for review · 1 criterion remains"
+	m.syncContent()
+	view := m.View().Content
+	assertTerminalBounds(t, view, 80, 24)
+	for _, want := range []string{"OUTCOME", "READY FOR REVIEW", "mobile-layout · inspection", "/accept", "/continue", "1 criterion remains"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("80x24 outcome view missing %q:\n%s", want, view)
+		}
+	}
 }
 
 func TestLongWorkspaceAndModelStillFitEightyColumns(t *testing.T) {
