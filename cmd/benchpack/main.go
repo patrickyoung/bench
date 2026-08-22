@@ -520,6 +520,8 @@ func syncDraft(root, stage, toolDir string) error {
 		"BRIEF="+filepath.Join(toolDir, executable("brief", runtime.GOOS)),
 		"PLY="+filepath.Join(toolDir, executable("ply", runtime.GOOS)),
 		"HONE="+filepath.Join(toolDir, executable("hone", runtime.GOOS)),
+		"CAGE="+missingOptional,
+		"MAY="+missingOptional,
 		"VOUCH="+missingOptional,
 		"WEB="+missingOptional,
 	)
