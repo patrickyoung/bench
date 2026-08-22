@@ -468,9 +468,9 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.turns.name = "turns"
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
-	fs.StringVar(&task.check, "check", "", "literal shell-backed Ply check")
+	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
-	fs.Var(&task.cycles, "cycles", "failed checks before Ply stops (0 = unbounded)")
+	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
 	fs.Var(&task.timeout, "timeout", "per-command Ply timeout")
 	fs.BoolVar(&task.compact, "compact", false, "let Ply continue through full context")
@@ -558,9 +558,9 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
-  -check command      literal shell-backed check for each open task turn
+  -check command      literal verifier for the next open work outcome
   -effort level       reasoning effort passed literally through Ply to Ask
-  -cycles n           failed checks before Ply stops (0 = unbounded)
+  -cycles n           rejected candidates before Ply stops (0 = unbounded)
   -turns n            model turns before Ply stops (0 = unbounded)
   -timeout duration   per-command Ply timeout
   -compact            continue through full context by compacting
