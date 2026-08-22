@@ -46,7 +46,7 @@ const Schema = `{
   "additionalProperties": false,
   "required": ["version", "outcome", "deliverables", "invariants", "criteria", "approvals", "assumptions", "open_questions", "limits"],
   "properties": {
-    "version": {"const": 1},
+    "version": {"type": "integer", "const": 1},
     "outcome": {"type": "string", "minLength": 1, "maxLength": 500},
     "deliverables": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
     "invariants": {"type": "array", "maxItems": 12, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
@@ -59,7 +59,7 @@ const Schema = `{
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
           "requirement": {"type": "string", "minLength": 1, "maxLength": 500},
           "evidence": {"type": "string", "minLength": 1, "maxLength": 500},
-          "judge": {"enum": ["executable", "inspection", "human"]}
+          "judge": {"type": "string", "enum": ["executable", "inspection", "human"]}
         }
       }
     },

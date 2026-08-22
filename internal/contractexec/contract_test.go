@@ -43,6 +43,17 @@ func TestParseCanonicalizesAndNamesExactContract(t *testing.T) {
 	}
 }
 
+func TestContractSchemaUsesStrictProviderSubset(t *testing.T) {
+	for _, want := range []string{
+		`"version": {"type": "integer", "const": 1}`,
+		`"judge": {"type": "string", "enum": ["executable", "inspection", "human"]}`,
+	} {
+		if !strings.Contains(Schema, want) {
+			t.Errorf("schema missing explicit type for strict provider: %s", want)
+		}
+	}
+}
+
 func TestParseRejectsIncompleteOrDuplicateCriteria(t *testing.T) {
 	bad := strings.Replace(fixtureContract, `"id":"layout"`, `"id":"fidelity"`, 1)
 	if _, _, _, err := Parse(bad); err == nil || !strings.Contains(err.Error(), "repeated") {
