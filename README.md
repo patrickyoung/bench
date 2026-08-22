@@ -100,10 +100,17 @@ ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [POLICY ...] -- GOAL
 ```
 
 Bench starts `ply` directly. The goal is one literal argv value; it is never
-evaluated by Bench as shell text. Ply asks the model, runs the shell blocks it
-writes, returns command output to the model, and repeats. Bench renders Ply's
-typescript as a durable **TOOLS** block and its stdout as the **ASK** answer.
-Both are recoverable from the explicit Ask session with `ask replay`.
+evaluated by Bench as shell text. Ply asks the model, consumes its first
+complete shell block as one action, returns the real command result, and only
+then asks again. Later blocks and premature claims from that model turn are
+visibly deferred rather than executed. A turn with no action is the report
+that stops the loop. This observation boundary is enforced by Ply, so even a
+model that emits an imagined multi-step workflow must encounter real system
+state between actions.
+
+Bench renders Ply's typescript—including deferrals—as a durable **TOOLS** block
+and its stdout as the **ASK** answer. Both are recoverable from the explicit
+Ask session with `ask replay`.
 
 `-sh` is a full-shell grant, not a sandbox, and the yellow **ASK + PLY · FULL
 SHELL** label keeps that authority visible. Set `BENCH_TOOLS` to an ordinary

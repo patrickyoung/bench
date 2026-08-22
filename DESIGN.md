@@ -53,9 +53,12 @@ ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [POLICY...] -- GOAL
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
 are repeated `-s SKILL` arguments. Ply owns the Ask→command→result loop and
-records it in the explicit Ask session. Bench renders stderr as visible tool
-evidence and stdout as the answer. Because an unchecked Ply exit zero means
-only that the model stopped, the UI never calls that outcome done or passed.
+records it in the explicit Ask session. That boundary consumes one complete
+shell block per model turn, returns its real result, and visibly defers any
+later actions or claims written before the result existed. Bench neither
+reimplements nor weakens that rule: it renders stderr as visible tool evidence
+and stdout as the answer. Because an unchecked Ply exit zero means only that
+the model stopped, the UI never calls that outcome done or passed.
 `-check COMMAND` deliberately opts an open task into a shell-backed executable
 verdict; Bench passes that command as one literal argument, displays it through
 `/status`, and distinguishes a passing pre-check from a worked, replayable
