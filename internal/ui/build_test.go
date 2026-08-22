@@ -26,7 +26,7 @@ func TestBuildSuccessComesFromExitZeroAndKeepsEvidence(t *testing.T) {
 	m.screen = screenDesignReview
 	updated, cmd := m.Update(key("b"))
 	m = updated.(*Model)
-	if cmd == nil || !m.running || m.job != jobDraftBuild || draft.buildDir != project || draft.buildModel != "anthropic/build-model" {
+	if cmd == nil || !m.running || m.job != jobDraftBuild || draft.buildDir != project || draft.buildModel != "anthropic/build-model" || draft.buildAdmit {
 		t.Fatalf("build did not start: running=%v job=%v dir=%q model=%q", m.running, m.job, draft.buildDir, draft.buildModel)
 	}
 	updated, _ = m.Update(draftProcessEvent{Stream: draftexec.Stderr, Text: "$ go test ./...\nok\n"})
@@ -43,6 +43,30 @@ func TestBuildSuccessComesFromExitZeroAndKeepsEvidence(t *testing.T) {
 	}
 	if m.buildSession != filepath.Join(evidence, "run.jsonl") {
 		t.Fatalf("evidence = %q", m.buildSession)
+	}
+}
+
+func TestAdmittedBuildIsExplicitAndRetryKeepsBoundary(t *testing.T) {
+	draft := &fakeDraft{buildEvents: make(chan draftexec.Event)}
+	m := New(Config{Workspace: "/work", Draft: draft})
+	m.designDir = "/work/agent"
+	m.designBuildable = true
+	m.screen = screenDesignReview
+	updated, cmd := m.Update(key("B"))
+	m = updated.(*Model)
+	if cmd == nil || !m.running || !draft.buildAdmit || !m.buildAdmitted {
+		t.Fatalf("admitted build did not start: running=%v req=%v state=%v", m.running, draft.buildAdmit, m.buildAdmitted)
+	}
+	updated, _ = m.Update(draftProcessEvent{Done: true, ExitCode: 1, Err: &fakeExitError{}})
+	m = updated.(*Model)
+	if !strings.Contains(m.View().Content, "draft build -admitted /work/agent") {
+		t.Fatalf("admitted boundary is not visible: %q", m.View().Content)
+	}
+	draft.buildEvents = make(chan draftexec.Event)
+	updated, cmd = m.Update(key("r"))
+	m = updated.(*Model)
+	if cmd == nil || !draft.buildAdmit {
+		t.Fatal("retry downgraded the admitted build")
 	}
 }
 

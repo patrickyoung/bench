@@ -144,6 +144,37 @@ printf 'finished'
 	}
 }
 
+func TestAdmittedBuildFlagIsAnArgumentNotShellText(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	workspace := t.TempDir()
+	fixture := filepath.Join(workspace, "fake-draft")
+	script := `#!/bin/sh
+set -eu
+[ "$1" = build ]
+[ "$2" = -admitted ]
+printf '%s' "$3"
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(workspace, "agent with spaces")
+	var stdout strings.Builder
+	var done Event
+	for event := range (Runner{Path: fixture, WorkDir: workspace}).Build(context.Background(), BuildRequest{Dir: project, Admitted: true}) {
+		if event.Stream == Stdout {
+			stdout.WriteString(event.Text)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Err != nil || done.ExitCode != 0 || stdout.String() != project {
+		t.Fatalf("done=%#v stdout=%q", done, stdout.String())
+	}
+}
+
 func TestProvePreservesGapsAsExitOne(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")

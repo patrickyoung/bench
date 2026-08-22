@@ -26,8 +26,9 @@ type Request struct {
 }
 
 type BuildRequest struct {
-	Dir   string
-	Model string
+	Dir      string
+	Model    string
+	Admitted bool
 }
 
 // Client is the part of draft the current TUI slice composes.
@@ -88,9 +89,14 @@ func (r Runner) Build(ctx context.Context, req BuildRequest) <-chan Event {
 	}
 	env := append(r.toolEnv(), "PLY_DIR="+filepath.Join(dir, ".draft", "build"))
 	env = append(env, modelEnv(req.Model)...)
+	args := []string{"build"}
+	if req.Admitted {
+		args = append(args, "-admitted")
+	}
+	args = append(args, dir)
 	return filterexec.Start(ctx, filterexec.Spec{
 		Path: r.path(),
-		Args: []string{"build", dir},
+		Args: args,
 		Dir:  r.WorkDir,
 		Env:  env,
 	})

@@ -62,6 +62,8 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
+/check -- COMMAND       set a verifier for the next work outcome
+/check off              clear the pending verifier
 /skills                 browse and build Brief skills
 /agent [description]    promote user task text into a checked design
 /shell                  open $SHELL in the workspace; exit returns
@@ -83,6 +85,14 @@ running from the bench checkout before installing `draft/bin/draft` on
 `BENCH_BRIEF` and `BENCH_PLY` select the executables used by the Skills
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
+
+Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
+to the next outcome; Bench displays it beside the composer and passes it to
+Ply without executing or reparsing it. `/check` shows the exact pending value
+and `/check off` clears it. A checked success consumes the verifier so it
+cannot silently judge an unrelated next request. A rejection, interruption,
+or broken verifier retains it for the same outcome. Promote work whose
+definition of done needs design and review with `/agent` instead.
 
 Model choice follows the filters' existing convention. `-m provider/model`
 overrides `ASK_MODEL` at startup; `/model provider/model` switches future Ask,
@@ -121,8 +131,9 @@ redirection—use an operating-system sandbox when that boundary matters.
 Ply without `-check` exits zero when the model stops, not when an external
 program proves the goal. The TUI therefore says **Task stopped · no executable
 check**, never “done” or “passed.” An open task may instead start Bench with a
-literal shell-backed `-check COMMAND`; that exact argument is visible through
-`/status`, and only its zero exit status produces **Task done · executable check
+literal shell-backed `-check COMMAND` or set one interactively with `/check --
+COMMAND`; that exact argument is visible through `/check`, `/status`, and the
+composer, and only its zero exit status produces **Task done · executable check
 passed**. Bench passes the command as one argv value and never evaluates it
 itself. Agent designs remain the durable home for recurring checked work.
 
@@ -217,10 +228,12 @@ ask replay -check SESSION
 ask replay SESSION
 ```
 
-The first command must succeed. The second command's public rendering becomes
-the restored transcript; bench does not import ask internals or decode its
-event schema. `-session id-or-path` selects directly, while `-new` bypasses
-the picker.
+The first command must succeed. It verifies session integrity—that replay
+still matches the recorded conversation—not that an answer is true or a task
+passed its outcome check. The second command's public rendering becomes the
+restored transcript; bench does not import ask internals or decode its event
+schema. `-session id-or-path` selects directly, while `-new` bypasses the
+picker.
 
 ## Skills from source
 
@@ -309,6 +322,12 @@ stderr as the visible `brief`/`ply` typescript and stdout as the final answer,
 and declares **CHECK PASSED** only when the process exits zero. The replayable
 build session lives beside the project at `.draft/build/*.jsonl` and is shown
 as evidence. Exit 2 is **NOT DONE**, not a false success inferred from prose.
+
+For a worker-independent verifier, use `/shell` to run `draft admit DIR` and
+approve the exact check through May, exit back to Bench, then press `B`. Bench
+runs `draft build -admitted DIR`; Cage keeps the admitted verifier outside the
+worker's write grant. The uppercase choice and exact command stay visible, and
+retrying preserves the admitted boundary instead of silently downgrading it.
 
 After a passing build, press `p` to run `draft prove DIR`. The Prove screen
 separates measurement from surviving mutations. Exit 0 is **CHECK PROVEN**;

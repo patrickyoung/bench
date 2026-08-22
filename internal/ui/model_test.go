@@ -74,7 +74,10 @@ func TestDefaultSubmitRunsReplayableTaskAndKeepsToolActivity(t *testing.T) {
 
 func TestTaskExitTwoRemainsNotDone(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
-	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "finish it"})
+	m := New(Config{
+		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "finish it",
+		TaskOptions: plyexec.TaskOptions{Check: "go test ./..."},
+	})
 	updated, _ := m.Update(key("ctrl+s"))
 	m = updated.(*Model)
 	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stderr, Text: "$ go test ./...\nFAIL\n"})
@@ -86,6 +89,9 @@ func TestTaskExitTwoRemainsNotDone(t *testing.T) {
 	}
 	if len(m.messages) != 2 || m.messages[1].role != roleTools || !strings.Contains(m.messages[1].text, "FAIL") {
 		t.Fatalf("failed task evidence=%#v", m.messages)
+	}
+	if m.taskOptions.Check != "go test ./..." {
+		t.Fatalf("not-done outcome lost its check: %q", m.taskOptions.Check)
 	}
 }
 
@@ -111,6 +117,9 @@ func TestTaskPolicyPropagatesAndCheckedSuccessNamesTheVerdict(t *testing.T) {
 	if m.session != "/tmp/compacted.jsonl" || !strings.Contains(m.notice, "check passed") || !strings.Contains(m.notice, "replayable") {
 		t.Fatalf("session=%q notice=%q", m.session, m.notice)
 	}
+	if m.taskOptions.Check != "" || !strings.Contains(m.notice, "check cleared") {
+		t.Fatalf("successful outcome retained check=%q notice=%q", m.taskOptions.Check, m.notice)
+	}
 }
 
 func TestPassingPrecheckDoesNotClaimAReplayableModelTurn(t *testing.T) {
@@ -125,6 +134,9 @@ func TestPassingPrecheckDoesNotClaimAReplayableModelTurn(t *testing.T) {
 	m = updated.(*Model)
 	if !strings.Contains(m.notice, "already passed") || !strings.Contains(m.notice, "no model turn") || strings.Contains(m.notice, "replayable") {
 		t.Fatalf("notice=%q", m.notice)
+	}
+	if m.taskOptions.Check != "" {
+		t.Fatalf("passing precheck retained check=%q", m.taskOptions.Check)
 	}
 }
 
@@ -301,8 +313,36 @@ func TestSlashCommandsAreDiscoverableAndNeverAccidentalModelCalls(t *testing.T) 
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
 	help := m.renderHelp(m.viewport.Width())
-	if !m.showHelp || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/shell") {
+	if !m.showHelp || !strings.Contains(help, "/model SPEC") || !strings.Contains(help, "/check -- CMD") || !strings.Contains(help, "/shell") {
 		t.Fatalf("help=%q", help)
+	}
+}
+
+func TestCheckCommandPreservesLiteralVerifierAndCanClearIt(t *testing.T) {
+	m := New(Config{})
+	check := `printf '%s  %s\n' "one" "two" | grep -q 'one  two'`
+	m.composer.SetValue("/check -- " + check)
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd != nil || m.running || m.taskOptions.Check != check {
+		t.Fatalf("check=%q running=%v", m.taskOptions.Check, m.running)
+	}
+	if !strings.Contains(m.notice, strconv.Quote(check)) {
+		t.Fatalf("set notice=%q", m.notice)
+	}
+
+	m.composer.SetValue("/check")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, strconv.Quote(check)) {
+		t.Fatalf("show notice=%q", m.notice)
+	}
+
+	m.composer.SetValue("/check off")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.taskOptions.Check != "" || !strings.Contains(m.notice, "next work outcome will be unchecked") {
+		t.Fatalf("check=%q notice=%q", m.taskOptions.Check, m.notice)
 	}
 }
 
@@ -323,6 +363,12 @@ func TestStatusShowsTheExactConfiguredWorkCheck(t *testing.T) {
 	help := m.renderHelp(80)
 	if !strings.Contains(help, strconv.Quote(check)) || !strings.Contains(help, "up to 3 read-heavy jobs; root synthesizes") {
 		t.Fatalf("help omitted configured check: %q", help)
+	}
+	m.width, m.height = 140, 24
+	m.taskMode = true
+	m.resize()
+	if view := m.View().Content; !strings.Contains(view, "CHECK "+strconv.Quote(check)) {
+		t.Fatalf("composer omitted configured check: %q", view)
 	}
 }
 

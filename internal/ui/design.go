@@ -122,7 +122,13 @@ func (m *Model) updateDesignReview(msg tea.Msg, key string) (tea.Model, tea.Cmd)
 			m.notice = "Design must pass draft check before build"
 			return m, nil
 		}
-		return m.startBuild()
+		return m.startBuild(false)
+	case "B":
+		if !m.designBuildable {
+			m.notice = "Design must pass draft check before build"
+			return m, nil
+		}
+		return m.startBuild(true)
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)

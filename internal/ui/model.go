@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -113,6 +114,7 @@ type Model struct {
 	buildAnswer     string
 	buildSession    string
 	buildState      buildState
+	buildAdmitted   bool
 	proveLog        string
 	proveFindings   string
 	proveState      proveState
@@ -595,7 +597,7 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 				m.restored = answer
 				m.messages = nil
 				m.picking = false
-				m.notice = "Session verified and restored by ask"
+				m.notice = "Session integrity verified and restored by Ask"
 			case errors.Is(event.Err, context.Canceled):
 				m.notice = "Restore interrupted"
 				m.picking = true
@@ -664,6 +666,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		m.session = event.Session
 	}
 	answer := strings.TrimSpace(m.stdout.String())
+	checked := m.taskOptions.Check != ""
 	toolLog := strings.TrimSpace(m.toolActivity)
 	if toolLog != "" {
 		m.messages = append(m.messages, message{role: roleTools, text: toolLog})
@@ -671,7 +674,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	switch {
 	case errors.Is(event.Err, context.Canceled):
 		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
-	case event.Err == nil && event.ExitCode == 0 && m.taskOptions.Check != "":
+	case event.Err == nil && event.ExitCode == 0 && checked:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
 		}
@@ -680,6 +683,8 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = "Task done · executable check passed · session is replayable"
 		}
+		m.taskOptions.Check = ""
+		m.notice += " · check cleared for next outcome"
 	case event.Err == nil && event.ExitCode == 0:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
@@ -975,7 +980,7 @@ func (m *Model) renderTranscript(width int) string {
 	}
 	if m.restored != "" {
 		body := t.restoredBlock.Width(max(12, width-5)).Render(m.restored)
-		blocks = append(blocks, t.sessionLabel.Render("VERIFIED SESSION")+"\n"+body)
+		blocks = append(blocks, t.sessionLabel.Render("INTEGRITY-VERIFIED SESSION")+"\n"+body)
 	}
 	for _, msg := range m.messages {
 		label := t.userLabel.Render("YOU")
@@ -1145,6 +1150,7 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "ctrl+enter", "run draft new/check (ctrl+s fallback)", width),
 			helpRow(t, "e", "edit DESIGN.md with $VISUAL or $EDITOR, then recheck", width),
 			helpRow(t, "r", "recheck DESIGN.md from review", width),
+			helpRow(t, "b / B", "ordinary build / admitted build (run draft admit first)", width),
 			helpRow(t, "f2", "browse and refine brief skills", width),
 			helpRow(t, "pgup / pgdown", "scroll DESIGN.md", width),
 			helpRow(t, "esc", "interrupt, or return to Work", width),
@@ -1152,7 +1158,7 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "f1", "close this help", width),
 			"",
 			t.muted.Render("The document is the project contract. Check it outside bench with:"),
-			t.code.Width(max(10, width-4)).Render("draft check " + m.designDir),
+			t.code.Width(max(10, width-4)).Render("draft check " + m.designDir + "\ndraft admit " + m.designDir),
 		}
 		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 	}
@@ -1170,6 +1176,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/model SPEC", "show or switch provider/model", width),
 		helpRow(t, "/tools MODE", "show; use shell, off, or a toolbox path", width),
 		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
+		helpRow(t, "/check -- CMD", "set one verifier for the next work outcome; /check off clears", width),
 		helpRow(t, "/skills", "browse and build Brief skills", width),
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),
 		helpRow(t, "/shell", "open $SHELL; exit returns to Bench", width),
@@ -1312,6 +1319,13 @@ func (m *Model) View() tea.View {
 		}
 		composerLabel = t.askLabel.Render(fmt.Sprintf(" %s · %s · %d BRIEF SKILL(S) ", prefix, mode, len(m.activeSkills)))
 	}
+	if m.screen == screenAsk && m.taskMode {
+		policy := " · NO CHECK · /check -- COMMAND "
+		if m.taskOptions.Check != "" {
+			policy = " · CHECK " + strconv.Quote(m.taskOptions.Check) + " "
+		}
+		composerLabel += t.warning.Render(ansi.Truncate(policy, max(12, w-lipgloss.Width(composerLabel)-2), "…"))
+	}
 	if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
 		if m.formFocus == 1 && !m.running {
@@ -1331,8 +1345,14 @@ func (m *Model) View() tea.View {
 		detail := "The DESIGN.md check has not passed."
 		if m.buildState == buildPassed {
 			detail = "The exact check exited zero. This build is done."
+			if m.buildAdmitted {
+				detail = "The admitted verifier exited zero outside the worker's write grant."
+			}
 		} else if m.buildState == buildRunning {
 			detail = "draft owns the design; ply owns the loop; the check owns done."
+			if m.buildAdmitted {
+				detail = "Cage protects the May-approved verifier while Ply works."
+			}
 		}
 		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
 	} else if m.screen == screenProve {
@@ -1398,7 +1418,7 @@ func (m *Model) View() tea.View {
 		if m.screen == screenDesignForm {
 			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
 		} else if m.screen == screenDesignReview {
-			notice = "e edit   r recheck   pgup scroll   esc work   f2 skills   f1 help"
+			notice = "e edit   r recheck   b build   B admitted   pgup scroll   esc work"
 		} else if m.screen == screenBuild {
 			notice = "r build again   p prove   pgup scroll   esc design   f1 help"
 		} else if m.screen == screenProve {
@@ -1414,9 +1434,9 @@ func (m *Model) View() tea.View {
 		} else if m.screen == screenSkillRun {
 			notice = "enter inspect   r run again   pgup scroll   esc back   f1 help"
 		} else if m.picking {
-			notice = "Nothing opens until ask replay -check succeeds"
+			notice = "Nothing opens until ask replay -check verifies session integrity"
 		} else {
-			notice = "enter run   /model   /tools   /skills   /agent   /help"
+			notice = "enter run   /check   /model   /tools   /skills   /agent   /help"
 		}
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")

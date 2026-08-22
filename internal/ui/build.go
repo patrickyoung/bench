@@ -14,7 +14,7 @@ import (
 
 const buildLogLimit = 256 * 1024
 
-func (m *Model) startBuild() (tea.Model, tea.Cmd) {
+func (m *Model) startBuild(admitted bool) (tea.Model, tea.Cmd) {
 	if m.draft == nil {
 		m.notice = "draft is unavailable"
 		return m, nil
@@ -30,11 +30,12 @@ func (m *Model) startBuild() (tea.Model, tea.Cmd) {
 	m.buildLog = ""
 	m.buildAnswer = ""
 	m.buildSession = ""
+	m.buildAdmitted = admitted
 	m.notice = ""
 	m.viewport.GotoBottom()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.draftEvents = m.draft.Build(ctx, draftexec.BuildRequest{Dir: m.designDir, Model: m.modelName})
+	m.draftEvents = m.draft.Build(ctx, draftexec.BuildRequest{Dir: m.designDir, Model: m.modelName, Admitted: admitted})
 	m.syncContent()
 	return m, tea.Batch(waitDraftEvent(m.draftEvents), tick())
 }
@@ -61,7 +62,7 @@ func (m *Model) updateBuild(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	case "r":
-		return m.startBuild()
+		return m.startBuild(m.buildAdmitted)
 	case "p":
 		if m.buildState != buildPassed {
 			m.notice = "The build check must pass before evaluation"
@@ -128,7 +129,7 @@ func (m *Model) renderBuild(width int) string {
 	verdict, style := m.buildVerdict(t)
 	rows := []string{
 		t.hero.Render(filepath.Base(m.designDir)) + "  " + style.Render(verdict),
-		t.faint.Render("draft build " + m.designDir),
+		t.faint.Render(m.buildCommand()),
 		"",
 	}
 	log := strings.TrimSpace(m.buildLog)
@@ -145,6 +146,13 @@ func (m *Model) renderBuild(width int) string {
 		rows = append(rows, "", t.faint.Render("evidence  "+m.buildSession))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (m *Model) buildCommand() string {
+	if m.buildAdmitted {
+		return "draft build -admitted " + m.designDir
+	}
+	return "draft build " + m.designDir
 }
 
 func (m *Model) buildVerdict(t theme) (string, lipgloss.Style) {

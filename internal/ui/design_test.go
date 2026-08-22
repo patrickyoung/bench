@@ -22,6 +22,7 @@ type fakeDraft struct {
 	checkDir    string
 	buildDir    string
 	buildModel  string
+	buildAdmit  bool
 	proveDir    string
 }
 
@@ -38,6 +39,7 @@ func (f *fakeDraft) Check(_ context.Context, dir string) <-chan draftexec.Event 
 func (f *fakeDraft) Build(_ context.Context, req draftexec.BuildRequest) <-chan draftexec.Event {
 	f.buildDir = req.Dir
 	f.buildModel = req.Model
+	f.buildAdmit = req.Admitted
 	return f.buildEvents
 }
 

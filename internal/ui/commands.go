@@ -54,6 +54,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		m.notice = "Ask + Ply mode · " + m.toolGrant()
 		m.syncContent()
 		return m, nil
+	case "check":
+		return m.commandCheck(line)
 	case "skills":
 		m.composer.SetValue("")
 		return m.openSkills()
@@ -76,6 +78,51 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
+}
+
+func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
+	// Parse the delimiter, not the command. Everything after `--` is a
+	// literal shell-backed verifier and must reach Ply without fields,
+	// quoting, or whitespace inside it being reinterpreted by Bench.
+	rest := strings.TrimLeft(strings.TrimPrefix(strings.TrimSpace(line), strings.Fields(line)[0]), " \t")
+	if rest == "" {
+		m.composer.SetValue("")
+		if m.taskOptions.Check == "" {
+			m.notice = "No check for the next outcome · run unchecked, or set one with /check -- COMMAND"
+		} else {
+			m.notice = "Check for the next outcome · " + strconv.Quote(m.taskOptions.Check)
+		}
+		m.syncContent()
+		return m, nil
+	}
+	if strings.EqualFold(rest, "off") {
+		m.taskOptions.Check = ""
+		m.composer.SetValue("")
+		m.notice = "Check cleared · the next work outcome will be unchecked"
+		m.syncContent()
+		return m, nil
+	}
+	if rest == "--" {
+		m.notice = "usage: /check -- COMMAND · /check off"
+		m.syncContent()
+		return m, nil
+	}
+	if strings.HasPrefix(rest, "--") && len(rest) > 2 && (rest[2] == ' ' || rest[2] == '\t') {
+		check := strings.TrimLeft(rest[2:], " \t")
+		if strings.TrimSpace(check) == "" {
+			m.notice = "usage: /check -- COMMAND · /check off"
+			m.syncContent()
+			return m, nil
+		}
+		m.taskOptions.Check = check
+		m.composer.SetValue("")
+		m.notice = "Check set for the next outcome · " + strconv.Quote(check)
+		m.syncContent()
+		return m, nil
+	}
+	m.notice = "usage: /check -- COMMAND · /check off"
+	m.syncContent()
+	return m, nil
 }
 
 func (m *Model) commandModel(args []string) (tea.Model, tea.Cmd) {
@@ -205,7 +252,7 @@ func (m *Model) statusLine() string {
 }
 
 func (m *Model) taskPolicyDisplay() string {
-	parts := []string{"work has no executable check"}
+	parts := []string{"work runs unchecked"}
 	if m.taskOptions.Check != "" {
 		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)
 	}

@@ -31,6 +31,14 @@ action, returns its evidence, and decides when to ask again. `/ask` uses direct
 preserve the same boundaries headlessly. `-m` and `/model` must propagate
 through every model-backed stage. Open-task `-effort` passes literally through
 Ply to Ask; Bench must not validate provider-specific effort names.
+Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows
+and forwards it but never evaluates it, clears it only after checked success,
+and retains it after not-done, interruption, or verifier failure. Ask replay
+checks session integrity, not truth or task completion; UI wording must keep
+those claims separate.
+Design review offers `b` for the ordinary Draft build and `B` only for
+`draft build -admitted`; retries must preserve which boundary the operator
+selected. Bench does not imitate May admission or Cage confinement.
 `draft new/check/build/prove` and
 `hone -into` remain separate programs for promoted agent work, with visible
 evidence and exit-status verdicts. The Skills workbench likewise composes
