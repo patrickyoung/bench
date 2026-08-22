@@ -7,9 +7,80 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/session"
 	"github.com/patrickyoung/bench/internal/suite"
 )
+
+func TestHeadlessRunCompilesIntentBeforeWorkByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixtures are POSIX programs")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "poem.md"), []byte("verse"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ask := filepath.Join(dir, "fake-ask")
+	ply := filepath.Join(dir, "fake-ply")
+	capture := filepath.Join(dir, "capture")
+	t.Setenv("BENCH_ASK", ask)
+	t.Setenv("BENCH_PLY", ply)
+	t.Setenv("CAPTURE", capture)
+	askScript := `#!/bin/sh
+set -eu
+if [ "${1-}" = note ]; then
+  printf '%s\n' "$@" > "$CAPTURE.record.args"
+  cat > "$CAPTURE.record.stdin"
+  exit 0
+fi
+printf '%s\n' "$@" > "$CAPTURE.ask.args"
+cat > "$CAPTURE.ask.stdin"
+printf '%s' "$CONTRACT_FIXTURE"
+`
+	plyScript := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$CAPTURE.ply.args"
+printf 'worked answer\n'
+`
+	for path, body := range map[string]string{ask: askScript, ply: plyScript} {
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CONTRACT_FIXTURE", `{"version":1,"outcome":"A complete poem gallery exists.","deliverables":["gallery.html"],"invariants":["poem.md remains unchanged"],"criteria":[{"id":"exists","requirement":"gallery exists","evidence":"inspect gallery.html","judge":"executable"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`)
+	var stdout, stderr strings.Builder
+	session := filepath.Join(dir, "sessions", "run.jsonl")
+	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
+	if code != 0 || stdout.String() != "worked answer\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "OUTCOME CONTRACT v1") {
+		t.Fatalf("contract was not visible on stderr:\n%s", stderr.String())
+	}
+	askArgs := string(mustRead(t, capture+".ask.args"))
+	for _, want := range []string{"-S\n" + contractexec.System + "\n", "-schema\n", "--\nCompile this user intent"} {
+		if !strings.Contains(askArgs, want) {
+			t.Errorf("ask args missing %q:\n%s", want, askArgs)
+		}
+	}
+	askInput := string(mustRead(t, capture+".ask.stdin"))
+	if !strings.Contains(askInput, "poem.md") || !strings.Contains(askInput, "source evidence") {
+		t.Fatalf("contract evidence:\n%s", askInput)
+	}
+	recordArgs := string(mustRead(t, capture+".record.args"))
+	if !strings.Contains(recordArgs, "-k\nbench.contract/v1\n") || !strings.Contains(recordArgs, "-seal\n") {
+		t.Fatalf("contract was not sealed: %s", recordArgs)
+	}
+	if record := string(mustRead(t, capture+".record.stdin")); !strings.Contains(record, `"status":"admitted"`) {
+		t.Fatalf("contract admission record: %s", record)
+	}
+	plyArgs := string(mustRead(t, capture+".ply.args"))
+	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v1", "sha256"} {
+		if !strings.Contains(plyArgs, want) {
+			t.Errorf("ply args missing %q:\n%s", want, plyArgs)
+		}
+	}
+}
 
 func TestSuiteToolUsesOnlyACompleteMarkedBundle(t *testing.T) {
 	root := t.TempDir()
@@ -78,7 +149,7 @@ printf 'answer only\n'
 	t.Setenv("CAPTURE", capture)
 	var stdout, stderr strings.Builder
 	session := filepath.Join(dir, "sessions", "work.jsonl")
-	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "inspect; $(literal)"},
+	code := run([]string{"run", "-contract=false", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "inspect; $(literal)"},
 		strings.NewReader("piped evidence\n"), &stdout, &stderr)
 	if code != 0 || stdout.String() != "answer only\n" || stderr.String() != "tool transcript\n" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -123,7 +194,7 @@ printf answer
 	t.Setenv("CAPTURE", capture)
 	parent := filepath.Join(dir, "elsewhere", "parent.jsonl")
 	var stdout, stderr strings.Builder
-	code := run([]string{"run", "-C", dir, "-f", parent, "-m", "openai/selected", "delegate it"}, strings.NewReader(""), &stdout, &stderr)
+	code := run([]string{"run", "-contract=false", "-C", dir, "-f", parent, "-m", "openai/selected", "delegate it"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 || stdout.String() != "answer" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -192,7 +263,7 @@ func TestHeadlessExitStatusPassesThrough(t *testing.T) {
 	}
 	t.Setenv("BENCH_PLY", fixture)
 	var stdout, stderr strings.Builder
-	code := run([]string{"run", "-C", dir, "unfinished"}, strings.NewReader(""), &stdout, &stderr)
+	code := run([]string{"run", "-contract=false", "-C", dir, "unfinished"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 || stdout.Len() != 0 || stderr.String() != "not done\n" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -228,7 +299,7 @@ printf checked-answer
 	check := `go test ./...; printf '$(literal)'`
 	var stdout, stderr strings.Builder
 	code := run([]string{
-		"run", "-C", dir, "-check", check, "-effort", "xhigh", "-cycles", "0", "-turns", "9",
+		"run", "-contract=false", "-C", dir, "-check", check, "-effort", "xhigh", "-cycles", "0", "-turns", "9",
 		"-timeout", "35s", "-compact", "-compactions", "2", "finish it",
 	}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 || stdout.String() != "checked-answer" || stderr.Len() != 0 {
@@ -287,7 +358,7 @@ func TestPlainBenchAutomaticallyComposesWhenPiped(t *testing.T) {
 	t.Setenv("BENCH_PLY", fixture)
 	t.Setenv("CAPTURE", capture)
 	var stdout, stderr strings.Builder
-	code := run([]string{"-C", dir, "review this"}, strings.NewReader("diff bytes"), &stdout, &stderr)
+	code := run([]string{"-contract=false", "-C", dir, "review this"}, strings.NewReader("diff bytes"), &stdout, &stderr)
 	if code != 0 || stdout.String() != "piped-answer" || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

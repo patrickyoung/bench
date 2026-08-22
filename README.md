@@ -4,9 +4,12 @@ A modern terminal workbench for getting open tasks done with Ask and ordinary
 tools, then promoting recurring work into agents when it deserves a durable
 design.
 
-The default loop is **Task ↔ Tools**: `ply` composes Ask with programs in the
-current workspace and records commands, results, and the final answer in one
-explicit Ask session. **Task → Design → Build → Prove → Learn** is the promotion
+The default loop is **Intent → Contract → Task ↔ Tools**: one schema-bound Ask
+turn compiles the user's outcome into visible deliverables, invariants,
+acceptance evidence, approval boundaries, assumptions, questions, and limits;
+then `ply` composes Ask with programs in the current workspace. The contract,
+commands, results, and final answer occupy one explicit Ask session.
+**Task → Design → Build → Prove → Learn** is the promotion
 path for agent work: the project is draft's ordinary `DESIGN.md`; building and
 evaluation are `draft build/prove`; durable lessons are admitted by `hone` into
 an ordinary `brief` skill. `bench` is not a second model client, tool runtime,
@@ -62,6 +65,7 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
+/contract on|off        enable or bypass intent compilation for later work
 /check -- COMMAND       set a verifier for the next work outcome
 /check off              clear the pending verifier
 /skills                 browse and build Brief skills
@@ -86,6 +90,19 @@ running from the bench checkout before installing `draft/bin/draft` on
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
 
+Outcome contracts are on by default. `/contract off` is the explicit direct-Ply
+compatibility path; `bench run -contract=false` is its headless equivalent.
+The compiler receives the exact user intent, configured verifier, a bounded
+read-only workspace inventory, and piped evidence. Its JSON Schema travels
+through Ask's native structured-output boundary. The validated canonical
+contract is shown before work and repeated verbatim in Ply's first user
+message, so later request digests bind the work to that exact contract and
+its admission is also a sealed `bench.contract/v1` record. Ply binds every
+sealed `ply.verifier/v1` receipt to the contract digest. `ask replay -check`
+verifies conversation folds, event sequence, and those record-prefix seals.
+The contract contains no generated shell command and is not itself a
+completion verdict.
+
 Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
 to the next outcome; Bench displays it beside the composer and passes it to
 Ply without executing or reparsing it. `/check` shows the exact pending value
@@ -103,13 +120,15 @@ replayable. `/model default` restores the startup choice.
 ## Open tasks with Ask + tools
 
 The opening screen is a task composer, not an agent-requirements form. By
-default, `enter` starts the equivalent public process:
+default, `enter` first runs the structured contract turn in the same explicit
+session, then starts the equivalent public process with the admitted canonical
+contract included in `GOAL`:
 
 ```sh
 ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [POLICY ...] -- GOAL
 ```
 
-Bench starts `ply` directly. The goal is one literal argv value; it is never
+Bench starts both filters directly. The goal is one literal argv value; it is never
 evaluated by Bench as shell text. Ply asks the model, consumes its first
 complete shell block as one action, returns the real command result, and only
 then asks again. Later blocks and premature claims from that model turn are
@@ -137,15 +156,17 @@ composer, and only its zero exit status produces **Task done · executable check
 passed**. Bench passes the command as one argv value and never evaluates it
 itself. Agent designs remain the durable home for recurring checked work.
 
-Both the interactive workbench and `bench run` accept Ply's optional policy
-controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
+Both the interactive workbench and `bench run` accept `-contract=true|false`
+and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
 `-compact`, and `-compactions N`. Bench passes effort names literally through
 Ply; Ask and its provider decide which names are supported. Omitted controls
 stay omitted so the installed Ply owns its defaults; an explicit zero retains
 Ply's documented unbounded meaning. For
 checked or compacting work, Ply reports the Ask session it actually used
-through a private `-session-out` control artifact. Its absence on a passing
-pre-check means no model turn or session was created. Bench removes the
+through a private `-session-out` control artifact. With contract compilation
+enabled, the contract turn has already created the session even when Ply's
+passing pre-check needs no worker turn. With contracts disabled, absence on a
+passing pre-check still means no model turn or session was created. Bench removes the
 artifact after reading it and directs later TUI work—including Ask-only
 turns—to any reported successor; stdout remains the answer and stderr remains
 the human typescript.

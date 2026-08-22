@@ -22,7 +22,15 @@ When changing `bench`:
 - run `go test ./...` before reporting success.
 
 The implemented product boundary is deliberately compositional. Open tasks
-run through `ply` with one explicit Ask session; the full-shell or toolbox
+first use one native structured-output Ask turn to compile the exact intent,
+bounded read-only workspace inventory, configured verifier, and piped evidence
+into a visible canonical outcome contract. Bench validates and renders that
+record but never turns model text into a shell command. The exact contract is
+sealed as a typed admission record and repeated in Ply's first user message;
+verifier receipts bind its digest, so one Ask session replays contract,
+actions, observations, answer, and verdict. `/contract off` and
+`-contract=false` are the explicit direct-Ply compatibility seam. Work then
+runs through `ply` with that one explicit Ask session; the full-shell or toolbox
 grant, deferred unobserved actions, and the resulting typescript stay visible,
 while unchecked exit zero is only a model stop, never a completed verdict.
 Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one

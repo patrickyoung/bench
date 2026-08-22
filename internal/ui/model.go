@@ -35,6 +35,7 @@ const (
 	roleUser role = iota + 1
 	roleAssistant
 	roleTools
+	roleContract
 )
 
 type message struct {
@@ -647,6 +648,12 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
+		if event.Contract != "" {
+			m.messages = append(m.messages, message{role: roleContract, text: event.Contract})
+			m.notice = "Outcome contract admitted · work continues under " + shortDigest(event.ContractDigest)
+			m.syncContent()
+			return m, waitPlyEvent(m.plyEvents)
+		}
 		switch event.Stream {
 		case plyexec.Stdout:
 			m.stdout.WriteString(safeText(event.Text))
@@ -959,7 +966,7 @@ func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
 		titleText := "What are we working on?"
-		bodyText := "Ask + Ply can inspect and act through ordinary workspace tools. Commands and results stay replayable. Enter runs; /ask disables model-run tools; /agent promotes recurring work."
+		bodyText := "Bench compiles your intent into a visible outcome contract, then Ask + Ply acts through ordinary workspace tools. Contract, commands, results, and verdict stay replayable."
 		exampleText := "Try:  Find why the tests fail and fix the smallest root cause."
 		if !m.taskMode {
 			titleText = "What should we think through?"
@@ -991,6 +998,9 @@ func (m *Model) renderTranscript(width int) string {
 		} else if msg.role == roleTools {
 			label = t.sessionLabel.Render("TOOLS")
 			bodyStyle = t.restoredBlock
+		} else if msg.role == roleContract {
+			label = t.sessionLabel.Render("CONTRACT")
+			bodyStyle = t.restoredBlock
 		}
 		bodyText := msg.text
 		if msg.role == roleTools {
@@ -1015,6 +1025,13 @@ func (m *Model) renderTranscript(width int) string {
 		blocks = append(blocks, label+"\n"+working)
 	}
 	return strings.Join(blocks, "\n\n")
+}
+
+func shortDigest(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+	return digest
 }
 
 func (m *Model) renderPicker(width int) string {
@@ -1176,6 +1193,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/model SPEC", "show or switch provider/model", width),
 		helpRow(t, "/tools MODE", "show; use shell, off, or a toolbox path", width),
 		helpRow(t, "/ask · /work", "switch between Ask and Ask + Ply", width),
+		helpRow(t, "/contract on|off", "compile a visible outcome contract before work", width),
 		helpRow(t, "/check -- CMD", "set one verifier for the next work outcome; /check off clears", width),
 		helpRow(t, "/skills", "browse and build Brief skills", width),
 		helpRow(t, "/agent", "promote user task text into a DESIGN.md", width),

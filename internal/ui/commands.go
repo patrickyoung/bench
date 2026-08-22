@@ -56,6 +56,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "check":
 		return m.commandCheck(line)
+	case "contract":
+		return m.commandContract(args)
 	case "skills":
 		m.composer.SetValue("")
 		return m.openSkills()
@@ -78,6 +80,39 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
+}
+
+func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.composer.SetValue("")
+		if m.taskOptions.IntentContract {
+			m.notice = "Outcome contracts on · Bench compiles intent before Ply works"
+		} else {
+			m.notice = "Outcome contracts off · intent goes directly to Ply"
+		}
+		m.syncContent()
+		return m, nil
+	}
+	if len(args) != 1 {
+		m.notice = "usage: /contract on|off"
+		m.syncContent()
+		return m, nil
+	}
+	switch strings.ToLower(args[0]) {
+	case "on":
+		m.taskOptions.IntentContract = true
+		m.notice = "Outcome contracts on · the next intent will be compiled and logged before work"
+	case "off":
+		m.taskOptions.IntentContract = false
+		m.notice = "Outcome contracts off · the next intent will go directly to Ply"
+	default:
+		m.notice = "usage: /contract on|off"
+		m.syncContent()
+		return m, nil
+	}
+	m.composer.SetValue("")
+	m.syncContent()
+	return m, nil
 }
 
 func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
@@ -252,7 +287,11 @@ func (m *Model) statusLine() string {
 }
 
 func (m *Model) taskPolicyDisplay() string {
-	parts := []string{"work runs unchecked"}
+	contract := "intent contract off"
+	if m.taskOptions.IntentContract {
+		contract = "intent contract on"
+	}
+	parts := []string{"work runs unchecked", contract}
 	if m.taskOptions.Check != "" {
 		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)
 	}

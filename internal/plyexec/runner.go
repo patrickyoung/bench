@@ -18,12 +18,17 @@ import (
 // the terminal event when Ply reports the Ask session it actually finished
 // in through its explicit -session-out artifact.
 type Event struct {
-	Stream   filterexec.Stream
-	Text     string
-	Done     bool
-	ExitCode int
-	Err      error
-	Session  string
+	Stream filterexec.Stream
+	Text   string
+	// Contract is set by Bench's intent compiler before Ply starts. It is
+	// canonical JSON already present in the same Ask session; Digest names
+	// those exact bytes for concise UI and replay receipts.
+	Contract       string
+	ContractDigest string
+	Done           bool
+	ExitCode       int
+	Err            error
+	Session        string
 }
 
 const (
@@ -59,6 +64,8 @@ type TaskRequest struct {
 // distinction between an omitted option (Ply owns its default) and an
 // explicit zero (Ply documents zero as unbounded).
 type TaskOptions struct {
+	IntentContract bool
+	ContractID     string
 	Check          string
 	Effort         string
 	Cycles         int
@@ -91,33 +98,12 @@ type Runner struct {
 // With no explicit toolbox, -sh is intentional: ply documents that this is a
 // full shell grant and the TUI labels it as such.
 func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
+	if err := Validate(req); err != nil {
+		return failed(err.Error())
+	}
 	dir := strings.TrimSpace(req.Dir)
 	goal := strings.TrimSpace(req.Goal)
 	session := strings.TrimSpace(req.Session)
-	if dir == "" {
-		return failed("task workspace is empty")
-	}
-	if goal == "" {
-		return failed("task goal is empty")
-	}
-	if session == "" {
-		return failed("task session is empty")
-	}
-	if req.Options.Check != "" && strings.TrimSpace(req.Options.Check) == "" {
-		return failed("task check is empty")
-	}
-	if req.Options.HasCycles && req.Options.Cycles < 0 {
-		return failed("task cycles cannot be negative")
-	}
-	if req.Options.HasTurns && req.Options.Turns < 0 {
-		return failed("task turns cannot be negative")
-	}
-	if req.Options.HasTimeout && req.Options.Timeout <= 0 {
-		return failed("task timeout must be positive")
-	}
-	if req.Options.HasCompactions && req.Options.Compactions < 0 {
-		return failed("task compactions cannot be negative")
-	}
 	skills := make([]string, 0, len(req.Skills))
 	for _, skill := range req.Skills {
 		skill = strings.TrimSpace(skill)
@@ -141,6 +127,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if req.Options.Check != "" {
 		args = append(args, "-check", req.Options.Check)
+	}
+	if contractID := strings.TrimSpace(req.Options.ContractID); contractID != "" {
+		args = append(args, "-contract-id", contractID)
 	}
 	if effort := strings.TrimSpace(req.Options.Effort); effort != "" {
 		args = append(args, "-effort", effort)
@@ -216,6 +205,42 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 		return adapt(ctx, processEvents)
 	}
 	return withSessionResult(ctx, processEvents, sessionOut, req.Options.Check != "")
+}
+
+// Validate checks one task request without starting Ask, Ply, or touching the
+// workspace. Supervisors that add a phase before Ply use the same gate so a
+// bad work policy never spends a model turn.
+func Validate(req TaskRequest) error {
+	if strings.TrimSpace(req.Dir) == "" {
+		return errors.New("task workspace is empty")
+	}
+	if strings.TrimSpace(req.Goal) == "" {
+		return errors.New("task goal is empty")
+	}
+	if strings.TrimSpace(req.Session) == "" {
+		return errors.New("task session is empty")
+	}
+	if req.Options.Check != "" && strings.TrimSpace(req.Options.Check) == "" {
+		return errors.New("task check is empty")
+	}
+	if req.Options.HasCycles && req.Options.Cycles < 0 {
+		return errors.New("task cycles cannot be negative")
+	}
+	if req.Options.HasTurns && req.Options.Turns < 0 {
+		return errors.New("task turns cannot be negative")
+	}
+	if req.Options.HasTimeout && req.Options.Timeout <= 0 {
+		return errors.New("task timeout must be positive")
+	}
+	if req.Options.HasCompactions && req.Options.Compactions < 0 {
+		return errors.New("task compactions cannot be negative")
+	}
+	for _, skill := range req.Skills {
+		if strings.TrimSpace(skill) == "" {
+			return errors.New("skill name is empty")
+		}
+	}
+	return nil
 }
 
 func withSessionResult(ctx context.Context, source <-chan filterexec.Event, resultPath string, checked bool) <-chan Event {

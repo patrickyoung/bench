@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func TestRunnerPreservesAskContractAndArguments(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")
@@ -97,6 +106,105 @@ printf answer
 	input, err := os.ReadFile(capture + ".stdin")
 	if err != nil || string(input) != "piped evidence\n" {
 		t.Fatalf("stdin=%q err=%v", input, err)
+	}
+}
+
+func TestRunnerPassesStructuredContractPolicyAndRemovesTemporarySchema(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ask")
+	capture := filepath.Join(dir, "capture")
+	t.Setenv("ASK_CAPTURE", capture)
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$ASK_CAPTURE.args"
+schema=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -schema) schema=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cp "$schema" "$ASK_CAPTURE.schema"
+cat > "$ASK_CAPTURE.stdin"
+printf '{"outcome":"compiled"}'
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(dir, "sessions", "run.jsonl")
+	for range (Runner{Path: fixture}).Start(context.Background(), Request{
+		Message: "compile this intent", Input: "workspace evidence", Session: session,
+		Model: "openai/test", Effort: "xhigh", System: "contract compiler", Schema: `{"type":"object"}`,
+	}) {
+	}
+	args := string(mustRead(t, capture+".args"))
+	for _, want := range []string{"-effort\nxhigh\n", "-S\ncontract compiler\n", "-schema\n"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args missing %q:\n%s", want, args)
+		}
+	}
+	if got := string(mustRead(t, capture+".schema")); got != `{"type":"object"}` {
+		t.Fatalf("schema=%q", got)
+	}
+	if got := string(mustRead(t, capture+".stdin")); got != "workspace evidence" {
+		t.Fatalf("stdin=%q", got)
+	}
+	fields := strings.Split(args, "\n")
+	for i, field := range fields {
+		if field == "-schema" && i+1 < len(fields) {
+			if _, err := os.Stat(fields[i+1]); !os.IsNotExist(err) {
+				t.Fatalf("temporary schema remains: %v", err)
+			}
+		}
+	}
+}
+
+func TestRunnerWritesStructuredRecordOnStdinWithSealFlags(t *testing.T) {
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ask")
+	capture := filepath.Join(dir, "capture")
+	t.Setenv("ASK_CAPTURE", capture)
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$ASK_CAPTURE.args"
+cat > "$ASK_CAPTURE.stdin"
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req := RecordRequest{Session: filepath.Join(dir, "run.jsonl"), Source: "bench", Kind: "bench.contract/v1", JSON: `{"status":"admitted"}`}
+	if err := (Runner{Path: fixture}).Record(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	args := string(mustRead(t, capture+".args"))
+	for _, want := range []string{"note\n", "-s\nbench\n", "-k\nbench.contract/v1\n", "-json\n-\n", "-seal\n"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args missing %q:\n%s", want, args)
+		}
+	}
+	if got := string(mustRead(t, capture+".stdin")); got != req.JSON {
+		t.Fatalf("stdin = %q", got)
+	}
+	if err := (Runner{Path: fixture}).Record(context.Background(), RecordRequest{Session: req.Session, Source: "bench", Kind: req.Kind, JSON: `{bad`}); err == nil {
+		t.Fatal("invalid record JSON was executed")
+	}
+}
+
+func TestRunnerRefusesTwoSystemPromptOwners(t *testing.T) {
+	var done Event
+	for event := range (Runner{Path: "does-not-run"}).Start(context.Background(), Request{
+		Message: "compile", Session: filepath.Join(t.TempDir(), "run.jsonl"),
+		System: "contract", Skills: []string{"review"},
+	}) {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.ExitCode != 1 || done.Err == nil || !strings.Contains(done.Err.Error(), "cannot be combined") {
+		t.Fatalf("done=%#v", done)
 	}
 }
 

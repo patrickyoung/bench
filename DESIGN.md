@@ -43,16 +43,26 @@ do not advertise further delegation.
 ## Non-negotiable boundary
 
 The TUI does not become a model client, an agent runtime, or a shell
-implementation. It can yield the terminal to the operator's `$SHELL` or
+implementation. It composes one native structured-output Ask turn before open
+work. That turn receives the exact intent, configured verifier, piped evidence,
+and a bounded read-only workspace inventory, and returns a small canonical
+outcome contract. The contract contains no executable command. It is rendered
+to the operator, sealed as a typed admission record, and repeated in the next
+user message to Ply. Every Ply verifier receipt names its digest, so Ask replay
+checks request folds, event sequence, and the exact sealed record prefixes.
+`/contract off` and `-contract=false` retain an explicit direct-Ply seam.
+
+The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its
-default task turn executes the equivalent of:
+default task work phase executes the equivalent of:
 
 ```sh
 ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [POLICY...] -- GOAL
 ```
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
-are repeated `-s SKILL` arguments. Ply owns the Ask→command→result loop and
+are repeated `-s SKILL` arguments. The outcome contract guides quality but
+does not decide completion. Ply owns the Ask→command→result loop and
 records it in the explicit Ask session. That boundary consumes one complete
 shell block per model turn, returns its real result, and visibly defers any
 later actions or claims written before the result existed. Bench neither

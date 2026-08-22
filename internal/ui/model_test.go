@@ -372,6 +372,47 @@ func TestStatusShowsTheExactConfiguredWorkCheck(t *testing.T) {
 	}
 }
 
+func TestContractCommandControlsOnlyFutureOutcomeCompilation(t *testing.T) {
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.composer.SetValue("/contract")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "contracts on") {
+		t.Fatalf("notice=%q", m.notice)
+	}
+	m.composer.SetValue("/contract off")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.taskOptions.IntentContract || !strings.Contains(m.notice, "directly to Ply") {
+		t.Fatalf("contract=%v notice=%q", m.taskOptions.IntentContract, m.notice)
+	}
+	m.composer.SetValue("/contract on")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if !m.taskOptions.IntentContract || !strings.Contains(m.taskPolicyDisplay(), "intent contract on") {
+		t.Fatalf("contract=%v policy=%q", m.taskOptions.IntentContract, m.taskPolicyDisplay())
+	}
+}
+
+func TestTaskShowsCompiledContractBeforeWorkEvidence(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event, 3)}
+	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build it"})
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil {
+		t.Fatal("task did not start")
+	}
+	task.events <- plyexec.Event{Contract: "OUTCOME CONTRACT v1 · abcdef\nBuild the artifact.", ContractDigest: "abcdef"}
+	updated, _ = m.Update(plyProcessEvent(<-task.events))
+	m = updated.(*Model)
+	if len(m.messages) < 2 || m.messages[1].role != roleContract || !strings.Contains(m.messages[1].text, "Build the artifact") {
+		t.Fatalf("messages=%#v", m.messages)
+	}
+	if !strings.Contains(m.notice, "abcdef") {
+		t.Fatalf("notice=%q", m.notice)
+	}
+}
+
 func TestSubmitPassesOnlyExplicitlyActiveBriefSkills(t *testing.T) {
 	runner := &fakeRunner{events: make(chan askexec.Event)}
 	task := &fakeTask{events: make(chan plyexec.Event)}

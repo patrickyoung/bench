@@ -15,7 +15,7 @@
     {
       "name": "ask",
       "repository": "https://github.com/patrickyoung/ask.git",
-      "revision": "7f02539d7bd357b59c9cdbec0fcc68204016b8f8",
+      "revision": "0dfff696d2b3d73658a3949a655d99aab18b45b5",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -33,7 +33,7 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "c51e57747e2fd7210b65fb5a0b5a316a35fe1b51",
+      "revision": "2930bfb9e466b52125d4a7ed1093683a53f9d503",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -42,7 +42,7 @@
     {
       "name": "hone",
       "repository": "https://github.com/patrickyoung/hone.git",
-      "revision": "450af3a1e1a9672da1b9fcddef70eddb8b272be8",
+      "revision": "9ed128f485755e75c9223802299d0260452a1cd6",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",

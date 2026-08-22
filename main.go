@@ -20,6 +20,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/briefexec"
+	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
 	"github.com/patrickyoung/bench/internal/filterexec"
 	"github.com/patrickyoung/bench/internal/honeexec"
@@ -127,9 +128,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	paths := filterPaths()
 	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
+	taskRunner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}
 	m := ui.New(ui.Config{
 		Runner: askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
-		Task:   plyRunner,
+		Task:   taskRunner,
 		Draft: draftexec.Runner{
 			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
 			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
@@ -231,7 +233,8 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		})
 		return streamEvents(ctx, events, stdout, stderr)
 	}
-	events := (plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}).Work(ctx, plyexec.TaskRequest{
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
+	events := (contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}).Work(ctx, plyexec.TaskRequest{
 		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
 	})
@@ -252,6 +255,9 @@ func streamEvents(ctx context.Context, events <-chan askexec.Event, stdout, stde
 func streamPlyEvents(ctx context.Context, events <-chan plyexec.Event, stdout, stderr io.Writer) int {
 	return streamOutput(ctx, func() (outputEvent, bool) {
 		event, ok := <-events
+		if ok && event.Contract != "" {
+			return outputEvent{Stream: filterexec.Stderr, Text: event.Contract + "\n\n"}, true
+		}
 		return outputEvent{Stream: event.Stream, Text: event.Text, Done: event.Done, ExitCode: event.ExitCode, Err: event.Err}, ok
 	}, stdout, stderr)
 }
@@ -454,6 +460,7 @@ func (s *stringList) Set(value string) error {
 }
 
 type taskFlags struct {
+	contract    bool
 	check       string
 	effort      string
 	cycles      trackedInt
@@ -468,6 +475,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.turns.name = "turns"
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
+	fs.BoolVar(&task.contract, "contract", true, "compile intent into a replayable outcome contract before work")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
@@ -479,9 +487,10 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 
 func (f taskFlags) options() plyexec.TaskOptions {
 	return plyexec.TaskOptions{
-		Check:  f.check,
-		Effort: f.effort,
-		Cycles: f.cycles.value, HasCycles: f.cycles.set,
+		IntentContract: f.contract,
+		Check:          f.check,
+		Effort:         f.effort,
+		Cycles:         f.cycles.value, HasCycles: f.cycles.set,
 		Turns: f.turns.value, HasTurns: f.turns.set,
 		Timeout: f.timeout.value, HasTimeout: f.timeout.set,
 		Compact:     f.compact,
@@ -558,6 +567,7 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
+  -contract           compile intent into a replayable outcome contract (default true)
   -check command      literal verifier for the next open work outcome
   -effort level       reasoning effort passed literally through Ply to Ask
   -cycles n           rejected candidates before Ply stops (0 = unbounded)
@@ -582,7 +592,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-contract=true|false] [-check command] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")
