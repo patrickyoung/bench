@@ -548,8 +548,8 @@ func validateContractRuntimeMode(task taskFlags) error {
 	if err != nil {
 		return err
 	}
-	if mode == autonomy.Quick {
-		return errors.New("contract execution supports review or loop, not quick")
+	if mode == autonomy.Quick || mode == autonomy.Auto {
+		return errors.New("contract execution supports review or loop, not quick or auto")
 	}
 	if mode == autonomy.Loop && task.turns.set && task.turns.value == 0 {
 		return errors.New("loop autonomy needs a finite positive turn budget")

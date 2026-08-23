@@ -20,6 +20,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
+	"github.com/patrickyoung/bench/internal/autoroute"
 	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
@@ -32,7 +33,7 @@ import (
 )
 
 const (
-	version      = "0.6.5"
+	version      = "0.6.6"
 	maxPipeInput = 16 << 20
 )
 
@@ -149,6 +150,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner, MayPath: paths.may, CagePath: paths.cage}
 	m := ui.New(ui.Config{
 		Runner:          askRunner,
+		AutoRouter:      autoroute.Runner{Ask: askRunner, Recorder: askRunner},
 		ApprovalResults: askRunner,
 		Recorder:        askRunner,
 		Task:            taskRunner,
@@ -173,8 +175,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Toolbox:       o.toolbox.value,
 		ActiveSkills:  append([]string(nil), o.skills...),
 		TaskOptions:   o.task.options(),
-		MayPath:       paths.may,
-		CagePath:      paths.cage,
+		Auto: func() bool {
+			mode, _ := o.task.autonomy()
+			return mode == autonomy.Auto
+		}(),
+		MayPath:  paths.may,
+		CagePath: paths.cage,
 	})
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return report(stderr, err)
@@ -274,6 +280,14 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
 	}
+	if requested, _ := task.autonomy(); requested == autonomy.Auto {
+		askRunner := askexec.Runner{Path: paths.ask, BriefPath: paths.brief}
+		decision, code := resolveAuto(ctx, autoroute.Runner{Ask: askRunner, Recorder: askRunner}, request, stderr)
+		if code != 0 {
+			return code
+		}
+		request.Options = task.optionsFor(decision.Effective)
+	}
 	if request.Options.IntentContract {
 		store := contractexec.FileStore{Dir: session.ContractsDir(benchDir(work), file)}
 		code := streamContractDraft(ctx, runner.Compile(ctx, contractexec.DraftRequest{Task: request, Store: store}), store, stdout, stderr)
@@ -287,6 +301,42 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		return code
 	}
 	return streamPlyEvents(ctx, runner.Work(ctx, request), stdout, stderr)
+}
+
+func resolveAuto(ctx context.Context, router autoroute.Router, request plyexec.TaskRequest, stderr io.Writer) (autoroute.Decision, int) {
+	var decision autoroute.Decision
+	for event := range router.Route(ctx, autoroute.Request{Task: request, AllowQuick: true}) {
+		if event.Text != "" {
+			fmt.Fprint(stderr, event.Text)
+		}
+		if !event.Done {
+			continue
+		}
+		if event.Err != nil || event.ExitCode != 0 || event.Decision == nil {
+			if event.Err != nil {
+				fmt.Fprintln(stderr, "bench: auto route:", event.Err)
+			}
+			if event.ExitCode != 0 {
+				return decision, event.ExitCode
+			}
+			return decision, 1
+		}
+		decision = *event.Decision
+	}
+	if decision.Effective == "" {
+		fmt.Fprintln(stderr, "bench: auto route ended without a decision")
+		return decision, 1
+	}
+	if ctx.Err() != nil {
+		fmt.Fprintln(stderr, "bench: auto route:", ctx.Err())
+		return autoroute.Decision{}, 130
+	}
+	reason := decision.Reason
+	if decision.Clamped != "" {
+		reason = decision.Clamped
+	}
+	fmt.Fprintf(stderr, "bench: AUTO -> %s · reason=%s\n", strings.ToUpper(string(decision.Effective)), reason)
+	return decision, 0
 }
 
 // streamEvents preserves Ask's filter contract without interpreting either
@@ -627,7 +677,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
 	fs.BoolVar(&task.contract, "contract", true, "compile intent into a replayable outcome contract before work")
-	fs.StringVar(&task.mode, "mode", "", "autonomy: quick, review, or loop (overrides -contract)")
+	fs.StringVar(&task.mode, "mode", "", "autonomy: auto, quick, review, or loop (overrides -contract)")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
 	fs.StringVar(&task.approval, "approval", plyexec.ApprovalOff, "execution approval: off or every-action")
@@ -641,9 +691,16 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 }
 
 func (f taskFlags) options() plyexec.TaskOptions {
+	return f.optionsFor(f.mustAutonomy())
+}
+
+func (f taskFlags) optionsFor(mode autonomy.Mode) plyexec.TaskOptions {
+	if mode == autonomy.Auto {
+		mode = autonomy.Review
+	}
 	options := plyexec.TaskOptions{
-		IntentContract:   f.mustAutonomy().UsesContract(),
-		Loop:             f.mustAutonomy() == autonomy.Loop,
+		IntentContract:   mode.UsesContract(),
+		Loop:             mode == autonomy.Loop,
 		Check:            f.check,
 		CheckAllCriteria: f.checkAll,
 		ApprovalPolicy:   f.approval,
@@ -781,7 +838,7 @@ func printUsage(w io.Writer) {
 
   bench [flags] [initial task]   open the interactive workbench
   bench tui [flags] [task]       force the interactive workbench
-  bench run [flags] goal         review/loop draft; quick runs now
+  bench run [flags] goal         auto routes once; review/loop draft; quick runs now
   bench ask [flags] [message]    Ask only; stdin message/evidence
   bench contract ...             draft, revise, edit, admit, or rerun a contract
   bench version                  print the version
@@ -796,7 +853,7 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
-  -mode quick|review|loop  choose immediate work, contract review, or bounded verifier pursuit
+  -mode auto|quick|review|loop  delegate routing, or choose immediate, reviewed, or verifier-pursuit work
   -contract           compatibility alias for review/quick
   -check command      literal verifier for the next open work outcome
   -check-all          admit that check as judge of every contract criterion
@@ -825,8 +882,8 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-approval off|every-action] [-cage] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
-		fmt.Fprintln(w, "review drafts and exits 2; quick starts immediately; loop drafts a checked contract, then accept/run -mode loop pursues it")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode auto|quick|review|loop] [-check command [-check-all]] [-approval off|every-action] [-cage] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "auto may select immediate Quick with the current tool grant; review drafts and exits 2; loop drafts a checked contract")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

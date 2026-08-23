@@ -114,7 +114,7 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /mode [quick|review|loop]"
+		m.notice = "usage: /mode [auto|quick|review|loop]"
 		return m, nil
 	}
 	mode, err := autonomy.Parse(args[0])
@@ -122,8 +122,13 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 		m.notice = err.Error()
 		return m, nil
 	}
-	m.taskOptions.IntentContract = mode.UsesContract()
-	m.taskOptions.Loop = mode == autonomy.Loop
+	m.autoRequested = mode == autonomy.Auto
+	concrete := mode
+	if concrete == autonomy.Auto {
+		concrete = autonomy.Review
+	}
+	m.taskOptions.IntentContract = concrete.UsesContract()
+	m.taskOptions.Loop = concrete == autonomy.Loop
 	m.retryContract = false
 	if mode == autonomy.Quick {
 		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
@@ -138,7 +143,7 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 		m.screen = screenAsk
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 	}
-	if mode == autonomy.Review {
+	if mode == autonomy.Review || mode == autonomy.Auto {
 		m.taskOptions.Loop = false
 	}
 	m.composer.SetValue("")
@@ -379,16 +384,18 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		return m.openContract()
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review|loop selects autonomy"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode auto|quick|review|loop selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
 	switch strings.ToLower(args[0]) {
 	case "on":
+		m.autoRequested = false
 		m.taskOptions.IntentContract = true
 		m.taskOptions.Loop = false
 		m.notice = "Autonomy review · the next intent becomes an editable draft; Ply waits for /contract accept"
 	case "off":
+		m.autoRequested = false
 		m.taskOptions.IntentContract = false
 		m.taskOptions.Loop = false
 		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
@@ -439,7 +446,7 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 		m.notice = "Contract retained · /contract reopens it"
 	default:
-		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review|loop selects autonomy"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode auto|quick|review|loop selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
@@ -677,20 +684,30 @@ func (m *Model) statusReport() string {
 			approval += " · requested for next amendment: " + approvalPolicyLabel(stagedApproval)
 		}
 	}
-	return strings.Join([]string{
+	lines := []string{
 		"Mode: " + m.modeDisplay(),
 		"Autonomy: " + string(m.autonomyMode()) + " · " + m.autonomyMode().Description(),
-		"Model: " + m.modelDisplay(),
-		"Tools: " + tools,
-		"Outcome contract: " + contract,
-		"Check: " + check,
-		"Action approval: " + approval,
-		"Action confinement: " + m.confinementStatus(),
-		"Brief skills: " + skills,
-		"Session evidence: " + m.session,
-		"Contract files: " + m.contractStore.DraftPath(),
-		"Subagent evidence: " + m.subagentsPath(),
-	}, "\n")
+	}
+	if m.autoRequested && m.lastAuto != nil {
+		reason := m.lastAuto.Reason
+		if m.lastAuto.Clamped != "" {
+			reason = m.lastAuto.Clamped
+		}
+		lines = append(lines, "Last Auto route: "+string(m.lastAuto.Effective)+" · "+reason)
+	}
+	lines = append(lines,
+		"Model: "+m.modelDisplay(),
+		"Tools: "+tools,
+		"Outcome contract: "+contract,
+		"Check: "+check,
+		"Action approval: "+approval,
+		"Action confinement: "+m.confinementStatus(),
+		"Brief skills: "+skills,
+		"Session evidence: "+m.session,
+		"Contract files: "+m.contractStore.DraftPath(),
+		"Subagent evidence: "+m.subagentsPath(),
+	)
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) taskPolicyDisplay() string {

@@ -7,7 +7,7 @@ func TestModesHaveExplicitContractSemantics(t *testing.T) {
 		input string
 		want  Mode
 	}{
-		{"", Review}, {"review", Review}, {"REVIEW", Review}, {"quick", Quick}, {"loop", Loop},
+		{"", Review}, {"auto", Auto}, {"review", Review}, {"REVIEW", Review}, {"quick", Quick}, {"loop", Loop},
 	} {
 		got, err := Parse(tc.input)
 		if err != nil || got != tc.want {

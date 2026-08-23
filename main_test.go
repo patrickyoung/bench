@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patrickyoung/bench/internal/autonomy"
+	"github.com/patrickyoung/bench/internal/autoroute"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
@@ -225,6 +227,121 @@ func TestCageImpliesEveryActionApproval(t *testing.T) {
 	}
 	if got := flags.options().ApprovalPolicy; got != plyexec.ApprovalEveryAction {
 		t.Fatalf("approval=%q", got)
+	}
+}
+
+func TestHeadlessAutoQuickRoutesAndSealsBeforePly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	workspace := t.TempDir()
+	toolbox := filepath.Join(workspace, "tools")
+	if err := os.Mkdir(toolbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ask := filepath.Join(workspace, "ask")
+	ply := filepath.Join(workspace, "ply")
+	order := filepath.Join(workspace, "order")
+	askScript := `#!/bin/sh
+case "${1-}" in
+  note) printf 'route-record\n' >> "$ORDER"; exit 0 ;;
+esac
+printf 'route-turn\n' >> "$ORDER"
+printf '{"version":1,"route":"quick","reason":"routine-local","risk_tags":[]}'
+`
+	plyScript := `#!/bin/sh
+printf 'ply\n' >> "$ORDER"
+printf 'changed\n'
+`
+	if err := os.WriteFile(ask, []byte(askScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ply, []byte(plyScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_ASK", ask)
+	t.Setenv("BENCH_PLY", ply)
+	t.Setenv("ORDER", order)
+	var stdout, stderr strings.Builder
+	code := run([]string{"run", "-C", workspace, "-t", toolbox, "-mode", "auto", "fix the typo"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stdout.String() != "changed\n" || !strings.Contains(stderr.String(), "bench: AUTO -> QUICK · reason=routine-local") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if got := string(mustRead(t, order)); got != "route-turn\nroute-record\nply\n" {
+		t.Fatalf("order=%q", got)
+	}
+}
+
+type fixedAutoRouter struct{ events []autoroute.Event }
+
+func (f fixedAutoRouter) Route(context.Context, autoroute.Request) <-chan autoroute.Event {
+	events := make(chan autoroute.Event, len(f.events))
+	for _, event := range f.events {
+		events <- event
+	}
+	close(events)
+	return events
+}
+
+func TestResolveAutoPreservesInterrupt(t *testing.T) {
+	router := fixedAutoRouter{events: []autoroute.Event{{Done: true, ExitCode: 130, Err: context.Canceled}}}
+	var stderr strings.Builder
+	_, code := resolveAuto(context.Background(), router, plyexec.TaskRequest{}, &stderr)
+	if code != 130 || !strings.Contains(stderr.String(), "context canceled") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	router = fixedAutoRouter{events: []autoroute.Event{{Done: true, ExitCode: 0, Decision: &autoroute.Decision{Effective: autonomy.Quick, Reason: "routine-local"}}}}
+	stderr.Reset()
+	_, code = resolveAuto(ctx, router, plyexec.TaskRequest{}, &stderr)
+	if code != 130 || !strings.Contains(stderr.String(), "context canceled") {
+		t.Fatalf("queued success code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestHeadlessAutoFullShellClampsQuickAndDraftsReview(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	workspace := t.TempDir()
+	ask := filepath.Join(workspace, "ask")
+	ply := filepath.Join(workspace, "ply")
+	order := filepath.Join(workspace, "order")
+	count := filepath.Join(workspace, "ask-count")
+	askScript := `#!/bin/sh
+case "${1-}" in
+  note) printf 'record\n' >> "$ORDER"; exit 0 ;;
+esac
+n=0
+[ ! -f "$COUNT" ] || n=$(cat "$COUNT")
+n=$((n + 1))
+printf '%s' "$n" > "$COUNT"
+if [ "$n" -eq 1 ]; then
+  printf 'route-turn\n' >> "$ORDER"
+  printf '{"version":1,"route":"quick","reason":"routine-local","risk_tags":[]}'
+else
+  printf 'compiler\n' >> "$ORDER"
+  printf '{"version":2,"outcome":"Update the local fixture","deliverables":["updated fixture"],"invariants":[],"criteria":[{"id":"updated","requirement":"fixture is updated","evidence":"inspect the fixture","judge":"inspection"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}'
+fi
+`
+	if err := os.WriteFile(ask, []byte(askScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ply, []byte("#!/bin/sh\nprintf 'ply\n' >> \"$ORDER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_ASK", ask)
+	t.Setenv("BENCH_PLY", ply)
+	t.Setenv("ORDER", order)
+	t.Setenv("COUNT", count)
+	var stdout, stderr strings.Builder
+	code := run([]string{"run", "-C", workspace, "-mode", "auto", "update the fixture"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "bench: AUTO -> REVIEW · reason=broad-authority") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if got := string(mustRead(t, order)); strings.Contains(got, "ply") || got != "route-turn\nrecord\ncompiler\nrecord\n" {
+		t.Fatalf("order=%q", got)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
+	"github.com/patrickyoung/bench/internal/autoroute"
 	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
@@ -56,6 +57,7 @@ type contractDecision struct {
 // Config supplies values bench has already resolved at the command boundary.
 type Config struct {
 	Runner          askClient
+	AutoRouter      autoroute.Router
 	ApprovalResults askexec.ApprovalResultReader
 	Recorder        askexec.Recorder
 	Task            plyexec.Worker
@@ -77,6 +79,7 @@ type Config struct {
 	Toolbox         string
 	ActiveSkills    []string
 	TaskOptions     plyexec.TaskOptions
+	Auto            bool
 	MayPath         string
 	CagePath        string
 }
@@ -85,39 +88,46 @@ type Config struct {
 // widgets carry live cursor state, so the root model must not be copied while
 // commands are running.
 type Model struct {
-	runner           askClient
-	approvalResults  askexec.ApprovalResultReader
-	recorder         askexec.Recorder
-	task             plyexec.Worker
-	contracts        contractexec.Negotiator
-	draft            draftexec.Client
-	hone             honeexec.Client
-	brief            briefexec.Client
-	ply              plyexec.Client
-	session          string
-	newSession       string
-	subagentsDir     string
-	modelName        string
-	modelDefault     string
-	workspace        string
-	dataDir          string
-	toolbox          string
-	taskOptions      plyexec.TaskOptions
-	pendingContract  *plyexec.ContractResult
-	pendingApproval  *plyexec.ContractResult
-	retryContract    bool
-	pendingDecision  *contractDecision
-	contractDraft    *contractexec.Draft
-	admittedContract *contractexec.Draft
-	contractStore    contractexec.FileStore
-	contractAudit    bool
-	editingContract  bool
-	continueContract bool
-	steeringPath     string
-	activeTaskIntent string
-	mayPath          string
-	cagePath         string
-	taskMode         bool
+	runner            askClient
+	autoRouter        autoroute.Router
+	approvalResults   askexec.ApprovalResultReader
+	recorder          askexec.Recorder
+	task              plyexec.Worker
+	contracts         contractexec.Negotiator
+	draft             draftexec.Client
+	hone              honeexec.Client
+	brief             briefexec.Client
+	ply               plyexec.Client
+	session           string
+	newSession        string
+	subagentsDir      string
+	modelName         string
+	modelDefault      string
+	workspace         string
+	dataDir           string
+	toolbox           string
+	taskOptions       plyexec.TaskOptions
+	pendingContract   *plyexec.ContractResult
+	pendingApproval   *plyexec.ContractResult
+	retryContract     bool
+	pendingDecision   *contractDecision
+	contractDraft     *contractexec.Draft
+	admittedContract  *contractexec.Draft
+	contractStore     contractexec.FileStore
+	contractAudit     bool
+	editingContract   bool
+	continueContract  bool
+	steeringPath      string
+	activeTaskIntent  string
+	activeTaskOptions plyexec.TaskOptions
+	activeOptionsSet  bool
+	mayPath           string
+	cagePath          string
+	taskMode          bool
+	autoRequested     bool
+	autoGoal          string
+	lastAuto          *autoroute.Decision
+	autoInterrupted   bool
 
 	composer       textarea.Model
 	project        textinput.Model
@@ -190,6 +200,7 @@ type Model struct {
 	briefEvents    <-chan briefexec.Event
 	plyEvents      <-chan plyexec.Event
 	contractEvents <-chan contractexec.DraftEvent
+	autoEvents     <-chan autoroute.Event
 	job            job
 }
 
@@ -202,6 +213,7 @@ type honeProcessEvent honeexec.Event
 type briefProcessEvent briefexec.Event
 type plyProcessEvent plyexec.Event
 type contractDraftProcessEvent contractexec.DraftEvent
+type autoRouteProcessEvent autoroute.Event
 
 type askClient interface {
 	askexec.Starter
@@ -227,6 +239,7 @@ const (
 	jobPlyRefine
 	jobPlyTask
 	jobContractDraft
+	jobAutoRoute
 )
 
 type screen uint8
@@ -352,6 +365,7 @@ func New(cfg Config) *Model {
 
 	m := Model{
 		runner:          cfg.Runner,
+		autoRouter:      cfg.AutoRouter,
 		approvalResults: cfg.ApprovalResults,
 		recorder:        cfg.Recorder,
 		task:            cfg.Task,
@@ -370,6 +384,7 @@ func New(cfg Config) *Model {
 		dataDir:         cfg.DataDir,
 		toolbox:         cfg.Toolbox,
 		taskOptions:     cfg.TaskOptions,
+		autoRequested:   cfg.Auto,
 		mayPath:         cfg.MayPath,
 		cagePath:        cfg.CagePath,
 		taskMode:        true,
@@ -446,6 +461,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSkillRunProcess(plyexec.Event(msg))
 	case contractDraftProcessEvent:
 		return m.updateContractDraftProcess(contractexec.DraftEvent(msg))
+	case autoRouteProcessEvent:
+		return m.updateAutoRoute(autoroute.Event(msg))
 	case manualContractMsg:
 		return m.updateManualContract(msg)
 	case contractAcceptanceMsg:
@@ -619,7 +636,7 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		m.notice = "ply task runner is unavailable"
 		return m, nil
 	}
-	if m.taskMode && m.taskOptions.Loop && strings.TrimSpace(m.taskOptions.Check) == "" {
+	if m.taskMode && !m.autoRequested && m.taskOptions.Loop && strings.TrimSpace(m.taskOptions.Check) == "" {
 		m.notice = "Loop needs an executable verifier · configure /check -- COMMAND before submitting"
 		m.syncContent()
 		return m, nil
@@ -662,13 +679,13 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	m.notice = ""
 	m.running = true
 	m.spinner = 0
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
 	if m.taskMode {
 		options := m.taskOptions
 		m.taskOptions.Force = false
 		m.activeTaskIntent = goal
 		if options.IntentContract && m.contracts != nil && m.continueContract && m.admittedContract != nil {
+			ctx, cancel := context.WithCancel(context.Background())
+			m.cancel = cancel
 			m.continueContract = false
 			options.Check = m.admittedContract.Check
 			options.CheckAllCriteria = m.admittedContract.CheckAll
@@ -692,36 +709,114 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 				Task:  task,
 				Draft: *m.admittedContract, Store: m.contractStore, Guidance: text,
 			})
+			m.activeTaskOptions = task.Options
+			m.activeOptionsSet = true
 			m.job = jobPlyTask
 			m.syncContent()
 			return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
 		}
-		if options.IntentContract && m.contracts != nil {
-			m.contractEvents = m.contracts.Compile(ctx, contractexec.DraftRequest{
-				Task: plyexec.TaskRequest{
-					Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
-					Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
-					Options: options,
-				},
-				Store: m.contractStore,
-			})
-			m.job = jobContractDraft
+		if m.autoRequested {
+			if m.autoRouter == nil {
+				m.running = false
+				m.notice = "Auto routing is unavailable · no compiler or Ply process started"
+				return m, m.composer.Focus()
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			m.cancel = cancel
+			m.autoInterrupted = false
+			m.autoGoal = goal
+			m.autoEvents = m.autoRouter.Route(ctx, autoroute.Request{Task: m.taskRequest(goal, options), AllowQuick: true})
+			m.job = jobAutoRoute
+			m.activity = "classifying autonomy before work"
 			m.syncContent()
-			return m, tea.Batch(waitContractDraftEvent(m.contractEvents), tick())
+			return m, tea.Batch(waitAutoRouteEvent(m.autoEvents), tick())
 		}
-		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
-			Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
-			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
-			Options: options,
-		})
-		m.job = jobPlyTask
-		m.syncContent()
-		return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
+		return m.startTask(goal, options)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
 	m.events = m.runner.Start(ctx, askexec.Request{Message: text, Session: m.session, Skills: append([]string(nil), m.activeSkills...), Model: m.modelName})
 	m.job = jobTurn
 	m.syncContent()
 	return m, tea.Batch(waitEvent(m.events), tick())
+}
+
+func (m *Model) taskRequest(goal string, options plyexec.TaskOptions) plyexec.TaskRequest {
+	return plyexec.TaskRequest{
+		Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
+		Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
+		Options: options,
+	}
+}
+
+func (m *Model) startTask(goal string, options plyexec.TaskOptions) (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	request := m.taskRequest(goal, options)
+	m.activeTaskOptions = options
+	m.activeOptionsSet = true
+	if options.IntentContract && m.contracts != nil {
+		m.contractEvents = m.contracts.Compile(ctx, contractexec.DraftRequest{Task: request, Store: m.contractStore})
+		m.job = jobContractDraft
+		m.syncContent()
+		return m, tea.Batch(waitContractDraftEvent(m.contractEvents), tick())
+	}
+	m.plyEvents = m.task.Work(ctx, request)
+	m.job = jobPlyTask
+	m.syncContent()
+	return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
+}
+
+func (m *Model) updateAutoRoute(event autoroute.Event) (tea.Model, tea.Cmd) {
+	if !event.Done {
+		if event.Text != "" {
+			m.appendActivity(event.Text)
+		}
+		m.syncContent()
+		return m, waitAutoRouteEvent(m.autoEvents)
+	}
+	m.cancel = nil
+	if m.autoInterrupted {
+		m.autoInterrupted = false
+		m.running = false
+		m.notice = "Auto routing interrupted · no compiler or Ply process started"
+		m.syncContent()
+		return m, m.composer.Focus()
+	}
+	if event.Err != nil || event.ExitCode != 0 || event.Decision == nil {
+		m.running = false
+		m.notice = "Auto routing failed · no compiler or Ply process started"
+		if event.ExitCode == 130 {
+			m.notice = "Auto routing interrupted · no compiler or Ply process started"
+		}
+		if event.Err != nil {
+			m.notice += " · " + event.Err.Error()
+		}
+		m.syncContent()
+		return m, m.composer.Focus()
+	}
+	decision := *event.Decision
+	m.lastAuto = &decision
+	mode := decision.Effective
+	options := m.taskOptions
+	options.IntentContract = mode.UsesContract()
+	options.Loop = mode == autonomy.Loop
+	// Quick applies only to this routed intent. Keep Auto's staged baseline in
+	// Review so the next intent can bind Cage, May, or check-all before it is
+	// routed, instead of inheriting Quick's lower-level protocol bit.
+	if mode != autonomy.Quick {
+		m.taskOptions.IntentContract = options.IntentContract
+		m.taskOptions.Loop = options.Loop
+	}
+	reason := decision.Reason
+	if decision.Clamped != "" {
+		reason = decision.Clamped
+	}
+	line := fmt.Sprintf("AUTO -> %s · reason=%s", strings.ToUpper(string(mode)), reason)
+	m.messages = append(m.messages, message{role: roleStatus, text: line})
+	m.notice = line
+	m.activity = ""
+	return m.startTask(m.autoGoal, options)
 }
 
 func resolvedDecisionGoal(decision contractDecision, answer string) string {
@@ -841,9 +936,13 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 
 	m.running = false
 	m.cancel = nil
+	activeOptions := m.taskOptions
+	if m.activeOptionsSet {
+		activeOptions = m.activeTaskOptions
+	}
 	m.cleanupLoopSteering()
 	m.composer.Placeholder = "Describe the outcome you want, or type /help…"
-	if m.taskOptions.IntentContract {
+	if activeOptions.IntentContract {
 		if loaded, status, err := m.contractStore.Load(); err == nil && status == "admitted" {
 			m.admittedContract = &loaded
 			m.contractDraft = nil
@@ -854,7 +953,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		m.contractStore = contractexec.FileStore{Dir: session.ContractsDir(m.dataDir, event.Session)}
 	}
 	answer := strings.TrimSpace(m.stdout.String())
-	checked := m.taskOptions.Check != ""
+	checked := activeOptions.Check != ""
 	toolLog := strings.TrimSpace(m.toolActivity)
 	if toolLog != "" {
 		m.messages = append(m.messages, message{role: roleTools, text: toolLog})
@@ -868,7 +967,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if event.ContractResult != nil && event.ContractResult.Status != "awaiting_approval" {
 		m.pendingApproval = nil
 	}
-	m.retryContract = event.ContractResult != nil && m.taskOptions.Loop &&
+	m.retryContract = event.ContractResult != nil && activeOptions.Loop &&
 		(event.ContractResult.Status == "not_done" || event.ContractResult.Status == "interrupted")
 	switch {
 	case errors.Is(event.Err, context.Canceled):
@@ -900,7 +999,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		m.pendingContract = nil
 		questions := append([]string{}, event.ContractResult.OpenQuestions...)
 		for _, approval := range event.ContractResult.PendingApprovals {
-			if m.taskOptions.ApprovalPolicy == plyexec.ApprovalEveryAction {
+			if activeOptions.ApprovalPolicy == plyexec.ApprovalEveryAction {
 				questions = append(questions, "Pre-work scope decision: "+approval+". May Bench prepare an exact action for this boundary? Exact execution still requires May.")
 			} else {
 				questions = append(questions, "Permission decision: "+approval+". Approving authorizes this described scope; no execution-time May gate is configured.")
@@ -938,7 +1037,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		if m.notice == "" {
 			m.notice = "Confinement result was not accepted · inspect evidence before an explicit /contract run"
 		}
-	case m.taskOptions.IntentContract && event.ContractResult == nil:
+	case activeOptions.IntentContract && event.ContractResult == nil:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
 		}
@@ -979,6 +1078,7 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	m.activity = ""
 	m.toolActivity = ""
 	m.job = 0
+	m.activeOptionsSet = false
 	m.syncContent()
 	cmd := m.composer.Focus()
 	return m, cmd
@@ -1141,6 +1241,9 @@ func (m *Model) interrupt() {
 			name = "task"
 		case jobContractDraft:
 			name = "contract compiler"
+		case jobAutoRoute:
+			name = "auto router"
+			m.autoInterrupted = true
 		}
 		m.notice = "Interrupting " + name + "…"
 		m.cancel()
@@ -1154,6 +1257,16 @@ func waitEvent(events <-chan askexec.Event) tea.Cmd {
 			return processEvent{Done: true, ExitCode: 1, Err: errors.New("ask event stream closed")}
 		}
 		return processEvent(event)
+	}
+}
+
+func waitAutoRouteEvent(events <-chan autoroute.Event) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-events
+		if !ok {
+			return autoRouteProcessEvent{Done: true, ExitCode: 1, Err: errors.New("auto route event stream closed")}
+		}
+		return autoRouteProcessEvent(event)
 	}
 }
 
@@ -1329,6 +1442,9 @@ func (m *Model) renderTranscript(width int) string {
 			titleText = "What should we think through?"
 			bodyText = "Ask continues the same replayable session without running commands.\nNo workspace program runs until you return with /work."
 			exampleText = "Try: Explain the tradeoffs in this design before we change it.\nNeed durable work? /work  ·  Need an agent project? /agent"
+		} else if m.autonomyMode() == autonomy.Auto {
+			bodyText = "1  ROUTE       Ask classifies this intent once without workspace tools.\n2  DISPATCH    Bench selects Quick, Review, or checked Loop under fixed policy floors.\n3  WORK        The selected existing path runs; Auto itself grants no tools or verdict."
+			exampleText = "Autonomy auto may choose immediate Quick · Review remains the startup default.\nTry: Fix the typo in docs/guide.md and change nothing else."
 		} else if m.autonomyMode() == autonomy.Quick {
 			bodyText = "1  WORK        Start Ply immediately with ordinary programs.\n2  OBSERVE     Show real command output as it happens.\n3  VERIFY      Let executable evidence or your review decide what remains."
 			exampleText = "Autonomy quick · switch with /mode review when you want a negotiated contract.\nTry: Find why the tests fail and fix the smallest root cause."
@@ -1624,7 +1740,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/cage on|off", "confine approved model actions; implies every-action May", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
 		helpRow(t, "/continue", "retry work under the same admitted contract", width),
-		helpRow(t, "/mode quick|review|loop", "choose immediate, negotiated, or verifier-loop work", width),
+		helpRow(t, "/mode auto|quick|review|loop", "delegate routing, or choose a concrete work mode", width),
 		helpRow(t, "/contract", "reopen the durable draft or admitted revision", width),
 		helpRow(t, "/contract edit|import", "edit JSON here, or seal external edits", width),
 		helpRow(t, "/contract accept", "admit reviewed bytes, then start Ply", width),
@@ -1999,6 +2115,9 @@ func (m *Model) defaultWorkHint() string {
 }
 
 func (m *Model) autonomyMode() autonomy.Mode {
+	if m.autoRequested {
+		return autonomy.Auto
+	}
 	return autonomy.FromPolicy(m.taskOptions.IntentContract, m.taskOptions.Loop)
 }
 

@@ -67,7 +67,7 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
-/mode quick|review|loop choose immediate work, contract negotiation, or verifier pursuit
+/mode auto|quick|review|loop delegate routing, or choose immediate work, contract negotiation, or verifier pursuit
 /contract               reopen the durable draft or admitted revision
 /contract on|off        compatibility aliases for review/quick
 /contract edit          edit the proposed JSON with $VISUAL/$EDITOR
@@ -265,6 +265,27 @@ stderr, returns 2 (pending admission), and never starts Ply. Use
 actually intended. `bench run -mode loop -check COMMAND` still drafts and
 exits 2; after inspection, `bench contract accept ... -mode loop` performs the
 single bounded verifier-pursuit invocation.
+
+`bench run -mode auto` explicitly delegates that front-door choice. One
+read-only Ask structured-output turn classifies the exact intent, declared
+tool grant, verifier, and policy; Bench then selects the existing Quick,
+Review, or Loop path. Auto may start Quick immediately, so it is never the
+default. Declared Cage, every-action approval, broad full-shell authority,
+check authority, and invalid router output are fixed Review floors. Semantic
+risk detection comes from Ask: reported consequential effects select Review,
+but Auto is delegated judgment, not a safety classifier. Loop is selected
+only with a literal verifier and a finite turn bound. Bench prints one
+`AUTO -> ...` decision before downstream work and
+seals the same decision as `bench.route/v1` in the ordinary Ask session before
+any compiler or Ply process starts. That note records routing only: it is not
+contract admission, action approval, criterion evidence, or completion.
+
+The committed `eval/auto` corpus regresses this seam against 60 frozen cases.
+Its reviewed synthetic proposal snapshot is bound to the exact router System,
+prompt-template, and Schema digests
+and is evaluated offline with `go run ./cmd/bench-auto-eval`. It is a
+reproducible controller regression, not a claim about the current model and
+not a live-model score or artifact-quality A/B evaluation.
 
 | Stage | Existing program or boundary |
 |---|---|

@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
+	"github.com/patrickyoung/bench/internal/autoroute"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
@@ -24,6 +25,99 @@ type fakeRunner struct {
 	replayEvents chan askexec.Event
 	req          askexec.Request
 	replayPath   string
+}
+
+type fakeAutoRouter struct {
+	events   chan autoroute.Event
+	requests []autoroute.Request
+}
+
+func (f *fakeAutoRouter) Route(_ context.Context, req autoroute.Request) <-chan autoroute.Event {
+	f.requests = append(f.requests, req)
+	if f.events == nil {
+		f.events = make(chan autoroute.Event)
+	}
+	return f.events
+}
+
+func TestAutoRoutesBeforeStartingCompilerOrPly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode autonomy.Mode
+	}{
+		{"quick", autonomy.Quick},
+		{"review", autonomy.Review},
+		{"loop", autonomy.Loop},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &fakeAutoRouter{}
+			task := &fakeTask{}
+			contracts := &fakeNegotiator{}
+			options := plyexec.TaskOptions{IntentContract: true, Check: "test -f done", CheckAllCriteria: true}
+			m := New(Config{Auto: true, AutoRouter: router, Task: task, Contracts: contracts, Workspace: t.TempDir(), DataDir: t.TempDir(), Session: filepath.Join(t.TempDir(), "run.jsonl"), Toolbox: "/tools/workspace", TaskOptions: options})
+			m.composer.SetValue("finish the fixture")
+			updated, cmd := m.submit()
+			m = updated.(*Model)
+			if cmd == nil || m.job != jobAutoRoute || len(router.requests) != 1 || task.calls != 0 || len(contracts.compileReqs) != 0 {
+				t.Fatalf("before route job=%v requests=%d task=%d compile=%d", m.job, len(router.requests), task.calls, len(contracts.compileReqs))
+			}
+			updated, cmd = m.updateAutoRoute(autoroute.Event{Done: true, ExitCode: 0, Decision: &autoroute.Decision{Suggested: tc.mode, Effective: tc.mode, Reason: map[autonomy.Mode]string{autonomy.Quick: "routine-local", autonomy.Review: "open-decision", autonomy.Loop: "checked-pursuit"}[tc.mode]}})
+			m = updated.(*Model)
+			if cmd == nil || m.lastAuto == nil || !m.autoRequested {
+				t.Fatalf("after route model=%#v", m.lastAuto)
+			}
+			if status := m.statusReport(); !strings.Contains(status, "Autonomy: auto") || !strings.Contains(status, "Last Auto route: "+string(tc.mode)) {
+				t.Fatalf("status=%q", status)
+			}
+			if tc.mode == autonomy.Quick {
+				if task.calls != 1 || task.req.Options.IntentContract || !m.taskOptions.IntentContract || len(contracts.compileReqs) != 0 {
+					t.Fatalf("quick task=%d req=%#v compile=%d", task.calls, task.req, len(contracts.compileReqs))
+				}
+				updated, _ = m.updateTaskProcess(plyexec.Event{Done: true, ExitCode: 0, Session: m.session})
+				m = updated.(*Model)
+				if strings.Contains(m.notice, "contracted work") || !strings.Contains(m.notice, "check passed") {
+					t.Fatalf("quick terminal notice=%q", m.notice)
+				}
+				updated, _ = m.commandApproval([]string{plyexec.ApprovalEveryAction})
+				m = updated.(*Model)
+				if m.taskOptions.ApprovalPolicy != plyexec.ApprovalEveryAction {
+					t.Fatalf("May was not staged for the next Auto intent: %q", m.notice)
+				}
+				updated, _ = m.commandCage([]string{"on"})
+				m = updated.(*Model)
+				if m.taskOptions.ActionConfinement != plyexec.ConfinementCage {
+					t.Fatalf("Cage was not staged for the next Auto intent: %q", m.notice)
+				}
+				updated, _ = m.commandCheck("/check -- test -f next")
+				m = updated.(*Model)
+				updated, _ = m.commandCheck("/check all")
+				m = updated.(*Model)
+				if !m.taskOptions.CheckAllCriteria {
+					t.Fatalf("check-all was not staged for the next Auto intent: %q", m.notice)
+				}
+			} else {
+				if task.calls != 0 || len(contracts.compileReqs) != 1 || contracts.compileReqs[0].Task.Options.Loop != (tc.mode == autonomy.Loop) {
+					t.Fatalf("mode=%s task=%d compile=%#v", tc.mode, task.calls, contracts.compileReqs)
+				}
+			}
+		})
+	}
+}
+
+func TestAutoInterruptWinsOverQueuedRouteSuccess(t *testing.T) {
+	router := &fakeAutoRouter{}
+	task := &fakeTask{}
+	contracts := &fakeNegotiator{}
+	m := New(Config{Auto: true, AutoRouter: router, Task: task, Contracts: contracts, Workspace: t.TempDir(), DataDir: t.TempDir(), Session: filepath.Join(t.TempDir(), "run.jsonl"), Toolbox: "/tools", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.composer.SetValue("change it")
+	updated, _ := m.submit()
+	m = updated.(*Model)
+	m.interrupt()
+	updated, _ = m.updateAutoRoute(autoroute.Event{Done: true, ExitCode: 0, Decision: &autoroute.Decision{Suggested: autonomy.Quick, Effective: autonomy.Quick, Reason: "routine-local"}})
+	m = updated.(*Model)
+	if task.calls != 0 || len(contracts.compileReqs) != 0 || !strings.Contains(m.notice, "interrupted") {
+		t.Fatalf("task=%d compile=%d notice=%q", task.calls, len(contracts.compileReqs), m.notice)
+	}
 }
 
 func TestCageCommandStagesEveryActionOnlyWithExternalControllerState(t *testing.T) {

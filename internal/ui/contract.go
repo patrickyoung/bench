@@ -42,6 +42,7 @@ func (m *Model) updateContractDraftProcess(event contractexec.DraftEvent) (tea.M
 	m.running = false
 	m.cancel = nil
 	m.job = 0
+	m.activeOptionsSet = false
 	m.activity = ""
 	if event.Err != nil || event.ExitCode != 0 || event.Draft == nil {
 		m.notice = "Contract draft not updated · " + failureDetail(event.ExitCode, event.Err)
@@ -295,6 +296,8 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 		Task:  task,
 		Draft: loaded, Store: m.contractStore, ExpectedDraftSHA256: shown,
 	})
+	m.activeTaskOptions = task.Options
+	m.activeOptionsSet = true
 	m.syncContent()
 	return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
 }
@@ -351,6 +354,8 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 		Task:  task,
 		Draft: loaded, Store: m.contractStore, Guidance: strings.TrimSpace(guidance),
 	})
+	m.activeTaskOptions = task.Options
+	m.activeOptionsSet = true
 	m.syncContent()
 	return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
 }

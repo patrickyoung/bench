@@ -60,9 +60,27 @@ immediate work without contract review, while `review` negotiates and admits the
 contract first. `loop` uses that same admission and exactly one existing Ply
 invocation, requiring a literal verifier; omitted cycles become Ply's
 unbounded rejection budget and omitted turns become an explicit finite 50.
+Explicit `auto` adds one read-only Ask structured-output classification before
+dispatch and resolves to one of those concrete paths. Auto is never the
+default and never reaches Ply, TaskOptions, draft, admission, or result
+schemas. Fixed controller floors may only escalate its suggestion: broad
+authority, Cage, every-action approval, invalid output, or an incompatible
+check/turn policy select Review; Loop additionally requires a literal check
+and finite turns. Semantic consequence detection remains Ask's delegated
+classification: model-reported risk tags select Review, but are not a
+deterministic safety boundary. The selected route is sealed as `bench.route/v1`
+before downstream dispatch. It is an observation, not admission, approval,
+criterion evidence, or completion authority.
 It is invocation-scoped runtime policy, not a daemon, retry supervisor,
 crash-resume promise, new event authority, or second tool loop. `/contract off` and `-contract=false` remain compatibility
 aliases rather than the primary mental model.
+
+`eval/auto` is an offline controller regression over a frozen reviewed synthetic proposal
+snapshot bound to the exact router System, prompt-template, and Schema
+digests. It checks controller parsing,
+floors, and 60 reviewed routing cases without network, model, shell, or worker
+execution. It must not be presented as a score for a current live model or as
+an outcome-quality A/B test.
 
 The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its

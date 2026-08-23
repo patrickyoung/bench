@@ -50,9 +50,10 @@ strictly matching sealed accepted receipt followed by a durable Review v2 or
 Loop v3 result carrying the same judge-map and receipt bindings.
 Neither a skill nor model output may set or infer that policy. `/continue` begins another
 implementation attempt under the same admitted revision even when
-the retained check already passes. User-facing autonomy is `quick`, `review`,
-or `loop`: quick uses the direct Ply seam, review requires contract admission,
-and Loop keeps one bounded foreground Ply invocation pursuing an explicit check.
+the retained check already passes. User-facing autonomy is `auto`, `quick`,
+`review`, or `loop`: Auto resolves once at the Bench front door, quick uses the
+direct Ply seam, review requires contract admission, and Loop keeps one
+bounded foreground Ply invocation pursuing an explicit check.
 `/contract off` and `-contract=false` remain compatibility aliases. Work then
 runs through `ply` with that one explicit Ask session; the full-shell or toolbox
 grant, deferred unobserved actions, and the resulting typescript stay visible,
@@ -88,6 +89,14 @@ supervisor, daemon, scheduler, hot socket, private turn protocol, or automatic
 restart. `bench ask` remains direct Ask. `-m` and `/model` must propagate
 through every model-backed stage. Open-task `-effort` passes literally through
 Ply to Ask; Bench must not validate provider-specific effort names.
+`-mode auto` is an explicit Bench-only routing delegation, never a new Ply or
+contract mode. It performs one strict read-only Ask turn, applies fixed
+controller floors, seals `bench.route/v1`, and only then dispatches the
+selected existing Quick, Review, or Loop path. The default remains Review.
+The route record is observation only: it grants no admission, approval,
+criterion judgment, or completion. Behavior-affecting router System, Schema,
+normalization, or rule changes require a new router identifier and frozen
+corpus snapshot.
 Loop-only pursuit, budget, and stop metadata belongs in
 `bench.contract-result/v3`; Review must keep its existing v1/v2 result bodies.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows

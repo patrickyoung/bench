@@ -63,7 +63,7 @@ func TestExecutableSuffix(t *testing.T) {
 }
 
 func TestInstallScriptLinksEveryRequiredSuiteCommand(t *testing.T) {
-	script := installScript("0.6.5")
+	script := installScript("0.6.6")
 	if !strings.Contains(script, "tools='bench ask brief ply hone draft may cage'") {
 		t.Fatalf("installer tool set is incomplete:\n%s", script)
 	}
