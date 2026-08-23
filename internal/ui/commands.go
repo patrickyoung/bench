@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/autonomy"
+	"github.com/patrickyoung/bench/internal/plyexec"
 )
 
 type shellReturnedMsg struct{ err error }
@@ -99,7 +100,7 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /mode [quick|review]"
+		m.notice = "usage: /mode [quick|review|loop]"
 		return m, nil
 	}
 	mode, err := autonomy.Parse(args[0])
@@ -108,17 +109,26 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.taskOptions.IntentContract = mode.UsesContract()
+	m.taskOptions.Loop = mode == autonomy.Loop
+	m.retryContract = false
 	if mode == autonomy.Quick {
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.retryContract = false
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
 		m.continueContract = false
 		m.screen = screenAsk
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 	}
+	if mode == autonomy.Review {
+		m.taskOptions.Loop = false
+	}
 	m.composer.SetValue("")
 	m.notice = fmt.Sprintf("Autonomy %s · %s", mode, mode.Description())
+	if mode == autonomy.Loop && strings.TrimSpace(m.taskOptions.Check) == "" {
+		m.notice += " · configure /check -- COMMAND before submitting"
+	}
 	m.syncContent()
 	return m, nil
 }
@@ -134,18 +144,21 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		return m.openContract()
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review selects autonomy"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review|loop selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
 	switch strings.ToLower(args[0]) {
 	case "on":
 		m.taskOptions.IntentContract = true
+		m.taskOptions.Loop = false
 		m.notice = "Autonomy review · the next intent becomes an editable draft; Ply waits for /contract accept"
 	case "off":
 		m.taskOptions.IntentContract = false
+		m.taskOptions.Loop = false
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.retryContract = false
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
 		m.continueContract = false
@@ -188,7 +201,7 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 		m.notice = "Contract retained · /contract reopens it"
 	default:
-		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review selects autonomy"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review|loop selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
@@ -219,6 +232,7 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 		m.taskOptions.Check = ""
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.retryContract = false
 		m.taskOptions.Force = false
 		m.composer.SetValue("")
 		m.notice = "Check cleared · the next work outcome will be unchecked"
@@ -232,6 +246,7 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 			m.notice = "/check all needs outcome contracts on"
 		} else {
 			m.taskOptions.CheckAllCriteria = true
+			m.retryContract = false
 			m.notice = "Check judges all criteria for the next outcome · operator blanket admission is armed"
 		}
 		m.composer.SetValue("")
@@ -253,6 +268,7 @@ func (m *Model) commandCheck(line string) (tea.Model, tea.Cmd) {
 		m.taskOptions.Check = check
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.retryContract = false
 		m.taskOptions.Force = false
 		m.composer.SetValue("")
 		m.notice = "Check set for the next outcome · " + strconv.Quote(check)
@@ -441,10 +457,18 @@ func (m *Model) taskPolicyDisplay() string {
 		parts = append(parts, "continue armed")
 	}
 	if m.taskOptions.HasCycles {
-		parts = append(parts, fmt.Sprintf("cycles=%d", m.taskOptions.Cycles))
+		parts = append(parts, "cycles="+plyexec.LoopCycleBudget(m.taskOptions))
+	} else if m.taskOptions.Loop {
+		parts = append(parts, "cycles=unbounded")
 	}
 	if m.taskOptions.HasTurns {
-		parts = append(parts, fmt.Sprintf("turns=%d", m.taskOptions.Turns))
+		if m.taskOptions.Loop {
+			parts = append(parts, "turns="+plyexec.LoopTurnBudget(m.taskOptions))
+		} else {
+			parts = append(parts, fmt.Sprintf("turns=%d", m.taskOptions.Turns))
+		}
+	} else if m.taskOptions.Loop {
+		parts = append(parts, fmt.Sprintf("turns=%d", plyexec.DefaultLoopTurns))
 	}
 	if m.taskOptions.HasTimeout {
 		parts = append(parts, "timeout="+m.taskOptions.Timeout.String())

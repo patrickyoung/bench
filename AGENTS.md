@@ -46,11 +46,13 @@ contracted work remains review-required and exits 2 until the interactive user
 explicitly accepts pending criteria. `-check-all` and `/check all` are the one
 operator-owned exception: they admit the exact configured check for every
 parsed criterion, must be sealed before Ply, and may complete only from a
-strictly matching sealed accepted receipt followed by a durable v2 result.
+strictly matching sealed accepted receipt followed by a durable Review v2 or
+Loop v3 result carrying the same judge-map and receipt bindings.
 Neither a skill nor model output may set or infer that policy. `/continue` begins another
 implementation attempt under the same admitted revision even when
-the retained check already passes. User-facing autonomy is `quick` or `review`:
-quick uses the direct Ply seam and review requires contract admission.
+the retained check already passes. User-facing autonomy is `quick`, `review`,
+or `loop`: quick uses the direct Ply seam, review requires contract admission,
+and Loop keeps one bounded foreground Ply invocation pursuing an explicit check.
 `/contract off` and `-contract=false` remain compatibility aliases. Work then
 runs through `ply` with that one explicit Ask session; the full-shell or toolbox
 grant, deferred unobserved actions, and the resulting typescript stay visible,
@@ -65,9 +67,16 @@ action, returns its evidence, and decides when to ask again. `/ask` uses direct
 `ask` for a no-tools turn in that same session. The public `bench contract`
 draft/revise/show/edit/import/accept/run commands must use the same store and controller API
 as the TUI. Default `bench run` drafts and exits 2 without Ply; `-mode quick`
-is the explicit immediate-work filter. `bench ask` remains direct Ask. `-m` and `/model` must propagate
+is the explicit immediate-work filter. `-mode loop` must remain one foreground
+Ply invocation over an admitted contract: it requires a literal check, maps
+omitted cycles to `-cycles 0`, keeps an explicit finite turn bound, and may
+compose only Ply's public regular-file `-steer` seam. Do not add a Bench
+supervisor, daemon, scheduler, hot socket, private turn protocol, or automatic
+restart. `bench ask` remains direct Ask. `-m` and `/model` must propagate
 through every model-backed stage. Open-task `-effort` passes literally through
 Ply to Ask; Bench must not validate provider-specific effort names.
+Loop-only pursuit, budget, and stop metadata belongs in
+`bench.contract-result/v3`; Review must keep its existing v1/v2 result bodies.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows
 and forwards it but never evaluates it. Contracted review-required, not-done,
 interruption, or verifier failure retains it; only the explicit direct-Ply

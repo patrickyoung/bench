@@ -121,9 +121,18 @@ func (m *Model) commandContinue(args []string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
-	if m.pendingContract == nil {
+	if m.pendingContract == nil && !m.retryContract {
 		m.composer.SetValue("")
 		m.notice = "Nothing is awaiting revision"
+		m.syncContent()
+		return m, nil
+	}
+	if m.retryContract {
+		m.retryContract = false
+		m.taskOptions.Force = true
+		m.continueContract = m.admittedContract != nil
+		m.composer.SetValue("")
+		m.notice = "Loop retry armed · describe implementation guidance; the admitted contract and verifier stay unchanged"
 		m.syncContent()
 		return m, nil
 	}

@@ -396,6 +396,90 @@ func TestOperatorCheckAllNeverCompletesWithoutAcceptedReceipt(t *testing.T) {
 	}
 }
 
+func TestLoopReceiptMismatchUsesV3AndFailsClosed(t *testing.T) {
+	ask := &fakeAsk{answer: fixtureContract, receiptErr: errors.New("receipt mismatch")}
+	ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "unsealed answer"}, {Done: true, ExitCode: 0}}}
+	var done plyexec.Event
+	var stdout strings.Builder
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
+		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
+		Options: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "./check", CheckAllCriteria: true},
+	}) {
+		if event.Stream == plyexec.Stdout {
+			stdout.WriteString(event.Text)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+	result := ask.recordLog[len(ask.recordLog)-1]
+	if done.ExitCode != 1 || done.ContractResult == nil || done.ContractResult.Status != "failed" || done.ContractResult.CheckPassed || done.ContractResult.StopReason != "verifier_receipt_unverified" || stdout.Len() != 0 || result.Kind != "bench.contract-result/v3" {
+		t.Fatalf("done=%#v stdout=%q record=%#v", done, stdout.String(), result)
+	}
+}
+
+func TestLoopUsesResultV3WithoutChangingReviewResultSchemas(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		options plyexec.TaskOptions
+		want    string
+	}{
+		{name: "review", options: plyexec.TaskOptions{IntentContract: true, Check: "./check"}, want: "bench.contract-result/v1"},
+		{name: "review check all", options: plyexec.TaskOptions{IntentContract: true, Check: "./check", CheckAllCriteria: true}, want: "bench.contract-result/v2"},
+		{name: "loop", options: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "./check"}, want: "bench.contract-result/v3"},
+		{name: "loop check all", options: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "./check", CheckAllCriteria: true}, want: "bench.contract-result/v3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ask := &fakeAsk{answer: fixtureContract}
+			ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
+			var terminal plyexec.Event
+			for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
+				Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"), Options: test.options,
+			}) {
+				if event.Done {
+					terminal = event
+				}
+			}
+			result := ask.recordLog[len(ask.recordLog)-1]
+			if result.Kind != test.want {
+				t.Fatalf("kind=%q want %q records=%#v", result.Kind, test.want, ask.recordLog)
+			}
+			if test.options.Loop {
+				if !strings.Contains(result.JSON, `"pursuit":"loop-this-invocation"`) || !strings.Contains(result.JSON, `"stop_reason":`) {
+					t.Fatalf("v3 result omitted loop policy: %s", result.JSON)
+				}
+			} else if strings.Contains(result.JSON, `"pursuit":`) || strings.Contains(result.JSON, `"cycle_budget":`) || strings.Contains(result.JSON, `"turn_budget":`) || strings.Contains(result.JSON, `"stop_reason":`) {
+				t.Fatalf("legacy result schema changed: %s", result.JSON)
+			}
+			if test.name == "loop check all" && (terminal.ExitCode != 0 || terminal.ContractResult == nil || terminal.ContractResult.Status != "complete" || terminal.ContractResult.VerifierReceipt == nil) {
+				t.Fatalf("loop v3 did not preserve receipt-backed completion: %#v", terminal)
+			}
+		})
+	}
+}
+
+func TestAggregateRecordsInvocationScopedLoopPolicy(t *testing.T) {
+	result := aggregate(Contract{Criteria: []Criterion{{ID: "tests", Judge: "check"}}},
+		"sha256:test", true, nil, "", nil,
+		plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "go test ./..."},
+		plyexec.Event{Done: true, ExitCode: 2})
+	if result.Status != "not_done" || result.Pursuit != "loop-this-invocation" || result.CycleBudget != "unbounded" || result.TurnBudget != "50" || result.StopReason != "ply_not_done" {
+		t.Fatalf("result=%#v", result)
+	}
+	explicit := withPursuit(plyexec.ContractResult{}, plyexec.TaskOptions{Loop: true, Cycles: 3, HasCycles: true, Turns: 12, HasTurns: true})
+	if explicit.CycleBudget != "3" || explicit.TurnBudget != "12" {
+		t.Fatalf("explicit policy=%#v", explicit)
+	}
+	explicitZero := withPursuit(plyexec.ContractResult{}, plyexec.TaskOptions{Loop: true, Cycles: 0, HasCycles: true})
+	if explicitZero.CycleBudget != "unbounded" || explicitZero.TurnBudget != "50" {
+		t.Fatalf("explicit zero policy=%#v", explicitZero)
+	}
+	ordinary := withPursuit(plyexec.ContractResult{}, plyexec.TaskOptions{})
+	if ordinary.Pursuit != "" || ordinary.CycleBudget != "" || ordinary.TurnBudget != "" || ordinary.StopReason != "" {
+		t.Fatalf("review result grew loop policy=%#v", ordinary)
+	}
+}
+
 func TestOperatorCheckAllJudgeMapMustSealBeforeWork(t *testing.T) {
 	ask := &fakeAsk{answer: fixtureContract, recordErr: errors.New("disk full"), recordErrAt: 2}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
@@ -437,7 +521,7 @@ func TestResultSummarySurfacesOpenQuestions(t *testing.T) {
 	result := aggregate(Contract{
 		Criteria:      []Criterion{{ID: "exists", Judge: "check"}},
 		OpenQuestions: []string{"Which printer should receive the document?"},
-	}, "sha256:test", true, nil, "", nil, plyexec.Event{Done: true, ExitCode: 0})
+	}, "sha256:test", true, nil, "", nil, plyexec.TaskOptions{}, plyexec.Event{Done: true, ExitCode: 0})
 	if result.Status != "review_required" || len(result.OpenQuestions) != 1 {
 		t.Fatalf("result=%#v", result)
 	}

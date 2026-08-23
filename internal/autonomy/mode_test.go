@@ -7,7 +7,7 @@ func TestModesHaveExplicitContractSemantics(t *testing.T) {
 		input string
 		want  Mode
 	}{
-		{"", Review}, {"review", Review}, {"REVIEW", Review}, {"quick", Quick},
+		{"", Review}, {"review", Review}, {"REVIEW", Review}, {"quick", Quick}, {"loop", Loop},
 	} {
 		got, err := Parse(tc.input)
 		if err != nil || got != tc.want {
@@ -17,7 +17,7 @@ func TestModesHaveExplicitContractSemantics(t *testing.T) {
 	if Quick.UsesContract() || !Review.UsesContract() {
 		t.Fatal("mode contract semantics changed")
 	}
-	if _, err := Parse("loop"); err == nil {
-		t.Fatal("unimplemented loop mode was accepted")
+	if got := FromPolicy(true, true); got != Loop {
+		t.Fatalf("loop policy rendered as %q", got)
 	}
 }

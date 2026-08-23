@@ -63,12 +63,34 @@ type ContractResult struct {
 	VerifierReceipt       *VerifierReceiptRef `json:"verifier_receipt,omitempty"`
 	OpenQuestions         []string            `json:"open_questions"`
 	PendingApprovals      []string            `json:"pending_approvals"`
+	Pursuit               string              `json:"pursuit,omitempty"`
+	CycleBudget           string              `json:"cycle_budget,omitempty"`
+	TurnBudget            string              `json:"turn_budget,omitempty"`
+	StopReason            string              `json:"stop_reason,omitempty"`
 }
 
 const (
-	Stdout = filterexec.Stdout
-	Stderr = filterexec.Stderr
+	Stdout           = filterexec.Stdout
+	Stderr           = filterexec.Stderr
+	DefaultLoopTurns = 50
 )
+
+func LoopCycleBudget(options TaskOptions) string {
+	if !options.HasCycles || options.Cycles == 0 {
+		return "unbounded"
+	}
+	return strconv.Itoa(options.Cycles)
+}
+
+func LoopTurnBudget(options TaskOptions) string {
+	if !options.HasTurns {
+		return strconv.Itoa(DefaultLoopTurns)
+	}
+	if options.Turns == 0 {
+		return "invalid (turns=0)"
+	}
+	return strconv.Itoa(options.Turns)
+}
 
 type RefineRequest struct {
 	Dir        string
@@ -92,6 +114,7 @@ type TaskRequest struct {
 	Toolbox      string
 	Model        string
 	Options      TaskOptions
+	Steering     string
 }
 
 // TaskOptions are optional Ply policy controls. The Has fields preserve the
@@ -102,6 +125,7 @@ type TaskOptions struct {
 	ContractID       string
 	Check            string
 	CheckAllCriteria bool
+	Loop             bool
 	Force            bool
 	Effort           string
 	Cycles           int
@@ -178,9 +202,13 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if req.Options.HasCycles {
 		args = append(args, "-cycles", strconv.Itoa(req.Options.Cycles))
+	} else if req.Options.Loop {
+		args = append(args, "-cycles", "0")
 	}
 	if req.Options.HasTurns {
 		args = append(args, "-turns", strconv.Itoa(req.Options.Turns))
+	} else if req.Options.Loop {
+		args = append(args, "-turns", strconv.Itoa(DefaultLoopTurns))
 	}
 	if req.Options.HasTimeout {
 		args = append(args, "-timeout", req.Options.Timeout.String())
@@ -190,6 +218,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if req.Options.HasCompactions {
 		args = append(args, "-compactions", strconv.Itoa(req.Options.Compactions))
+	}
+	if steering := strings.TrimSpace(req.Steering); steering != "" {
+		args = append(args, "-steer", steering)
 	}
 
 	// A compacting Ply run can move to a new Ask session. Keep that control
@@ -270,6 +301,18 @@ func Validate(req TaskRequest) error {
 	}
 	if req.Options.CheckAllCriteria && !req.Options.IntentContract {
 		return errors.New("check-all needs an outcome contract")
+	}
+	if req.Options.Loop && !req.Options.IntentContract {
+		return errors.New("loop autonomy needs an outcome contract")
+	}
+	if req.Options.Loop && strings.TrimSpace(req.Options.Check) == "" {
+		return errors.New("loop autonomy needs a configured check")
+	}
+	if req.Options.Loop && req.Options.HasTurns && req.Options.Turns == 0 {
+		return errors.New("loop autonomy needs a finite positive turn budget")
+	}
+	if req.Steering != "" && strings.TrimSpace(req.Steering) == "" {
+		return errors.New("task steering path is empty")
 	}
 	for _, skill := range req.Skills {
 		if strings.TrimSpace(skill) == "" {

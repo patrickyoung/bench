@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.6.2",
+  "version": "0.6.3",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -33,7 +33,7 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "f75d91dfba46351e2b4d29d31abbf52a637e25aa",
+      "revision": "3bea618ebeb7292412bab540004433ef8aff0d11",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",

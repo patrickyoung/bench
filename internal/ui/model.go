@@ -100,6 +100,7 @@ type Model struct {
 	toolbox          string
 	taskOptions      plyexec.TaskOptions
 	pendingContract  *plyexec.ContractResult
+	retryContract    bool
 	pendingDecision  *contractDecision
 	contractDraft    *contractexec.Draft
 	admittedContract *contractexec.Draft
@@ -107,6 +108,7 @@ type Model struct {
 	contractAudit    bool
 	editingContract  bool
 	continueContract bool
+	steeringPath     string
 	activeTaskIntent string
 	taskMode         bool
 
@@ -546,17 +548,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+s", "ctrl+enter":
+			if m.canSteerLoop() {
+				return m.queueLoopSteering()
+			}
 			if !m.running {
 				return m.submit()
 			}
 			return m, nil
 		case "enter":
+			if m.canSteerLoop() {
+				return m.queueLoopSteering()
+			}
 			if !m.running {
 				return m.submit()
 			}
 			return m, nil
 		case "alt+enter", "shift+enter":
-			if !m.running {
+			if !m.running || m.canSteerLoop() {
 				m.composer.InsertString("\n")
 				m.syncContent()
 			}
@@ -572,7 +580,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.running || m.picking || m.screen != screenAsk {
+	if (m.running && !m.canSteerLoop()) || m.picking || m.screen != screenAsk {
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -593,6 +601,11 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	}
 	if m.taskMode && m.task == nil {
 		m.notice = "ply task runner is unavailable"
+		return m, nil
+	}
+	if m.taskMode && m.taskOptions.Loop && strings.TrimSpace(m.taskOptions.Check) == "" {
+		m.notice = "Loop needs an executable verifier · configure /check -- COMMAND before submitting"
+		m.syncContent()
 		return m, nil
 	}
 	if m.taskMode && m.taskOptions.IntentContract && m.contracts == nil {
@@ -638,12 +651,24 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 			m.continueContract = false
 			options.Check = m.admittedContract.Check
 			options.CheckAllCriteria = m.admittedContract.CheckAll
+			task := m.taskForContract(*m.admittedContract, options)
+			if err := plyexec.Validate(task); err != nil {
+				cancel()
+				m.running = false
+				m.cancel = nil
+				m.notice = "Contract cannot continue · " + err.Error()
+				return m, m.composer.Focus()
+			}
+			if err := m.armLoopSteering(task.Options); err != nil {
+				cancel()
+				m.running = false
+				m.cancel = nil
+				m.notice = "Loop steering is unavailable · " + err.Error()
+				return m, m.composer.Focus()
+			}
+			task.Steering = m.steeringPath
 			m.plyEvents = m.contracts.Run(ctx, contractexec.RunRequest{
-				Task: plyexec.TaskRequest{
-					Dir: m.workspace, Goal: m.admittedContract.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
-					Skills: append([]string(nil), m.admittedContract.Skills...), Toolbox: m.admittedContract.Toolbox, Model: m.modelName,
-					Options: options,
-				},
+				Task:  task,
 				Draft: *m.admittedContract, Store: m.contractStore, Guidance: text,
 			})
 			m.job = jobPlyTask
@@ -765,7 +790,12 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 				m.contractDraft = nil
 			}
 			m.screen = screenAsk
-			m.composer.Placeholder = "Describe the outcome you want, or type /help…"
+			if m.canSteerLoop() {
+				m.composer.Placeholder = "Steer the running loop at its next model turn…"
+				m.composer.Focus()
+			} else {
+				m.composer.Placeholder = "Describe the outcome you want, or type /help…"
+			}
 			m.messages = append(m.messages, message{role: roleContract, text: safeText(event.Contract)})
 			// Compiler progress belongs to the understanding phase. Start the
 			// visible work log cleanly when Ply receives the admitted contract.
@@ -790,6 +820,8 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 
 	m.running = false
 	m.cancel = nil
+	m.cleanupLoopSteering()
+	m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 	if m.taskOptions.IntentContract {
 		if loaded, status, err := m.contractStore.Load(); err == nil && status == "admitted" {
 			m.admittedContract = &loaded
@@ -809,6 +841,11 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if event.ContractResult != nil && event.ContractResult.Status != "needs_decision" {
 		m.pendingDecision = nil
 	}
+	if event.ContractResult != nil && event.ContractResult.Status != "review_required" {
+		m.pendingContract = nil
+	}
+	m.retryContract = event.ContractResult != nil && m.taskOptions.Loop &&
+		(event.ContractResult.Status == "not_done" || event.ContractResult.Status == "interrupted")
 	switch {
 	case errors.Is(event.Err, context.Canceled):
 		m.notice = "Task interrupted · the Ask session keeps completed tool evidence"
@@ -874,6 +911,9 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		}
 		m.notice = "Task stopped · replayable session · no executable check"
 	case event.ExitCode == 2:
+		if answer != "" {
+			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
+		}
 		m.notice = "Task not done · Ply stopped before completion"
 	default:
 		m.notice = filterFailure("ply", event.ExitCode, event.Err, toolLog)
@@ -893,6 +933,9 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 
 func contractResultCard(result plyexec.ContractResult) string {
 	lines := []string{}
+	if result.Pursuit != "" {
+		lines = append(lines, fmt.Sprintf("LOOP · this invocation · cycles=%s · turns=%s · stop=%s", result.CycleBudget, result.TurnBudget, result.StopReason))
+	}
 	switch result.Status {
 	case "complete":
 		lines = append(lines, "COMPLETE", fmt.Sprintf("Operator-admitted check settled %d criterion/criteria.", len(result.AdmittedCheckCoverage)))
@@ -926,9 +969,9 @@ func contractResultCard(result plyexec.ContractResult) string {
 		}
 		lines = append(lines, "Next: reply normally with the missing decision.")
 	case "not_done":
-		lines = append(lines, "NOT DONE", "Ply stopped before the outcome check accepted the work.", "Next: review the work log, adjust the outcome or check, then continue.")
+		lines = append(lines, "NOT DONE", "Ply stopped before the outcome check accepted the work.", "Next: review the work log, then /continue under this admission · or /contract to amend it.")
 	case "interrupted":
-		lines = append(lines, "INTERRUPTED", "Completed observations remain in the replayable session.", "Next: continue when you are ready.")
+		lines = append(lines, "INTERRUPTED", "Completed observations remain in the replayable session.", "Next: /continue under this admission when you are ready.")
 	default:
 		lines = append(lines, "NOT ACCEPTED", "Bench could not establish a trustworthy outcome verdict.", "Next: inspect the work log and error; the check remains available for retry.")
 	}
@@ -989,6 +1032,7 @@ func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.subagentsDir = session.SubagentsDir(m.dataDir, m.newSession)
 	m.contractStore = contractexec.FileStore{Dir: session.ContractsDir(m.dataDir, m.newSession)}
 	m.pendingContract = nil
+	m.retryContract = false
 	m.pendingDecision = nil
 	m.contractDraft = nil
 	m.admittedContract = nil
@@ -1212,6 +1256,9 @@ func (m *Model) renderTranscript(width int) string {
 		} else if m.autonomyMode() == autonomy.Quick {
 			bodyText = "1  WORK        Start Ply immediately with ordinary programs.\n2  OBSERVE     Show real command output as it happens.\n3  VERIFY      Let executable evidence or your review decide what remains."
 			exampleText = "Autonomy quick · switch with /mode review when you want a negotiated contract.\nTry: Find why the tests fail and fix the smallest root cause."
+		} else if m.autonomyMode() == autonomy.Loop {
+			bodyText = "1  NEGOTIATE   Review and admit one durable outcome.\n2  LOOP        Ply keeps trying in this invocation until the check accepts or a bound stops it.\n3  STEER       Queue guidance between model turns while tools and verifier stay fixed."
+			exampleText = "Loop needs /check -- COMMAND · /check all separately declares it sufficient for every criterion."
 		} else if m.toolbox != "" {
 			bodyText = "1  NEGOTIATE   Review, revise, or edit a durable contract draft.\n2  ADMIT       You accept the exact contract before Ply starts.\n3  WORK        Use the " + filepath.Base(m.toolbox) + " toolbox and show real output.\n4  VERIFY      Let evidence decide: complete, review, or revise."
 		}
@@ -1486,6 +1533,8 @@ func (m *Model) renderHelp(width int) string {
 	}
 	if m.taskMode && m.autonomyMode() == autonomy.Quick {
 		sendHelp = "start Ply immediately without contract review"
+	} else if m.taskMode && m.autonomyMode() == autonomy.Loop {
+		sendHelp = "draft once, then run one bounded and steerable Ply verifier loop"
 	}
 	rows := []string{
 		t.hero.Render("Working with Bench"),
@@ -1497,7 +1546,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
 		helpRow(t, "/continue", "retry work under the same admitted contract", width),
-		helpRow(t, "/mode quick|review", "choose immediate work or contract review", width),
+		helpRow(t, "/mode quick|review|loop", "choose immediate, negotiated, or verifier-loop work", width),
 		helpRow(t, "/contract", "reopen the durable draft or admitted revision", width),
 		helpRow(t, "/contract edit|import", "edit JSON here, or seal external edits", width),
 		helpRow(t, "/contract accept", "admit reviewed bytes, then start Ply", width),
@@ -1841,8 +1890,14 @@ func (m *Model) defaultWorkHint() string {
 	if !m.taskMode {
 		return "enter ask   /work enables tools   /agent promotes durable work   f1 map"
 	}
+	if m.retryContract {
+		return "loop stopped   /continue retries the admitted outcome   /contract amends it"
+	}
 	if m.autonomyMode() == autonomy.Quick && m.contractDraft == nil && m.pendingContract == nil {
 		return "autonomy quick   enter starts Ply without contract review   /mode review negotiates first"
+	}
+	if m.autonomyMode() == autonomy.Loop && m.contractDraft == nil && m.pendingContract == nil {
+		return "autonomy loop   /check required   one invocation · finite turns · live steering"
 	}
 	if m.contractDraft != nil {
 		return "contract draft retained   /contract review   /contract accept runs"
@@ -1863,7 +1918,7 @@ func (m *Model) defaultWorkHint() string {
 }
 
 func (m *Model) autonomyMode() autonomy.Mode {
-	return autonomy.FromContract(m.taskOptions.IntentContract)
+	return autonomy.FromPolicy(m.taskOptions.IntentContract, m.taskOptions.Loop)
 }
 
 type theme struct {

@@ -75,8 +75,8 @@ printf 'worked answer\n'
 	t.Setenv("CONTRACT_FIXTURE", `{"version":2,"outcome":"A complete poem gallery exists.","deliverables":["gallery.html"],"invariants":["poem.md remains unchanged"],"criteria":[{"id":"exists","requirement":"gallery exists","evidence":"the configured check exits zero","judge":"check"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`)
 	var stdout, stderr strings.Builder
 	session := filepath.Join(dir, "sessions", "run.jsonl")
-	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "-check", "test -s gallery.html", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
-	if code != 2 || !strings.HasSuffix(strings.TrimSpace(stdout.String()), "draft.json") || !strings.Contains(stderr.String(), "Ply has not started") {
+	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "-mode", "loop", "-check", "test -s gallery.html", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
+	if code != 2 || !strings.HasSuffix(strings.TrimSpace(stdout.String()), "draft.json") || !strings.Contains(stderr.String(), "Ply has not started") || !strings.Contains(stderr.String(), "-mode loop") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(strings.TrimSpace(stdout.String())); err != nil {
@@ -158,12 +158,15 @@ printf 'worked answer\n'
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = run([]string{"contract", "accept", "-C", dir, "-f", session, "-expect", draft.DraftSHA256, "-m", "openai/luna"}, strings.NewReader(""), &stdout, &stderr)
+	code = run([]string{"contract", "accept", "-C", dir, "-f", session, "-expect", draft.DraftSHA256, "-m", "openai/luna", "-mode", "loop"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 || stdout.String() != "worked answer\n" {
 		t.Fatalf("accepted code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
+	if !strings.Contains(stderr.String(), "LOOP · this invocation · cycles=unbounded · turns=50") {
+		t.Fatalf("loop policy was not visible before work: %q", stderr.String())
+	}
 	plyArgs := string(mustRead(t, capture+".ply.args"))
-	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v2"} {
+	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "-cycles\n0\n", "-turns\n50\n", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v2"} {
 		if !strings.Contains(plyArgs, want) {
 			t.Errorf("admitted Ply args missing %q:\n%s", want, plyArgs)
 		}
@@ -196,6 +199,54 @@ func TestContractAcceptAndRunRejectUnreviewedPolicyFlags(t *testing.T) {
 		if code := runContractCLI(args, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
 			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestContractRunRejectsInvalidEffectivePolicyBeforeAskOrPly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixtures are POSIX programs")
+	}
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "sessions", "run.jsonl")
+	store := contractexec.FileStore{Dir: sessionpkgContractDirForTest(dir, sessionPath)}
+	draft, err := store.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "work", Workspace: dir,
+		Contract:               []byte(`{"version":2,"outcome":"Work is complete.","deliverables":["result"],"invariants":[],"criteria":[{"id":"quality","requirement":"result is useful","evidence":"review","judge":"human"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`),
+		CompilerEvidenceSHA256: "sha256:evidence", CheckSHA256: "sha256:empty", Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = store.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = store.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAdmitted(draft); err != nil {
+		t.Fatal(err)
+	}
+	started := filepath.Join(dir, "started")
+	fixture := filepath.Join(dir, "must-not-start")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\ntouch \"$STARTED\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_ASK", fixture)
+	t.Setenv("BENCH_PLY", fixture)
+	t.Setenv("STARTED", started)
+	for _, args := range [][]string{
+		{"contract", "run", "-C", dir, "-f", sessionPath, "-mode", "loop"},
+		{"contract", "run", "-C", dir, "-f", sessionPath, "-compact"},
+	} {
+		var stdout, stderr strings.Builder
+		if code := run(args, strings.NewReader(""), &stdout, &stderr); code != 2 || stderr.Len() == 0 {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+	if _, err := os.Stat(started); !os.IsNotExist(err) {
+		t.Fatalf("invalid contract run started Ask or Ply: %v", err)
 	}
 }
 
@@ -499,6 +550,21 @@ func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
 	if code := run([]string{"contract", "draft", "-C", dir, "-mode", "quick", "goal"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
 		t.Fatalf("contract draft accepted contradictory mode: code=%d stderr=%q", code, stderr.String())
 	}
+	for _, args := range [][]string{
+		{"run", "-C", dir, "-mode", "loop", "goal"},
+		{"run", "-C", dir, "-mode", "loop", "-check", "true", "-turns", "0", "goal"},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := run(args, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "loop autonomy needs") {
+			t.Fatalf("loop policy %v: code=%d stderr=%q", args, code, stderr.String())
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"contract", "draft", "-C", dir, "-mode", "loop", "-check", "true", "goal"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("contract draft accepted runtime mode: code=%d stderr=%q", code, stderr.String())
+	}
 	if _, err := os.Stat(started); !os.IsNotExist(err) {
 		t.Fatalf("Ply started for invalid policy: %v", err)
 	}
@@ -516,6 +582,14 @@ func TestModeFlagExplicitlyOverridesLegacyContractAlias(t *testing.T) {
 		if err != nil || string(got) != tc.want {
 			t.Fatalf("autonomy() = %q, %v; want %q", got, err, tc.want)
 		}
+	}
+}
+
+func TestLoopPolicyDisplaysExplicitZeroCyclesAsUnbounded(t *testing.T) {
+	var stderr strings.Builder
+	printLoopPolicy(&stderr, plyexec.TaskOptions{Loop: true, Cycles: 0, HasCycles: true})
+	if got := stderr.String(); !strings.Contains(got, "cycles=unbounded") || strings.Contains(got, "cycles=0") || !strings.Contains(got, "turns=50") {
+		t.Fatalf("policy=%q", got)
 	}
 }
 

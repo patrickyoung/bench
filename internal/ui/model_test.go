@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -290,6 +291,158 @@ func TestContinueUsesSameAdmittedContractWithoutRecompiling(t *testing.T) {
 	m = updated.(*Model)
 	if len(contracts.runReqs) != 1 || len(contracts.compileReqs) != 0 || contracts.runReqs[0].Draft.ContractID != draft.ContractID || contracts.runReqs[0].Guidance != "strengthen the perspective and rerender" {
 		t.Fatalf("runs=%#v compiles=%#v", contracts.runReqs, contracts.compileReqs)
+	}
+}
+
+func TestRestoredCheckedDraftCanBeAcceptedInLoopWithoutRetypingCheck(t *testing.T) {
+	dir := t.TempDir()
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, Session: filepath.Join(dir, "session.jsonl"), DataDir: dir, Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence",
+		Check: "go test ./...", CheckSHA256: "sha256:check", Skills: []string{"ascii-cinema"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.contractDraft = &draft
+	updated, _ := m.acceptContractDraft()
+	m = updated.(*Model)
+	defer m.cleanupLoopSteering()
+	if len(contracts.admitReqs) != 1 || contracts.admitReqs[0].Task.Options.Check != "go test ./..." || contracts.admitReqs[0].Task.Steering == "" || m.taskOptions.Check != "go test ./..." {
+		t.Fatalf("admissions=%#v ui options=%#v notice=%q", contracts.admitReqs, m.taskOptions, m.notice)
+	}
+}
+
+func TestRestoredAdmittedContractBindsItsCheckBeforeLoopRun(t *testing.T) {
+	dir := t.TempDir()
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, Session: filepath.Join(dir, "session.jsonl"), DataDir: dir, Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence",
+		Check: "go test ./...", CheckSHA256: "sha256:check", Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.contractStore.MarkAdmitted(draft); err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := m.runAdmittedContract("")
+	m = updated.(*Model)
+	defer m.cleanupLoopSteering()
+	if len(contracts.runReqs) != 1 || contracts.runReqs[0].Task.Options.Check != "go test ./..." || contracts.runReqs[0].Task.Steering == "" || m.taskOptions.Check != "go test ./..." {
+		t.Fatalf("runs=%#v ui options=%#v notice=%q", contracts.runReqs, m.taskOptions, m.notice)
+	}
+}
+
+func TestAdmittedContractWithoutCheckCannotStartLoopOrCreateSteering(t *testing.T) {
+	dir := t.TempDir()
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, Session: filepath.Join(dir, "session.jsonl"), DataDir: dir, Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence", CheckSHA256: "sha256:empty", Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.contractStore.MarkAdmitted(draft); err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := m.runAdmittedContract("")
+	m = updated.(*Model)
+	if len(contracts.runReqs) != 0 || m.steeringPath != "" || m.running || !strings.Contains(m.notice, "configured check") {
+		t.Fatalf("runs=%#v steering=%q running=%v notice=%q", contracts.runReqs, m.steeringPath, m.running, m.notice)
+	}
+}
+
+func TestLoopBudgetStopCanContinueSameAdmissionWithGuidance(t *testing.T) {
+	dir := t.TempDir()
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, Session: filepath.Join(dir, "session.jsonl"), DataDir: dir, Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "go test ./..."},
+	})
+	m.admittedContract = &contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", RevisionID: "sha256:revision", ContractID: "sha256:admission",
+		Intent: "make gallery", Workspace: "/work", Contract: []byte(testContractJSON), Check: "go test ./...", CheckSHA256: "sha256:check",
+	}
+	m.pendingContract = &plyexec.ContractResult{Status: "review_required", ContractID: "sha256:older-result"}
+	m.running = true
+	m.job = jobPlyTask
+	updated, _ := m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:admission", Status: "not_done", Pursuit: "loop-this-invocation", CycleBudget: "unbounded", TurnBudget: "50", StopReason: "ply_not_done",
+	}})
+	m = updated.(*Model)
+	if !m.retryContract || m.pendingContract != nil {
+		t.Fatalf("retry=%v pending=%#v", m.retryContract, m.pendingContract)
+	}
+	m.composer.SetValue("/accept")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Nothing is awaiting acceptance") {
+		t.Fatalf("not-done result became acceptable: %q", m.notice)
+	}
+	m.composer.SetValue("/continue")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	m.composer.SetValue("focus on the parser edge case")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	defer m.cleanupLoopSteering()
+	if len(contracts.runReqs) != 1 || !contracts.runReqs[0].Task.Options.Force || contracts.runReqs[0].Guidance != "focus on the parser edge case" || contracts.runReqs[0].Task.Steering == "" {
+		t.Fatalf("runs=%#v", contracts.runReqs)
+	}
+}
+
+func TestInterruptedLoopRemainsExplicitlyRetryable(t *testing.T) {
+	m := New(Config{
+		Task: &fakeTask{}, Session: filepath.Join(t.TempDir(), "session.jsonl"), DataDir: t.TempDir(), Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "true"},
+	})
+	m.admittedContract = &contractexec.Draft{ContractID: "sha256:admission", RevisionID: "sha256:revision", Intent: "work", Workspace: "/work", Check: "true"}
+	m.running = true
+	m.job = jobPlyTask
+	updated, _ := m.Update(plyProcessEvent{Done: true, ExitCode: 130, Err: context.Canceled, ContractResult: &plyexec.ContractResult{
+		ContractID: "sha256:admission", Status: "interrupted", Pursuit: "loop-this-invocation", StopReason: "interrupted",
+	}})
+	m = updated.(*Model)
+	if !m.retryContract {
+		t.Fatalf("interrupted loop was not retryable: notice=%q", m.notice)
+	}
+	m.composer.SetValue("/continue")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.retryContract || !m.continueContract || !m.taskOptions.Force {
+		t.Fatalf("retry=%v continue=%v force=%v notice=%q", m.retryContract, m.continueContract, m.taskOptions.Force, m.notice)
 	}
 }
 
@@ -1054,9 +1207,111 @@ func TestAutonomyModeMakesQuickAndReviewExplicit(t *testing.T) {
 	m.composer.SetValue("/mode loop")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if m.autonomyMode() != autonomy.Review || !strings.Contains(m.notice, "not supported") {
+	if m.autonomyMode() != autonomy.Loop || !m.taskOptions.Loop || !m.taskOptions.IntentContract || !strings.Contains(m.notice, "configure /check") {
 		t.Fatalf("mode=%q notice=%q", m.autonomyMode(), m.notice)
 	}
+	m.taskOptions.Check = "true"
+	m.taskOptions.Cycles = 0
+	m.taskOptions.HasCycles = true
+	if policy := m.taskPolicyDisplay(); !strings.Contains(policy, "cycles=unbounded") || strings.Contains(policy, "cycles=0") {
+		t.Fatalf("policy=%q", policy)
+	}
+	if review := contractExecutionPolicy(contractexec.Draft{Check: "true"}, m.taskOptions); !strings.Contains(review, "cycles=unbounded") || strings.Contains(review, "cycles=0") {
+		t.Fatalf("contract policy=%q", review)
+	}
+}
+
+func TestLoopQueuesSteeringThroughARegularAppendOnlyFile(t *testing.T) {
+	m := New(Config{
+		Session: filepath.Join(t.TempDir(), "task.jsonl"), Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "go test ./..."},
+	})
+	m.running = true
+	m.job = jobPlyTask
+	if err := m.armLoopSteering(m.taskOptions); err != nil {
+		t.Fatal(err)
+	}
+	path := m.steeringPath
+	m.composer.SetValue("Inspect the parser edge case before changing more code.")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || !m.running || m.composer.Value() != "" || !strings.Contains(m.notice, "next model turn") {
+		t.Fatalf("running=%v composer=%q notice=%q", m.running, m.composer.Value(), m.notice)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "Inspect the parser edge case before changing more code.\n" {
+		t.Fatalf("steering=%q err=%v", body, err)
+	}
+	if len(m.messages) != 1 || !strings.Contains(m.messages[0].text, "STEERING QUEUED") {
+		t.Fatalf("messages=%#v", m.messages)
+	}
+}
+
+func TestLoopSteeringRejectsAReplacedNonRegularPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink fixture is Unix-specific")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "true"}})
+	m.running = true
+	m.job = jobPlyTask
+	m.steeringPath = filepath.Join(dir, "steer")
+	if err := os.Symlink(target, m.steeringPath); err != nil {
+		t.Fatal(err)
+	}
+	m.composer.Focus()
+	m.composer.SetValue("do not block")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd != nil || !strings.Contains(m.notice, "not a regular file") {
+		t.Fatalf("notice=%q cmd=%v", m.notice, cmd)
+	}
+	if got := string(mustReadFile(t, target)); got != "" {
+		t.Fatalf("replacement target was written: %q", got)
+	}
+}
+
+func TestLoopBudgetStopKeepsLastReportAndCleansSteering(t *testing.T) {
+	dir := t.TempDir()
+	m := New(Config{
+		Session: filepath.Join(dir, "task.jsonl"), DataDir: dir, Workspace: "/work",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true, Loop: true, Check: "go test ./..."},
+	})
+	m.running = true
+	m.job = jobPlyTask
+	if err := m.armLoopSteering(m.taskOptions); err != nil {
+		t.Fatal(err)
+	}
+	path := m.steeringPath
+	m.stdout.WriteString("The remaining failure is in parser_test.go.")
+	updated, _ := m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
+		Status: "not_done", Pursuit: "loop", CycleBudget: "unbounded", TurnBudget: "50", StopReason: "ply_not_done",
+	}})
+	m = updated.(*Model)
+	if m.running || m.steeringPath != "" || !os.IsNotExist(statErr(path)) {
+		t.Fatalf("running=%v steering=%q stat=%v", m.running, m.steeringPath, statErr(path))
+	}
+	if len(m.messages) != 2 || m.messages[0].role != roleAssistant || !strings.Contains(m.messages[0].text, "parser_test.go") || !strings.Contains(m.messages[1].text, "LOOP · this invocation") {
+		t.Fatalf("messages=%#v", m.messages)
+	}
+}
+
+func statErr(path string) error {
+	_, err := os.Stat(path)
+	return err
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
 
 func TestTaskShowsCompiledContractBeforeWorkEvidence(t *testing.T) {

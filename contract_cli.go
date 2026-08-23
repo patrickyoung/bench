@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
@@ -75,7 +76,7 @@ func runContractDraft(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		fmt.Fprintln(stderr, "bench contract draft: -sh and -t are mutually exclusive")
 		return 2
 	}
-	if err := validateCheckAllFlags(task); err != nil {
+	if err := validateTaskPolicy(task); err != nil {
 		fmt.Fprintln(stderr, "bench contract draft:", err)
 		return 2
 	}
@@ -314,6 +315,10 @@ func runContractAccept(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return flagCode(err)
 	}
+	if err := validateContractRuntimeMode(task); err != nil {
+		fmt.Fprintln(stderr, "bench contract accept:", err)
+		return 2
+	}
 	if fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "bench contract accept: unexpected arguments")
 		return 2
@@ -360,8 +365,13 @@ func runContractAccept(args []string, stdout, stderr io.Writer) int {
 		SubagentsDir: session.SubagentsDir(benchDir(work), resolvedFile), Skills: append([]string{}, draft.Skills...),
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: options,
 	}
+	if err := plyexec.Validate(req); err != nil {
+		fmt.Fprintln(stderr, "bench contract accept:", err)
+		return 2
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	printLoopPolicy(stderr, options)
 	events := runner.Admit(ctx, contractexec.AdmitRequest{
 		Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: expect,
 	})
@@ -383,6 +393,10 @@ func runContractRun(args []string, stdout, stderr io.Writer) int {
 	addContractRuntimeFlags(fs, &task)
 	if err := fs.Parse(args); err != nil {
 		return flagCode(err)
+	}
+	if err := validateContractRuntimeMode(task); err != nil {
+		fmt.Fprintln(stderr, "bench contract run:", err)
+		return 2
 	}
 	if fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "bench contract run: unexpected arguments")
@@ -428,8 +442,13 @@ func runContractRun(args []string, stdout, stderr io.Writer) int {
 		SubagentsDir: session.SubagentsDir(benchDir(work), resolvedFile), Skills: append([]string{}, draft.Skills...),
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: options,
 	}
+	if err := plyexec.Validate(req); err != nil {
+		fmt.Fprintln(stderr, "bench contract run:", err)
+		return 2
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	printLoopPolicy(stderr, options)
 	return streamPlyEvents(ctx, runner.Run(ctx, contractexec.RunRequest{Task: req, Draft: draft, Store: store}), stdout, stderr)
 }
 
@@ -458,12 +477,37 @@ func addContractRuntimeFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.turns.name = "turns"
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
+	task.contract = true
+	fs.StringVar(&task.mode, "mode", "review", "autonomy for this invocation: review or loop")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
 	fs.Var(&task.timeout, "timeout", "per-command Ply timeout")
 	fs.BoolVar(&task.compact, "compact", false, "let Ply continue through full context")
 	fs.Var(&task.compactions, "compactions", "Ply compactions before stopping (0 = unbounded)")
+}
+
+func validateContractRuntimeMode(task taskFlags) error {
+	mode, err := task.autonomy()
+	if err != nil {
+		return err
+	}
+	if mode == autonomy.Quick {
+		return errors.New("contract execution supports review or loop, not quick")
+	}
+	if mode == autonomy.Loop && task.turns.set && task.turns.value == 0 {
+		return errors.New("loop autonomy needs a finite positive turn budget")
+	}
+	return nil
+}
+
+func printLoopPolicy(stderr io.Writer, options plyexec.TaskOptions) {
+	if !options.Loop {
+		return
+	}
+	cycles := plyexec.LoopCycleBudget(options)
+	turns := plyexec.LoopTurnBudget(options)
+	fmt.Fprintf(stderr, "bench: LOOP · this invocation · cycles=%s · turns=%s · stops when the check accepts or the run stops\n", cycles, turns)
 }
 
 func streamContractDraft(ctx context.Context, events <-chan contractexec.DraftEvent, store contractexec.FileStore, stdout, stderr io.Writer) int {
@@ -512,4 +556,5 @@ Draft and revise use Ask plus the selected Brief skills but never invoke Ply.
 The printed draft.json is ordinary editable JSON; import validates and seals
 changes made by an external editor. Accept checks the exact
 displayed digest, seals the immutable admission, and only then starts Ply.`)
+	fmt.Fprintln(w, "Accept or run with -mode loop to keep one bounded Ply invocation pursuing the admitted check.")
 }

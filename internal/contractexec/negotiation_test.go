@@ -144,6 +144,33 @@ func TestRetryRequiresVerifiedSealedAdmissionBeforePly(t *testing.T) {
 	}
 }
 
+func TestInvalidLoopRerunStopsBeforeReplayRecordsOrPly(t *testing.T) {
+	req := negotiationRequest(t)
+	store := FileStore{Dir: filepath.Join(req.Dir, "contracts")}
+	draft, err := store.SaveDraft(contractDraftFixture(t, req, "outcome", 1, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = store.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = store.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAdmitted(draft); err != nil {
+		t.Fatal(err)
+	}
+	ask := &fakeAsk{}
+	ply := &fakePly{}
+	req.Options = plyexec.TaskOptions{IntentContract: true, Loop: true}
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply}).Run(context.Background(), RunRequest{Task: req, Draft: draft, Store: store}))
+	if terminal.ExitCode == 0 || terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "configured check") || ask.admissions != 0 || ask.records != 0 || ply.calls != 0 {
+		t.Fatalf("terminal=%#v admissions=%d records=%d ply=%d", terminal, ask.admissions, ask.records, ply.calls)
+	}
+}
+
 func TestUnresolvedContractCannotBeAdmittedOrRun(t *testing.T) {
 	req := negotiationRequest(t)
 	question := strings.Replace(fixtureContract, `"open_questions": []`, `"open_questions": ["Which printer?"]`, 1)

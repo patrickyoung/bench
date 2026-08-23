@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	version      = "0.6.2"
+	version      = "0.6.3"
 	maxPipeInput = 16 << 20
 )
 
@@ -90,7 +90,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "bench: -sh and -t are mutually exclusive")
 		return 2
 	}
-	if err := validateCheckAllFlags(o.task); err != nil {
+	if err := validateTaskPolicy(o.task); err != nil {
 		fmt.Fprintln(stderr, "bench: "+err.Error())
 		return 2
 	}
@@ -205,7 +205,7 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, "bench "+mode+": -sh and -t are mutually exclusive")
 		return 2
 	}
-	if err := validateCheckAllFlags(task); err != nil {
+	if err := validateTaskPolicy(task); err != nil {
 		fmt.Fprintln(stderr, "bench "+mode+": "+err.Error())
 		return 2
 	}
@@ -257,7 +257,10 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		store := contractexec.FileStore{Dir: session.ContractsDir(benchDir(work), file)}
 		code := streamContractDraft(ctx, runner.Compile(ctx, contractexec.DraftRequest{Task: request, Store: store}), store, stdout, stderr)
 		if code == 0 {
-			fmt.Fprintf(stderr, "bench run: contract awaits review; inspect with `bench contract show -f %s`, revise or edit it, then accept it explicitly\n", file)
+			fmt.Fprintln(stderr, "bench run: contract awaits review; inspect the printed draft, revise or edit it, then accept it with its exact displayed digest")
+			if request.Options.Loop {
+				fmt.Fprintln(stderr, "bench run: Loop is invocation-scoped; select -mode loop again on contract accept or run")
+			}
 			return 2
 		}
 		return code
@@ -504,7 +507,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
 	fs.BoolVar(&task.contract, "contract", true, "compile intent into a replayable outcome contract before work")
-	fs.StringVar(&task.mode, "mode", "", "autonomy: quick or review (overrides -contract)")
+	fs.StringVar(&task.mode, "mode", "", "autonomy: quick, review, or loop (overrides -contract)")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
@@ -518,6 +521,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 func (f taskFlags) options() plyexec.TaskOptions {
 	return plyexec.TaskOptions{
 		IntentContract:   f.mustAutonomy().UsesContract(),
+		Loop:             f.mustAutonomy() == autonomy.Loop,
 		Check:            f.check,
 		CheckAllCriteria: f.checkAll,
 		Effort:           f.effort,
@@ -544,19 +548,28 @@ func (f taskFlags) mustAutonomy() autonomy.Mode {
 	return mode
 }
 
-func validateCheckAllFlags(f taskFlags) error {
+func validateTaskPolicy(f taskFlags) error {
 	mode, err := f.autonomy()
 	if err != nil {
 		return err
 	}
 	if !f.checkAll {
+		if mode == autonomy.Loop && strings.TrimSpace(f.check) == "" {
+			return errors.New("loop autonomy needs a configured check")
+		}
+		if mode == autonomy.Loop && f.turns.set && f.turns.value == 0 {
+			return errors.New("loop autonomy needs a finite positive turn budget")
+		}
 		return nil
 	}
 	if strings.TrimSpace(f.check) == "" {
 		return errors.New("check-all needs a configured check")
 	}
 	if !mode.UsesContract() {
-		return errors.New("check-all needs review autonomy")
+		return errors.New("check-all needs review or loop autonomy")
+	}
+	if mode == autonomy.Loop && f.turns.set && f.turns.value == 0 {
+		return errors.New("loop autonomy needs a finite positive turn budget")
 	}
 	return nil
 }
@@ -616,7 +629,7 @@ func printUsage(w io.Writer) {
 
   bench [flags] [initial task]   open the interactive workbench
   bench tui [flags] [task]       force the interactive workbench
-  bench run [flags] goal         draft a contract; -mode quick runs Ask + Ply
+  bench run [flags] goal         review/loop draft; quick runs now
   bench ask [flags] [message]    Ask only; stdin message/evidence
   bench contract ...             draft, revise, edit, admit, or rerun a contract
   bench version                  print the version
@@ -631,7 +644,7 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
-  -mode quick|review  choose immediate work or contract negotiation (default review)
+  -mode quick|review|loop  choose immediate work, contract review, or bounded verifier pursuit
   -contract           compatibility alias for review/quick
   -check command      literal verifier for the next open work outcome
   -check-all          admit that check as judge of every contract criterion
@@ -658,8 +671,8 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
-		fmt.Fprintln(w, "default mode review: create an editable contract draft and exit 2 before Ply; mode quick starts work immediately")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "review drafts and exits 2; quick starts immediately; loop drafts a checked contract, then accept/run -mode loop pursues it")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

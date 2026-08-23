@@ -253,6 +253,71 @@ printf answer
 	}
 }
 
+func TestWorkExpandsLoopIntoOneBoundedPlyInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > args\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	steering := filepath.Join(dir, "steering")
+	if err := os.WriteFile(steering, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "pursue the verifier", Session: filepath.Join(dir, "task.jsonl"), Steering: steering,
+		Options: TaskOptions{IntentContract: true, Loop: true, Check: "test -s result"},
+	}) {
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{
+		"-check\ntest -s result\n",
+		"-cycles\n0\n",
+		"-turns\n50\n",
+		"-steer\n" + steering + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "-cycles\n") != 1 || strings.Count(got, "-turns\n") != 1 {
+		t.Fatalf("loop policy was duplicated:\n%s", got)
+	}
+}
+
+func TestWorkHonorsExplicitLoopBudgets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > args\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "pursue", Session: filepath.Join(dir, "task.jsonl"),
+		Options: TaskOptions{
+			IntentContract: true, Loop: true, Check: "true",
+			Cycles: 3, HasCycles: true, Turns: 12, HasTurns: true,
+		},
+	}) {
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	if !strings.Contains(got, "-cycles\n3\n") || !strings.Contains(got, "-turns\n12\n") {
+		t.Fatalf("explicit loop budgets missing:\n%s", got)
+	}
+}
+
 func TestWorkRecognizesPassingPrecheckWithoutASession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")
@@ -315,6 +380,9 @@ func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
 		{IntentContract: true, Compact: true},
 		{IntentContract: true, CheckAllCriteria: true},
 		{Check: "true", CheckAllCriteria: true},
+		{Loop: true, Check: "true"},
+		{IntentContract: true, Loop: true},
+		{IntentContract: true, Loop: true, Check: "true", Turns: 0, HasTurns: true},
 	} {
 		var done Event
 		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{

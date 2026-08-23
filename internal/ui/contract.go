@@ -59,7 +59,7 @@ func (m *Model) updateContractDraftProcess(event contractexec.DraftEvent) (tea.M
 	m.composer.SetValue("")
 	m.composer.Placeholder = "Describe a contract change, or use /contract accept…"
 	m.composer.Focus()
-	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath())})
+	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath(), m.taskOptions)})
 	m.notice = fmt.Sprintf("Contract draft r%d saved · review, revise, edit, or explicitly accept", draft.Generation)
 	m.syncContent()
 	return m, m.composer.Focus()
@@ -213,7 +213,7 @@ func (m *Model) updateManualContract(msg manualContractMsg) (tea.Model, tea.Cmd)
 	m.contractDraft = &draft
 	m.admittedContract = nil
 	m.contractAudit = false
-	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath())})
+	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath(), m.taskOptions)})
 	m.notice = fmt.Sprintf("Manual contract draft r%d validated and sealed", draft.Generation)
 	m.syncContent()
 	return m, m.composer.Focus()
@@ -260,6 +260,18 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 		m.notice = "Contract admission is unavailable"
 		return m, nil
 	}
+	task := m.taskForContract(loaded, m.taskOptions)
+	if err := plyexec.Validate(task); err != nil {
+		m.notice = "Contract cannot start · " + err.Error()
+		return m, nil
+	}
+	if err := m.armLoopSteering(task.Options); err != nil {
+		m.notice = "Contract cannot start · " + err.Error()
+		return m, nil
+	}
+	task.Steering = m.steeringPath
+	m.taskOptions.Check = loaded.Check
+	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.contractDraft = &loaded
 	m.running = true
 	m.job = jobPlyTask
@@ -270,10 +282,7 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.plyEvents = m.contracts.Admit(ctx, contractexec.AdmitRequest{
-		Task: plyexec.TaskRequest{
-			Dir: m.workspace, Goal: loaded.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
-			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName, Options: m.taskOptions,
-		},
+		Task:  task,
 		Draft: loaded, Store: m.contractStore, ExpectedDraftSHA256: shown,
 	})
 	m.syncContent()
@@ -293,6 +302,18 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 		m.notice = "Contract cannot run · " + err.Error()
 		return m, nil
 	}
+	task := m.taskForContract(loaded, m.taskOptions)
+	if err := plyexec.Validate(task); err != nil {
+		m.notice = "Contract cannot start · " + err.Error()
+		return m, nil
+	}
+	if err := m.armLoopSteering(task.Options); err != nil {
+		m.notice = "Contract cannot start · " + err.Error()
+		return m, nil
+	}
+	task.Steering = m.steeringPath
+	m.taskOptions.Check = loaded.Check
+	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.admittedContract = &loaded
 	m.contractDraft = nil
 	m.screen = screenAsk
@@ -307,20 +328,22 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 	m.notice = "Rechecking the sealed admission · Ply starts only if it matches"
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	options := m.taskOptions
-	options.IntentContract = true
-	options.Check = loaded.Check
-	options.CheckAllCriteria = loaded.CheckAll
 	m.plyEvents = m.contracts.Run(ctx, contractexec.RunRequest{
-		Task: plyexec.TaskRequest{
-			Dir: m.workspace, Goal: loaded.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
-			Skills: append([]string(nil), loaded.Skills...), Toolbox: loaded.Toolbox, Model: m.modelName,
-			Options: options,
-		},
+		Task:  task,
 		Draft: loaded, Store: m.contractStore, Guidance: strings.TrimSpace(guidance),
 	})
 	m.syncContent()
 	return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
+}
+
+func (m *Model) taskForContract(draft contractexec.Draft, options plyexec.TaskOptions) plyexec.TaskRequest {
+	options.IntentContract = true
+	options.Check = draft.Check
+	options.CheckAllCriteria = draft.CheckAll
+	return plyexec.TaskRequest{
+		Dir: m.workspace, Goal: draft.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
+		Skills: append([]string(nil), draft.Skills...), Toolbox: draft.Toolbox, Model: m.modelName, Options: options,
+	}
 }
 
 func (m *Model) openContract() (tea.Model, tea.Cmd) {
@@ -340,6 +363,8 @@ func (m *Model) openContract() (tea.Model, tea.Cmd) {
 		} else {
 			m.admittedContract = &loaded
 		}
+		m.taskOptions.Check = loaded.Check
+		m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	}
 	m.screen = screenContract
 	m.composer.SetValue("")
@@ -360,12 +385,16 @@ func (m *Model) restoreContractState() {
 	if status == "draft" {
 		m.contractDraft = &loaded
 		m.admittedContract = nil
+		m.taskOptions.Check = loaded.Check
+		m.taskOptions.CheckAllCriteria = loaded.CheckAll
 		m.screen = screenContract
 		m.notice = "Session verified · unadmitted contract draft restored · Ply has not started"
 		return
 	}
 	m.admittedContract = &loaded
 	m.contractDraft = nil
+	m.taskOptions.Check = loaded.Check
+	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.notice = "Local admitted revision restored · its sealed admission is reverified before any retry"
 }
 
@@ -392,7 +421,7 @@ func (m *Model) renderContract(width int) string {
 	rows := []string{
 		t.hero.Render("Outcome contract") + "  " + t.warning.Render(status),
 		t.faint.Render(fmt.Sprintf("revision %d · press a for audit details", draft.Generation)),
-		"", body, "", contractExecutionPolicy(*draft),
+		"", body, "", contractExecutionPolicy(*draft, m.taskOptions),
 	}
 	if m.contractAudit {
 		rows = append(rows, "", t.faint.Render(ansi.Truncate(safeText(path), max(12, width-4), "…")), "", contractBindings(*draft))
@@ -403,7 +432,7 @@ func (m *Model) renderContract(width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func contractDraftCard(draft contractexec.Draft, previous *contractexec.Draft, path string) string {
+func contractDraftCard(draft contractexec.Draft, previous *contractexec.Draft, path string, policies ...plyexec.TaskOptions) string {
 	contract, _, _, err := contractexec.Parse(string(draft.Contract))
 	if err != nil {
 		return "CONTRACT DRAFT INVALID\n" + err.Error()
@@ -412,7 +441,7 @@ func contractDraftCard(draft contractexec.Draft, previous *contractexec.Draft, p
 	if previous != nil && draft.OutcomeID != "" && previous.OutcomeID == draft.OutcomeID {
 		change = contractSemanticChanges(*previous, draft)
 	}
-	return fmt.Sprintf("DRAFT r%d · NOT ADMITTED\n%s\nEdit: press e in Contract Review\nAudit: press a\n\n%s\n\n%s", draft.Generation, change, safeText(contractexec.RenderSummary(contract)), contractExecutionPolicy(draft))
+	return fmt.Sprintf("DRAFT r%d · NOT ADMITTED\n%s\nEdit: press e in Contract Review\nAudit: press a\n\n%s\n\n%s", draft.Generation, change, safeText(contractexec.RenderSummary(contract)), contractExecutionPolicy(draft, policies...))
 }
 
 func contractSemanticChanges(before, after contractexec.Draft) string {
@@ -462,7 +491,7 @@ func contractBindings(draft contractexec.Draft) string {
 		draft.DraftSHA256, draft.RecordedDraftSHA256, draft.OutcomeID, revision, admission, draft.ContractSHA256, draft.CheckSHA256, draft.CompilerEvidenceSHA256))
 }
 
-func contractExecutionPolicy(draft contractexec.Draft) string {
+func contractExecutionPolicy(draft contractexec.Draft, policies ...plyexec.TaskOptions) string {
 	tools := "full shell"
 	if strings.TrimSpace(draft.Toolbox) != "" {
 		tools = "toolbox " + draft.Toolbox
@@ -484,7 +513,13 @@ func contractExecutionPolicy(draft contractexec.Draft) string {
 	if len(draft.Skills) > 0 {
 		skills = strings.Join(draft.Skills, ", ")
 	}
-	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nBrief skills: %s", draft.Intent, draft.Workspace, tools, check, authority, skills))
+	pursuit := "review · one Ply invocation after admission"
+	if len(policies) > 0 && policies[0].Loop {
+		cycles := plyexec.LoopCycleBudget(policies[0])
+		turns := plyexec.LoopTurnBudget(policies[0])
+		pursuit = fmt.Sprintf("loop · this invocation · cycles=%s · turns=%s", cycles, turns)
+	}
+	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nBrief skills: %s\nPursuit: %s", draft.Intent, draft.Workspace, tools, check, authority, skills, pursuit))
 }
 
 func failureDetail(code int, err error) string {

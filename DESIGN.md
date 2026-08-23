@@ -57,7 +57,11 @@ those exact bytes in the next user message to Ply. Every Ply verifier receipt na
 checks request folds, event sequence, and the exact sealed record prefixes.
 Autonomy is explicit product language: `quick` uses the direct-Ply seam for
 immediate work without contract review, while `review` negotiates and admits the durable
-contract first. `/contract off` and `-contract=false` remain compatibility
+contract first. `loop` uses that same admission and exactly one existing Ply
+invocation, requiring a literal verifier; omitted cycles become Ply's
+unbounded rejection budget and omitted turns become an explicit finite 50.
+It is invocation-scoped runtime policy, not a daemon, retry supervisor,
+crash-resume promise, new event authority, or second tool loop. `/contract off` and `-contract=false` remain compatibility
 aliases rather than the primary mental model.
 
 The TUI can yield the terminal to the operator's `$SHELL` or
@@ -65,7 +69,7 @@ The TUI can yield the terminal to the operator's `$SHELL` or
 default task work phase executes the equivalent of:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [POLICY...] -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL...] [-steer FILE] [POLICY...] -- GOAL
 ```
 
 With a `BENCH_TOOLS` directory, `-t DIR` replaces `-sh`; selected procedures
@@ -76,6 +80,14 @@ later actions or claims written before the result existed. Bench neither
 reimplements nor weakens that rule: it renders stderr as visible tool evidence
 and stdout as the answer. Because an unchecked Ply exit zero means only that
 the model stopped, the UI never calls that outcome done or passed.
+For an interactive Loop invocation, Bench creates one mode-0600 regular file
+beside the session and passes its path literally through Ply's public
+`-steer` option. The TUI appends complete UTF-8 guidance lines with ordinary
+`O_APPEND` writes. Ply reads newly appended lines immediately before an Ask
+turn and records them as part of that ordinary user message. It never treats
+them as contract amendments, approval grants, tool changes, or verifier
+changes. No socket, queue daemon, private command language, or Bench-owned
+turn protocol is introduced.
 `-check COMMAND` deliberately opts an open task into a shell-backed verifier;
 Bench passes that command as one literal argument and displays it through
 `/status`. A contract criterion uses judge `check` only to propose that the
@@ -86,7 +98,8 @@ the interactive user explicitly accepts every pending criterion. The separate
 operator-only `-check-all` policy binds the exact check into the contract
 envelope, seals every parsed criterion ID in `bench.judge-map/v1` before Ply,
 then requires a strictly matching sealed Ply receipt before a durable
-`bench.contract-result/v2` may say complete. `/continue`
+Review `bench.contract-result/v2` or Loop `bench.contract-result/v3` may say
+complete with the same judge-map and receipt bindings. `/continue`
 instead begins a revision with Ply's public `-B` behavior so a retained passing
 check cannot suppress requested work. Bench does
 not infer authority from shell text, skills, or model prose. `-effort`, `-cycles`,
@@ -95,6 +108,9 @@ not infer authority from shell text, skills, or model prose. `-effort`, `-cycles
 leaves Ply's defaults in charge. Contracted compaction is rejected until
 successor lineage can be independently verified; direct `-contract=false`
 work retains Ply's existing compaction behavior.
+Loop's descriptive pursuit, budget, and terminal-reason fields are sealed in
+`bench.contract-result/v3`; the existing Review result v1/v2 bodies remain
+unchanged.
 
 Consequential open questions and ungranted approvals stop before Ply receives
 full-shell authority. The user's answer is composed with the full original

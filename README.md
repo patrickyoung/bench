@@ -4,7 +4,7 @@ A modern terminal workbench for getting open tasks done with Ask and ordinary
 tools, then promoting recurring work into agents when it deserves a durable
 design.
 
-The default loop is **Intent → Contract → Task ↔ Tools**: one schema-bound Ask
+The default workflow is **Intent → Contract → Task ↔ Tools**: one schema-bound Ask
 turn compiles the user's outcome into visible deliverables, invariants,
 acceptance evidence, approval boundaries, assumptions, questions, and limits;
 then `ply` composes Ask with programs in the current workspace. The contract,
@@ -65,7 +65,7 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
-/mode quick|review      choose immediate work or contract negotiation
+/mode quick|review|loop choose immediate work, contract negotiation, or verifier pursuit
 /contract               reopen the durable draft or admitted revision
 /contract on|off        compatibility aliases for review/quick
 /contract edit          edit the proposed JSON with $VISUAL/$EDITOR
@@ -117,7 +117,15 @@ complete flow offline with fake filters.
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
 before work. `quick` starts immediately with the current tool grant and is for
-work where you choose to skip contract review. `/contract on|off` and `-contract=true|false`
+work where you choose to skip contract review. `loop` negotiates once, then
+lets one foreground Ply invocation keep trying until its configured check
+accepts or a finite turn bound, explicit cycle bound, failure, context limit,
+or interrupt stops it. Loop requires `-check`; it does not imply `-check-all`,
+survive process restart, or add a Bench scheduler. While a TUI Loop is running,
+ordinary composer text is appended to a controller-created regular file and
+Ply consumes complete UTF-8 lines at model-turn boundaries as implementation
+guidance. That channel cannot change the admitted contract, tools, approvals,
+or verifier. `/contract on|off` and `-contract=true|false`
 remain compatibility aliases for `review|quick`; new use should prefer
 `/mode` and `-mode`.
 The compiler receives the exact user intent, configured verifier, selected
@@ -141,7 +149,10 @@ The contract contains no generated shell command. After Ply stops, Bench seals
 coverage, never authority. With an explicit operator `-check-all` admission,
 Bench first seals `bench.judge-map/v1`, strictly matches Ply's accepted verifier
 receipt, and seals `bench.contract-result/v2`; only that path may automatically
-complete a contracted outcome. A consequential open question or ungranted approval
+complete a contracted outcome. Invocation-scoped Loop runs seal the same verdict
+and evidence fields plus their effective budgets and terminal reason as
+`bench.contract-result/v3`; Review continues to emit unchanged v1/v2 records.
+A consequential open question or ungranted approval
 stops before work. The next reply is compiled with the full original intent,
 exact questions/approvals, and the user's answer; a short answer never replaces
 the requested outcome.
@@ -192,13 +203,19 @@ bench contract accept -C . -f .bench/sessions/gallery.jsonl \
 
 # Explicitly retry an already admitted revision without recompiling it.
 bench contract run -C . -f .bench/sessions/gallery.jsonl
+
+# Pursue the admitted verifier in one invocation. Omitted cycles become
+# unbounded rejections; omitted turns remain explicitly bounded at 50.
+bench contract run -C . -f .bench/sessions/gallery.jsonl -mode loop
 ```
 
 `bench run` with its default `-mode review` is the filter-friendly shortcut
 for drafting: it writes the draft path to stdout, explains the next step on
 stderr, returns 2 (pending admission), and never starts Ply. Use
 `bench run -mode quick` when an immediate, non-negotiated Ply run is
-actually intended.
+actually intended. `bench run -mode loop -check COMMAND` still drafts and
+exits 2; after inspection, `bench contract accept ... -mode loop` performs the
+single bounded verifier-pursuit invocation.
 
 | Stage | Existing program or boundary |
 |---|---|
@@ -223,7 +240,7 @@ equivalent public process with the canonical admitted contract included in
 `GOAL`:
 
 ```sh
-ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [POLICY ...] -- GOAL
+ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [-steer FILE] [POLICY ...] -- GOAL
 ```
 
 Bench starts both filters directly. The goal is one literal argv value; it is never
@@ -345,6 +362,7 @@ go test ./... 2>&1 | bench run 'fix the smallest root cause' >draft-path 2>contr
 build.log | bench ask 'explain the first useful failure' | less
 bench run -t .bench/tools -s go-review -f review.jsonl 'review this tree'
 bench run -mode quick -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
+bench contract run -C . -f .bench/sessions/fix.jsonl -mode loop -cycles 0 -turns 50
 ```
 
 For `bench ask` and direct `bench run -mode quick`, piped bytes are stdin

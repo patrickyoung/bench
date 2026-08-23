@@ -379,6 +379,10 @@ func (r Runner) Run(ctx context.Context, request RunRequest) <-chan plyexec.Even
 			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: errors.New("admitted contract run needs ask and ply")})
 			return
 		}
+		if err := plyexec.Validate(request.Task); err != nil {
+			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: request.Task.Session})
+			return
+		}
 		if request.Store == nil {
 			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: errors.New("admitted contract run needs a durable store")})
 			return

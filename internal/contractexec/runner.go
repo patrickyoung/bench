@@ -131,6 +131,8 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	emit(ctx, events, plyexec.Event{Contract: renderWithSkills(contract, digest, req.Skills), ContractDigest: digest})
 	if len(contract.OpenQuestions) > 0 || len(contract.Approvals) > 0 {
 		result := pendingResult(contract, "sha256:"+digest, req.Options.Check != "", "needs_decision")
+		result = withPursuit(result, req.Options)
+		setStopReason(&result, req.Options, "needs_decision")
 		if err := r.recordResult(ctx, req.Session, result); err != nil {
 			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 			return
@@ -196,9 +198,10 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 			}
 		}
 	}
-	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", admitted, judgeMapSHA, receipt, *terminal)
+	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", admitted, judgeMapSHA, receipt, req.Options, *terminal)
 	if receiptErr != nil {
 		result.Status = "failed"
+		setStopReason(&result, req.Options, "verifier_receipt_unverified")
 	}
 	// The original request session is controller-owned input and already holds
 	// the compiled contract. Ply's session-out path is worker-visible control
@@ -262,7 +265,9 @@ func (r Runner) recordResult(ctx context.Context, session string, result plyexec
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	kind := "bench.contract-result/v1"
-	if result.JudgeMapSHA256 != "" {
+	if result.Pursuit != "" {
+		kind = "bench.contract-result/v3"
+	} else if result.JudgeMapSHA256 != "" {
 		kind = "bench.contract-result/v2"
 	}
 	if err := r.Ask.Record(recordCtx, askexec.RecordRequest{
@@ -316,8 +321,9 @@ func pendingResult(contract Contract, contractID string, checkConfigured bool, s
 	return result
 }
 
-func aggregate(contract Contract, contractID string, checkConfigured bool, admitted []string, judgeMapSHA string, receipt *plyexec.VerifierReceiptRef, terminal plyexec.Event) plyexec.ContractResult {
+func aggregate(contract Contract, contractID string, checkConfigured bool, admitted []string, judgeMapSHA string, receipt *plyexec.VerifierReceiptRef, options plyexec.TaskOptions, terminal plyexec.Event) plyexec.ContractResult {
 	result := pendingResult(contract, contractID, checkConfigured, "")
+	result = withPursuit(result, options)
 	result.WorkerExitCode = terminal.ExitCode
 	result.JudgeMapSHA256 = judgeMapSHA
 	result.VerifierReceipt = receipt
@@ -348,15 +354,36 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 	switch {
 	case errors.Is(terminal.Err, context.Canceled):
 		result.Status = "interrupted"
+		setStopReason(&result, options, "interrupted")
 	case terminal.Err == nil && terminal.ExitCode == 0 && len(result.Outstanding) == 0 && receipt != nil:
 		result.Status = "complete"
+		setStopReason(&result, options, "verifier_accepted")
 	case terminal.Err == nil && terminal.ExitCode == 0:
 		result.Status = "review_required"
+		setStopReason(&result, options, "verifier_accepted_review_required")
 	case terminal.ExitCode == 2:
 		result.Status = "not_done"
+		setStopReason(&result, options, "ply_not_done")
 	default:
 		result.Status = "failed"
+		setStopReason(&result, options, "ply_failed")
 	}
+	return result
+}
+
+func setStopReason(result *plyexec.ContractResult, options plyexec.TaskOptions, reason string) {
+	if options.Loop {
+		result.StopReason = reason
+	}
+}
+
+func withPursuit(result plyexec.ContractResult, options plyexec.TaskOptions) plyexec.ContractResult {
+	if !options.Loop {
+		return result
+	}
+	result.Pursuit = "loop-this-invocation"
+	result.CycleBudget = plyexec.LoopCycleBudget(options)
+	result.TurnBudget = plyexec.LoopTurnBudget(options)
 	return result
 }
 
