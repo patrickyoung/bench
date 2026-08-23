@@ -44,14 +44,16 @@ advertise further delegation.
 ## Non-negotiable boundary
 
 The TUI does not become a model client, an agent runtime, or a shell
-implementation. It composes one native structured-output Ask turn before open
-work. That turn receives the exact intent, configured verifier, piped evidence,
+implementation. It composes native structured-output Ask turns to propose and
+revise a durable contract before open work. Those turns receive the exact intent, configured verifier, piped evidence,
 and a bounded read-only workspace inventory, and returns a small canonical
 outcome contract. The contract contains no executable command. Selected Brief
 skills are composed into the compiler policy and then passed again to Ply:
-they shape domain procedure but never verdicts. The contract is rendered to
-the operator, sealed as a typed compiled record, and repeated in the next user
-message to Ply. Every Ply verifier receipt names its digest, so Ask replay
+they shape domain procedure but never verdicts. The proposal is saved as
+ordinary editable JSON and sealed as a typed proposal record. Natural-language
+revision stays in Ask; manual revision stays in `$EDITOR`. Neither invokes
+Ply. Only a literal user admission publishes an immutable revision and repeats
+those exact bytes in the next user message to Ply. Every Ply verifier receipt names its digest, so Ask replay
 checks request folds, event sequence, and the exact sealed record prefixes.
 `/contract off` and `-contract=false` retain an explicit direct-Ply seam.
 
@@ -114,12 +116,12 @@ identity. Ambient full-shell check-all therefore assumes a non-malicious
 same-user worker. Adversarial execution needs Draft's admitted May+Cage
 boundary with controller evidence outside Cage write roots.
 
-The same seam is available without a TUI. `bench run` and automatically
-redirected plain invocations pass stdin to Ply, copy stdout and stderr to the
-same streams unchanged, and return its exit status. `bench ask` does the same
-for direct Ask. `bench tui` is the explicit override when terminal detection
-is unusual. The interactive and headless surfaces therefore differ in
-presentation, not process semantics.
+The same seam is available without a TUI. `bench contract draft`, `revise`,
+`show`, `edit`, `import`, `accept`, and `run` use the same contractexec and file-store APIs as the
+Contract Review screen. Default `bench run` creates a proposal and exits 2
+without Ply; `bench run -contract=false` preserves the direct filter seam.
+`bench ask` remains direct Ask. `bench tui` is the explicit presentation
+override; there is no TUI-only contract engine.
 
 ## Distribution is a pinned composition
 

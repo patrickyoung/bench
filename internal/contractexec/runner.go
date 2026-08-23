@@ -15,7 +15,10 @@ import (
 )
 
 type Runner struct {
-	Ask askexec.Client
+	Ask interface {
+		askexec.Client
+		askexec.AdmissionReader
+	}
 	Ply plyexec.Worker
 }
 
@@ -29,6 +32,16 @@ func (r Runner) Work(ctx context.Context, req plyexec.TaskRequest) <-chan plyexe
 	if !req.Options.IntentContract {
 		return r.Ply.Work(ctx, req)
 	}
+	events := make(chan plyexec.Event, 1)
+	events <- plyexec.Event{Done: true, ExitCode: 1, Err: errors.New("contract work requires a durable proposal and explicit admission")}
+	close(events)
+	return events
+}
+
+// compileAndWork retains the old v2 producer only for compatibility tests of
+// historic records. No public runtime path calls it; new contracted work must
+// pass through Compile and Admit.
+func (r Runner) compileAndWork(ctx context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
 	events := make(chan plyexec.Event, 16)
 	go r.run(ctx, req, events)
 	return events
@@ -108,6 +121,12 @@ func (r Runner) run(ctx context.Context, req plyexec.TaskRequest, events chan<- 
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: fmt.Errorf("record outcome contract: %w", err), Session: req.Session})
 		return
 	}
+	r.runAccepted(ctx, req, contract, canonical, contractDigest, contractID, events)
+}
+
+// runAccepted is the single transition from an admitted, immutable contract
+// into workspace work.
+func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contract Contract, canonical, contractDigest, contractID string, events chan<- plyexec.Event) {
 	digest := strings.TrimPrefix(contractID, "sha256:")
 	emit(ctx, events, plyexec.Event{Contract: renderWithSkills(contract, digest, req.Skills), ContractDigest: digest})
 	if len(contract.OpenQuestions) > 0 || len(contract.Approvals) > 0 {
@@ -381,6 +400,10 @@ func verifierCandidateSHA(candidate string) string {
 }
 
 func envelopeID(contract, intent, evidence, check string, checkAll bool, skills []string) string {
+	return envelopeIDFromDigests(contract, sha256Text(intent), sha256Text(evidence), sha256Text(check), checkAll, skills)
+}
+
+func envelopeIDFromDigests(contract, intentSHA, evidenceSHA, checkSHA string, checkAll bool, skills []string) string {
 	body, _ := json.Marshal(struct {
 		Version  int             `json:"version"`
 		Contract json.RawMessage `json:"contract"`
@@ -390,8 +413,8 @@ func envelopeID(contract, intent, evidence, check string, checkAll bool, skills 
 		CheckAll bool            `json:"check_all"`
 		Skills   []string        `json:"skills"`
 	}{
-		Version: 1, Contract: json.RawMessage(contract), Intent: sha256Text(intent),
-		Evidence: sha256Text(evidence), Check: sha256Text(check), CheckAll: checkAll, Skills: append([]string{}, skills...),
+		Version: 1, Contract: json.RawMessage(contract), Intent: intentSHA,
+		Evidence: evidenceSHA, Check: checkSHA, CheckAll: checkAll, Skills: append([]string{}, skills...),
 	})
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])

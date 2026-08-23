@@ -90,32 +90,57 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 	if len(args) == 0 {
 		m.composer.SetValue("")
-		if m.taskOptions.IntentContract {
-			m.notice = "Outcome contracts on · Bench compiles intent before Ply works"
-		} else {
+		if !m.taskOptions.IntentContract {
 			m.notice = "Outcome contracts off · intent goes directly to Ply"
+			m.syncContent()
+			return m, nil
 		}
-		m.syncContent()
-		return m, nil
+		return m.openContract()
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /contract on|off"
+		m.notice = "usage: /contract [on|off|accept|edit|import|run|amend|cancel]"
 		m.syncContent()
 		return m, nil
 	}
 	switch strings.ToLower(args[0]) {
 	case "on":
 		m.taskOptions.IntentContract = true
-		m.notice = "Outcome contracts on · the next intent will be compiled and logged before work"
+		m.notice = "Outcome contracts on · the next intent becomes an editable draft; Ply waits for /contract accept"
 	case "off":
 		m.taskOptions.IntentContract = false
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
+		m.screen = screenAsk
+		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 		m.notice = "Outcome contracts off · the next intent will go directly to Ply"
+	case "accept", "admit":
+		m.composer.SetValue("")
+		return m.acceptContractDraft()
+	case "edit":
+		m.composer.SetValue("")
+		return m.editContract()
+	case "import":
+		m.composer.SetValue("")
+		if m.contractDraft == nil {
+			m.notice = "No editable contract draft is available to import"
+			break
+		}
+		return m.reloadContractDraft()
+	case "run":
+		m.composer.SetValue("")
+		return m.runAdmittedContract("")
+	case "amend":
+		m.composer.SetValue("")
+		return m.openContract()
+	case "cancel":
+		m.composer.SetValue("")
+		m.screen = screenAsk
+		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
+		m.notice = "Contract retained · /contract reopens it"
 	default:
-		m.notice = "usage: /contract on|off"
+		m.notice = "usage: /contract [on|off|accept|edit|import|run|amend|cancel]"
 		m.syncContent()
 		return m, nil
 	}
@@ -324,7 +349,7 @@ func (m *Model) statusReport() string {
 	}
 	contract := "Off · intent goes directly to Ply"
 	if m.taskOptions.IntentContract {
-		contract = "On · visible contract before workspace work"
+		contract = "On · durable editable draft; explicit admission before workspace work"
 	}
 	check := "None · completion will require review"
 	if m.taskOptions.Check != "" {
@@ -345,6 +370,7 @@ func (m *Model) statusReport() string {
 		"Check: " + check,
 		"Brief skills: " + skills,
 		"Session evidence: " + m.session,
+		"Contract files: " + m.contractStore.DraftPath(),
 		"Subagent evidence: " + m.subagentsPath(),
 	}, "\n")
 }
@@ -361,7 +387,9 @@ func (m *Model) taskPolicyDisplay() string {
 			parts[0] += " · judges all contract criteria"
 		}
 	}
-	if m.pendingContract != nil {
+	if m.contractDraft != nil {
+		parts = append(parts, "contract draft pending admission")
+	} else if m.pendingContract != nil {
 		parts = append(parts, "review pending")
 	} else if m.taskOptions.Force {
 		parts = append(parts, "continue armed")

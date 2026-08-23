@@ -126,16 +126,9 @@ type verifierBody struct {
 }
 
 func selectAcceptedVerifier(data []byte, judgeMapSHA256, contractID, verifier, candidateSHA256, directory string) (VerifierReceipt, error) {
-	var events []replayEvent
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var event replayEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			return VerifierReceipt{}, fmt.Errorf("decode Ask replay event: %w", err)
-		}
-		events = append(events, event)
+	events, err := decodeReplayEvents(data)
+	if err != nil {
+		return VerifierReceipt{}, err
 	}
 	if len(events) < 2 {
 		return VerifierReceipt{}, fmt.Errorf("verified Ask replay has no terminal verifier receipt")
@@ -181,6 +174,21 @@ func selectAcceptedVerifier(data []byte, judgeMapSHA256, contractID, verifier, c
 		ContractID: body.ContractID, Phase: body.Phase, CandidateSHA256: body.CandidateSHA256,
 		Verifier: body.Verifier, VerifierSHA256: body.VerifierSHA256, Outcome: body.Outcome, ExitCode: body.ExitCode,
 	}, nil
+}
+
+func decodeReplayEvents(data []byte) ([]replayEvent, error) {
+	var events []replayEvent
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event replayEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, fmt.Errorf("decode Ask replay event: %w", err)
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }
 
 func sealedNote(events []replayEvent, i int, kind string) bool {

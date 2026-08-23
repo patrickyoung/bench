@@ -65,12 +65,17 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
-/contract on|off        enable or bypass intent compilation for later work
+/contract               reopen the durable draft or admitted revision
+/contract on|off        enable or bypass contract negotiation
+/contract edit          edit the proposed JSON with $VISUAL/$EDITOR
+/contract import        validate and seal changes from another JSON editor
+/contract accept        admit the reviewed draft, then start Ply
+/contract run           explicitly retry the admitted revision
 /check -- COMMAND       set a verifier for the next work outcome
 /check all              admit that verifier as judge of every criterion
 /check off              clear the pending verifier
 /accept                 accept every criterion after reviewing the result
-/continue               revise a pending result even if its check already passes
+/continue               retry work under the same admitted contract
 /skills                 browse procedures that shape contracts and work
 /agent [description]    promote recurring work into a checked design
 /shell                  open $SHELL in the workspace; exit returns
@@ -82,10 +87,12 @@ The prompt accepts explicit, discoverable commands:
 
 The task screen teaches the same flow it executes:
 
-1. **UNDERSTAND** — Bench shows the outcome contract before workspace work.
-2. **WORK** — a rolling **WORKING · LIVE** panel shows commands and real output
+1. **NEGOTIATE** — Ask proposes durable JSON. Revise it in natural language or
+   edit it directly; Ply has not started.
+2. **ADMIT** — `/contract accept` seals the exact reviewed revision.
+3. **WORK** — a rolling **WORKING · LIVE** panel shows commands and real output
    as Ply observes them; the completed **WORK LOG** stays in the transcript.
-3. **VERIFY** — a durable **OUTCOME** card says complete, ready for review,
+4. **VERIFY** — a durable **OUTCOME** card says complete, ready for review,
    decision needed, or not accepted, and names the next useful interaction.
 
 `/status` adds a readable status card to the transcript instead of hiding the
@@ -113,9 +120,15 @@ Brief skills, a bounded read-only workspace inventory, and piped evidence.
 Skills supply reusable domain procedure and review expectations to both the
 compiler and Ply; they never replace the verifier or count as evidence. Its JSON Schema travels
 through Ask's native structured-output boundary. The validated canonical
-contract is shown before work and repeated verbatim in Ply's first user
-message, so later request digests bind the work to that exact contract and
-its compilation is also a sealed `bench.contract/v2` record. Ply binds every
+contract is written to an ordinary editable `draft.json` under
+`.bench/contracts`, and a sealed `bench.contract-proposal/v1` snapshot records
+each generated or manual proposal. Natural-language changes use another Ask
+schema turn. `bench contract edit` or `/contract edit` uses `$VISUAL` or
+`$EDITOR`; changes made by another JSON editor become admissible only after
+`bench contract import` or `/contract import` validates and seals them.
+Neither path can start Ply. `/contract accept` re-reads the displayed exact
+draft digest, publishes an immutable revision, seals `bench.contract/v3`, and
+only then passes those exact admitted bytes to Ply. Ply binds every
 sealed `ply.verifier/v1` receipt to the contract envelope ID. `ask replay -check`
 verifies conversation folds, event sequence, and those record-prefix seals.
 The contract contains no generated shell command. After Ply stops, Bench seals
@@ -128,7 +141,9 @@ stops before work. The next reply is compiled with the full original intent,
 exact questions/approvals, and the user's answer; a short answer never replaces
 the requested outcome.
 After inspection, `/accept` seals the interactive user's acceptance; `/continue`
-starts a revision even when the retained check already passes. The acceptance
+starts another implementation attempt under the same admitted contract even
+when the retained check already passes. Amend the outcome itself by reopening
+`/contract`; the old revision remains immutable. The acceptance
 record binds the contract ID, exact contract-result digest, and accepted
 criterion IDs. Headless work remains review-required/exit 2 by default.
 Automation may use `-check COMMAND -check-all` to make the explicit blanket
@@ -146,6 +161,48 @@ explicit direct-Ply compatibility path keeps its ordinary checked-success
 semantics. Promote work whose
 definition of done needs design and review with `/agent` instead.
 
+### The same contract workflow from a shell
+
+The TUI calls the same controller and file-store API exposed by these CLI
+commands; it does not own a private contract format or a second agent loop:
+
+```sh
+# Compile and stop. stdout is the editable draft path; Ply has not started.
+draft_path=$(bench contract draft -C . -f .bench/sessions/gallery.jsonl \
+  -s ascii-cinema 'create a high-quality ANSI poem gallery')
+
+# Inspect, revise with Ask, or edit the JSON with any Unix editor.
+bench contract show -C . -f .bench/sessions/gallery.jsonl >reviewed-draft.json
+bench contract revise -C . -f .bench/sessions/gallery.jsonl \
+  'require 120x40 output and a plain-text fallback'
+bench contract edit -C . -f .bench/sessions/gallery.jsonl
+# Or, after changing draft.json with another editor:
+bench contract import -C . -f .bench/sessions/gallery.jsonl
+
+# `show` emits the exact draft.json envelope and reports its matching digest.
+# That visible envelope includes intent, workspace, tools, check authority,
+# skills, evidence digest, and contract body. Admission requires its digest.
+bench contract accept -C . -f .bench/sessions/gallery.jsonl \
+  -expect sha256:DISPLAYED_DIGEST
+
+# Explicitly retry an already admitted revision without recompiling it.
+bench contract run -C . -f .bench/sessions/gallery.jsonl
+```
+
+`bench run` with its default `-contract=true` is the filter-friendly shortcut
+for drafting: it writes the draft path to stdout, explains the next step on
+stderr, returns 2 (pending admission), and never starts Ply. Use
+`bench run -contract=false` when an immediate, non-negotiated Ply run is
+actually intended.
+
+| Stage | Existing program or boundary |
+|---|---|
+| Generate or revise | Ask structured output, composed with selected Brief skills |
+| Inspect or edit | ordinary JSON plus `$VISUAL`/`$EDITOR` |
+| Record and restore | sealed Ask notes and `ask replay -check` |
+| Execute | unchanged Ply, after explicit admission only |
+| Verify | the existing literal check, judge map, and Ply receipts |
+
 Model choice follows the filters' existing convention. `-m provider/model`
 overrides `ASK_MODEL` at startup; `/model provider/model` switches future Ask,
 Ask + Ply, skill-refinement, draft-creation, and agent-build turns in the same
@@ -155,9 +212,10 @@ replayable. `/model default` restores the startup choice.
 ## Open tasks with Ask + tools
 
 The opening screen is a task composer, not an agent-requirements form. By
-default, `enter` first runs the structured contract turn in the same explicit
-session, then starts the equivalent public process with the canonical compiled
-contract included in `GOAL`:
+default, `enter` runs the structured contract turn in the same explicit
+session and opens Contract Review. Only explicit admission then starts the
+equivalent public process with the canonical admitted contract included in
+`GOAL`:
 
 ```sh
 ply -sh -C WORKSPACE -f SESSION [-m MODEL] [-s SKILL ...] [POLICY ...] -- GOAL
@@ -216,9 +274,9 @@ Ply's documented unbounded meaning. Contracted compaction is rejected until
 Bench can independently verify successor lineage; use `-contract=false` for
 Ply's existing compaction behavior. On that direct path, checked or compacting
 work reports the Ask session it actually used
-through a private `-session-out` control artifact. With contract compilation
-enabled, the contract turn has already created the session even when Ply's
-passing pre-check needs no worker turn. With contracts disabled, absence on a
+through a private `-session-out` control artifact. With contract negotiation
+enabled, the proposal turn has created the session, but Ply is not invoked
+until explicit admission. With contracts disabled, absence on a
 passing pre-check still means no model turn or session was created. Bench removes the
 artifact after reading it and directs later TUI work—including Ask-only
 turns—to any reported successor; stdout remains the answer and stderr remains
@@ -278,22 +336,23 @@ forces the alternate-screen interface when terminal detection is unusual:
 
 ```sh
 git diff | bench -m openai-codex/your-model 'review this patch'
-go test ./... 2>&1 | bench run 'fix the smallest root cause' >answer.md 2>tools.log
+go test ./... 2>&1 | bench run 'fix the smallest root cause' >draft-path 2>contract.log
 build.log | bench ask 'explain the first useful failure' | less
 bench run -t .bench/tools -s go-review -f review.jsonl 'review this tree'
-bench run -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
+bench run -contract=false -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
 ```
 
-For both headless commands, piped bytes are stdin evidence, the answer alone is
-stdout, progress or the Ply typescript is stderr, and the filter exit status is
-returned unchanged. Goals, model specs, skill names, and paths remain literal
+For `bench ask` and direct `bench run -contract=false`, piped bytes are stdin
+evidence and the answer alone is stdout. A negotiated `bench run` instead
+prints the durable draft path and exits 2 before Ply. Goals, model specs, skill names, and paths remain literal
 argv values; Bench never evaluates them as shell syntax.
 
 `/shell` temporarily gives the terminal to `$SHELL` in the workspace, then
 restores the TUI when that shell exits. It is deliberately operator-controlled
 and not inserted into model context or presented as Ask evidence. `ctrl+z` is
-the lighter Unix job-control path. In Design review, `e` opens `DESIGN.md` with
-`$VISUAL`, then `$EDITOR`, then `vi`, and automatically reruns `draft check`
+the lighter Unix job-control path. In Contract Review, `e` opens the current
+`draft.json`, validates it on return, and never mutates an admitted revision.
+In Design review, `e` opens `DESIGN.md` and automatically reruns `draft check`
 when the editor closes.
 
 When saved sessions exist, `bench` opens an explicit session picker. It does

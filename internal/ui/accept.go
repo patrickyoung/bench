@@ -30,6 +30,12 @@ func (m *Model) commandAccept(args []string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
+	if m.contractDraft != nil {
+		m.composer.SetValue("")
+		m.notice = "This is a contract draft · use /contract accept before work; /accept is only for reviewing results"
+		m.syncContent()
+		return m, nil
+	}
 	if m.pendingContract == nil {
 		m.composer.SetValue("")
 		m.notice = "Nothing is awaiting acceptance"
@@ -123,11 +129,13 @@ func (m *Model) commandContinue(args []string) (tea.Model, tea.Cmd) {
 	}
 	if m.taskOptions.Check == "" {
 		m.pendingContract = nil
-		m.notice = "Review released · describe the revision to continue"
+		m.continueContract = m.admittedContract != nil
+		m.notice = "Review released · describe implementation guidance to continue under the admitted contract"
 	} else {
 		m.pendingContract = nil
 		m.taskOptions.Force = true
-		m.notice = "Continue armed · describe the revision; work will run even if the current check already passes"
+		m.continueContract = m.admittedContract != nil
+		m.notice = "Continue armed · describe implementation guidance; the admitted contract stays unchanged"
 	}
 	m.composer.SetValue("")
 	m.syncContent()

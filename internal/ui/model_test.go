@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
 )
@@ -29,11 +30,59 @@ type fakeTask struct {
 	calls    int
 }
 
+type fakeNegotiator struct {
+	compileEvents chan contractexec.DraftEvent
+	plyEvents     chan plyexec.Event
+	compileReqs   []contractexec.DraftRequest
+	admitReqs     []contractexec.AdmitRequest
+	runReqs       []contractexec.RunRequest
+	importReqs    []contractexec.ImportRequest
+	importDraft   contractexec.Draft
+	importErr     error
+}
+
+func (f *fakeNegotiator) Import(_ context.Context, req contractexec.ImportRequest) (contractexec.Draft, error) {
+	f.importReqs = append(f.importReqs, req)
+	return f.importDraft, f.importErr
+}
+
+func (f *fakeNegotiator) Compile(_ context.Context, req contractexec.DraftRequest) <-chan contractexec.DraftEvent {
+	f.compileReqs = append(f.compileReqs, req)
+	if f.compileEvents == nil {
+		f.compileEvents = make(chan contractexec.DraftEvent)
+	}
+	return f.compileEvents
+}
+
+func (f *fakeNegotiator) Admit(_ context.Context, req contractexec.AdmitRequest) <-chan plyexec.Event {
+	f.admitReqs = append(f.admitReqs, req)
+	if f.plyEvents == nil {
+		f.plyEvents = make(chan plyexec.Event)
+	}
+	return f.plyEvents
+}
+
+func (f *fakeNegotiator) Run(_ context.Context, req contractexec.RunRequest) <-chan plyexec.Event {
+	f.runReqs = append(f.runReqs, req)
+	if f.plyEvents == nil {
+		f.plyEvents = make(chan plyexec.Event)
+	}
+	return f.plyEvents
+}
+
 func (f *fakeTask) Work(_ context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
 	f.req = req
 	f.requests = append(f.requests, req)
 	f.calls++
 	return f.events
+}
+
+func armContractResultPresentation(m *Model) {
+	m.running = true
+	m.job = jobPlyTask
+	m.activeTaskIntent = strings.TrimSpace(m.composer.Value())
+	m.composer.SetValue("")
+	m.stdout.Reset()
 }
 
 type fakeRecorder struct {
@@ -83,6 +132,216 @@ func TestDefaultSubmitRunsReplayableTaskAndKeepsToolActivity(t *testing.T) {
 	}
 	if !strings.Contains(m.messages[1].text, "rg TODO") || !strings.Contains(m.notice, "no executable check") {
 		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestContractSubmitCreatesReviewDraftBeforeAnyPlyWork(t *testing.T) {
+	contracts := &fakeNegotiator{compileEvents: make(chan contractexec.DraftEvent)}
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	m := New(Config{
+		Task: task, Contracts: contracts, Session: sessionPath, DataDir: t.TempDir(), Workspace: "/work",
+		InitialPrompt: "make an excellent gallery", TaskOptions: plyexec.TaskOptions{IntentContract: true},
+	})
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || len(contracts.compileReqs) != 1 || task.calls != 0 || m.job != jobContractDraft {
+		t.Fatalf("compile=%d ply=%d job=%d cmd=%v", len(contracts.compileReqs), task.calls, m.job, cmd != nil)
+	}
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make an excellent gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence",
+		CheckSHA256: "sha256:empty", Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ = m.Update(contractDraftProcessEvent{Done: true, ExitCode: 0, Draft: &draft})
+	m = updated.(*Model)
+	if m.screen != screenContract || m.contractDraft == nil || task.calls != 0 || !strings.Contains(m.notice, "review, revise, edit") {
+		t.Fatalf("screen=%d draft=%v ply=%d notice=%q", m.screen, m.contractDraft != nil, task.calls, m.notice)
+	}
+	m.composer.SetValue("make mobile legibility explicit")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if len(contracts.compileReqs) != 2 || contracts.compileReqs[1].Current == nil || contracts.compileReqs[1].Instruction != "make mobile legibility explicit" || task.calls != 0 {
+		t.Fatalf("revision=%#v ply=%d", contracts.compileReqs, task.calls)
+	}
+}
+
+func TestMissingContractControllerFailsClosedBeforeTaskRunner(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, InitialPrompt: "build", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.calls != 0 || m.running || !strings.Contains(m.notice, "Ply has not started") {
+		t.Fatalf("calls=%d running=%v notice=%q", task.calls, m.running, m.notice)
+	}
+}
+
+func TestContractOffAllowsDirectWorkWhileRetainingDraft(t *testing.T) {
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.contractDraft = &contractexec.Draft{OutcomeID: "retained"}
+	m.composer.SetValue("/contract off")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	m.composer.SetValue("run directly")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if task.calls != 1 || task.req.Options.IntentContract || m.contractDraft == nil {
+		t.Fatalf("calls=%d options=%#v draft=%#v", task.calls, task.req.Options, m.contractDraft)
+	}
+}
+
+func TestContractAdmissionRefusesUnsentRevisionText(t *testing.T) {
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{Task: &fakeTask{}, Contracts: contracts, TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.screen = screenContract
+	m.contractDraft = &contractexec.Draft{OutcomeID: "draft"}
+	m.composer.SetValue("add mobile inspection")
+	updated, _ := m.Update(key("ctrl+s"))
+	m = updated.(*Model)
+	if len(contracts.admitReqs) != 0 || !strings.Contains(m.notice, "press Enter to revise") || m.composer.Value() == "" {
+		t.Fatalf("admissions=%d notice=%q text=%q", len(contracts.admitReqs), m.notice, m.composer.Value())
+	}
+}
+
+func TestContractAdmissionRefusesDraftChangedSinceDisplay(t *testing.T) {
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, Session: filepath.Join(t.TempDir(), "session.jsonl"),
+		DataDir: t.TempDir(), Workspace: "/work", TaskOptions: plyexec.TaskOptions{IntentContract: true},
+	})
+	shown, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence", CheckSHA256: "sha256:empty",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown, err = m.contractStore.MarkDraftRecorded(shown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.contractDraft = &shown
+	newer := shown
+	newer.Generation++
+	newer.Contract = []byte(strings.Replace(testContractJSON, "A complete gallery exists.", "A reviewed mobile gallery exists.", 1))
+	newer, err = m.contractStore.SaveDraftCAS(newer, shown.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err = m.contractStore.MarkDraftRecorded(newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := m.acceptContractDraft()
+	m = updated.(*Model)
+	if len(contracts.admitReqs) != 0 || m.contractDraft == nil || m.contractDraft.DraftSHA256 != newer.DraftSHA256 || !strings.Contains(m.notice, "changed since it was shown") {
+		t.Fatalf("admissions=%d displayed=%#v notice=%q", len(contracts.admitReqs), m.contractDraft, m.notice)
+	}
+}
+
+func TestContractAcceptanceIsDistinctAndStartsOnlyNegotiatorAdmission(t *testing.T) {
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: task, Contracts: contracts, Recorder: &fakeRecorder{}, Session: filepath.Join(t.TempDir(), "session.jsonl"),
+		DataDir: t.TempDir(), Workspace: "/work", TaskOptions: plyexec.TaskOptions{IntentContract: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence",
+		CheckSHA256: "sha256:empty", Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.contractDraft = &draft
+	m.screen = screenContract
+	m.composer.SetValue("/accept")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if len(contracts.admitReqs) != 0 || !strings.Contains(m.notice, "/contract accept") {
+		t.Fatalf("admissions=%d notice=%q", len(contracts.admitReqs), m.notice)
+	}
+	m.composer.SetValue("/contract accept")
+	updated, cmd := m.Update(key("enter"))
+	m = updated.(*Model)
+	if cmd == nil || len(contracts.admitReqs) != 1 || task.calls != 0 || contracts.admitReqs[0].ExpectedDraftSHA256 != draft.DraftSHA256 {
+		t.Fatalf("admissions=%#v task=%d cmd=%v", contracts.admitReqs, task.calls, cmd != nil)
+	}
+}
+
+func TestContinueUsesSameAdmittedContractWithoutRecompiling(t *testing.T) {
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	task := &fakeTask{events: make(chan plyexec.Event)}
+	m := New(Config{Task: task, Contracts: contracts, Session: filepath.Join(t.TempDir(), "session.jsonl"), DataDir: t.TempDir(), Workspace: "/work", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	draft := contractexec.Draft{Schema: 1, OutcomeID: "outcome", RevisionID: "sha256:revision", ContractID: "sha256:admission", Intent: "make gallery", Workspace: "/work", Contract: []byte(testContractJSON), CheckSHA256: "sha256:empty"}
+	m.admittedContract = &draft
+	m.pendingContract = &plyexec.ContractResult{ContractID: draft.ContractID, Status: "review_required", Outstanding: []plyexec.ContractCriterion{{ID: "quality", Judge: "human"}}}
+	m.composer.SetValue("/continue")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	m.composer.SetValue("strengthen the perspective and rerender")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if len(contracts.runReqs) != 1 || len(contracts.compileReqs) != 0 || contracts.runReqs[0].Draft.ContractID != draft.ContractID || contracts.runReqs[0].Guidance != "strengthen the perspective and rerender" {
+		t.Fatalf("runs=%#v compiles=%#v", contracts.runReqs, contracts.compileReqs)
+	}
+}
+
+func TestCanceledAdmissionReconcilesDurableAdmittedState(t *testing.T) {
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: &fakeNegotiator{}, Session: filepath.Join(t.TempDir(), "session.jsonl"),
+		DataDir: t.TempDir(), Workspace: "/work", TaskOptions: plyexec.TaskOptions{IntentContract: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 1, OutcomeID: "outcome", Generation: 1, Intent: "make gallery", Workspace: "/work",
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence", CheckSHA256: "sha256:empty",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := m.contractStore.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.contractStore.MarkAdmitted(admitted); err != nil {
+		t.Fatal(err)
+	}
+	m.contractDraft = &draft
+	m.running = true
+	m.job = jobPlyTask
+	updated, _ := m.updateTaskProcess(plyexec.Event{Done: true, ExitCode: 1, Err: context.Canceled})
+	m = updated.(*Model)
+	if m.contractDraft != nil || m.admittedContract == nil || m.admittedContract.ContractID != admitted.ContractID {
+		t.Fatalf("draft=%#v admitted=%#v notice=%q", m.contractDraft, m.admittedContract, m.notice)
+	}
+}
+
+const testContractJSON = `{"version":2,"outcome":"A complete gallery exists.","deliverables":["gallery.html"],"invariants":["source remains"],"criteria":[{"id":"quality","requirement":"gallery is legible","evidence":"direct inspection","judge":"human"}],"approvals":[],"assumptions":[],"open_questions":[],"limits":[]}`
+
+func TestContractDraftPresentationSanitizesTerminalControls(t *testing.T) {
+	body := strings.Replace(testContractJSON, "A complete gallery exists.", `A gallery \u001b[2J\u001b]8;;https://evil.invalid\u0007spoof\u001b]8;;\u0007 exists.`, 1)
+	draft := contractexec.Draft{
+		Generation: 1, OutcomeID: "outcome", DraftSHA256: "sha256:draft", Contract: []byte(body),
+		Intent: "create a gallery", Workspace: "/work/gallery", Toolbox: "/tools/safe", Check: "test -s gallery.html",
+		CheckAll: true, Skills: []string{"ascii-cinema"}, CompilerEvidenceSHA256: "sha256:evidence",
+	}
+	card := contractDraftCard(draft, "/tmp/\x1b[31m/draft.json")
+	if strings.ContainsRune(card, '\x1b') || strings.ContainsRune(card, '\x00') {
+		t.Fatalf("contract card retained terminal controls: %q", card)
+	}
+	for _, want := range []string{"create a gallery", "/work/gallery", "toolbox /tools/safe", "test -s gallery.html", "judges every contract criterion", "ascii-cinema", "sha256:evidence"} {
+		if !strings.Contains(card, want) {
+			t.Errorf("contract review omitted admission binding %q:\n%s", want, card)
+		}
 	}
 }
 
@@ -142,13 +401,12 @@ func TestContractedMixedEvidenceIsReadyForReviewNotDone(t *testing.T) {
 		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "make art",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "test -s gallery.html"},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
 	result := &plyexec.ContractResult{
 		Status: "review_required", CheckConfigured: true, CheckPassed: true, ProposedCheckCoverage: []string{"exists"},
 		Outstanding: []plyexec.ContractCriterion{{ID: "layout", Judge: "inspection"}, {ID: "quality", Judge: "human"}},
 	}
-	updated, _ = m.Update(plyProcessEvent{
+	updated, _ := m.Update(plyProcessEvent{
 		Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", ContractResult: result,
 		Text: "Ready for review · configured check passed 1/3 criteria · 2 require inspection/human review · session is replayable\n",
 	})
@@ -173,8 +431,8 @@ func TestContractedAllCheckProposalStillNeedsAcceptance(t *testing.T) {
 		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./..."},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", Text: "Ready for review · configured check passed · proposed coverage 2/2 criteria · 2 remain unaccepted · session is replayable\n", ContractResult: &plyexec.ContractResult{
 		Status: "review_required", CheckConfigured: true, CheckPassed: true, ProposedCheckCoverage: []string{"tests", "artifact"}, Outstanding: []plyexec.ContractCriterion{{ID: "tests", Judge: "check"}, {ID: "artifact", Judge: "check"}},
 	}})
@@ -190,8 +448,8 @@ func TestOperatorAdmittedCheckCompletionConsumesOneShotPolicy(t *testing.T) {
 		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./...", CheckAllCriteria: true},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Stream: plyexec.Stdout, Text: "Built it."})
 	m = updated.(*Model)
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0, Session: "/tmp/run.jsonl", Text: "Outcome complete · operator-admitted check passed 2/2 criteria · session is replayable\n", ContractResult: &plyexec.ContractResult{
@@ -275,8 +533,8 @@ func TestAcceptSealsInteractiveDecisionAndClearsCheck(t *testing.T) {
 		Task: task, Recorder: recorder, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "go test ./..."},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", ContractResult: &plyexec.ContractResult{
 		ContractID: "sha256:contract", Status: "review_required", CheckConfigured: true, CheckPassed: true,
 		ProposedCheckCoverage: []string{"tests"}, Outstanding: []plyexec.ContractCriterion{{ID: "tests", Judge: "check"}, {ID: "quality", Judge: "human"}},
@@ -303,12 +561,14 @@ func TestAcceptSealsInteractiveDecisionAndClearsCheck(t *testing.T) {
 
 func TestReviewBlocksOrdinaryWorkUntilExplicitContinue(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
 	m := New(Config{
-		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
+		Task: task, Contracts: contracts, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	m.admittedContract = &contractexec.Draft{ContractID: "sha256:contract", RevisionID: "sha256:revision", Intent: "build", Workspace: "/work", Check: "true", CheckSHA256: "sha256:check", Contract: []byte(testContractJSON)}
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
 		ContractID: "sha256:contract", Status: "review_required", Outstanding: []plyexec.ContractCriterion{{ID: "quality", Judge: "human"}},
 	}})
@@ -316,8 +576,8 @@ func TestReviewBlocksOrdinaryWorkUntilExplicitContinue(t *testing.T) {
 	m.composer.SetValue("fix the mobile layout")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if task.calls != 1 || !strings.Contains(m.notice, "Review pending") {
-		t.Fatalf("calls=%d notice=%q", task.calls, m.notice)
+	if task.calls != 0 || len(contracts.runReqs) != 0 || !strings.Contains(m.notice, "Review pending") {
+		t.Fatalf("calls=%d runs=%d notice=%q", task.calls, len(contracts.runReqs), m.notice)
 	}
 	m.composer.SetValue("/continue")
 	updated, _ = m.Update(key("enter"))
@@ -328,8 +588,8 @@ func TestReviewBlocksOrdinaryWorkUntilExplicitContinue(t *testing.T) {
 	m.composer.SetValue("fix the mobile layout")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if task.calls != 2 || !task.req.Options.Force || !strings.Contains(task.req.Goal, "fix the mobile layout") || m.taskOptions.Force {
-		t.Fatalf("calls=%d req=%#v retained force=%v", task.calls, task.req, m.taskOptions.Force)
+	if len(contracts.runReqs) != 1 || !contracts.runReqs[0].Task.Options.Force || contracts.runReqs[0].Guidance != "fix the mobile layout" || m.taskOptions.Force {
+		t.Fatalf("runs=%#v retained force=%v", contracts.runReqs, m.taskOptions.Force)
 	}
 }
 
@@ -339,8 +599,8 @@ func TestContractedTerminalWithoutResultFailsClosedInUI(t *testing.T) {
 		Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "build",
 		TaskOptions: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 0, Session: "/tmp/run.jsonl"})
 	m = updated.(*Model)
 	if !strings.Contains(m.notice, "without a sealed contract result") || strings.Contains(strings.ToLower(m.notice), "task done") || m.taskOptions.Check == "" {
@@ -351,8 +611,8 @@ func TestContractedTerminalWithoutResultFailsClosedInUI(t *testing.T) {
 func TestContractOpenQuestionPausesBeforeWork(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
 	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "print it", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, Session: "/tmp/run.jsonl", Text: "Needs decision · 1 open question(s) and 1 approval(s) must be resolved before work begins\n", ContractResult: &plyexec.ContractResult{
 		Status: "needs_decision", OpenQuestions: []string{"Which printer?"}, PendingApprovals: []string{"Send an external print job"}, Outstanding: []plyexec.ContractCriterion{{ID: "printed", Judge: "human"}},
 	}})
@@ -369,27 +629,8 @@ func TestContractOpenQuestionPausesBeforeWork(t *testing.T) {
 	if hint := m.defaultWorkHint(); !strings.Contains(hint, "decision pending") || !strings.Contains(hint, "reply normally") {
 		t.Fatalf("decision footer contradicts the outcome card: %q", hint)
 	}
-	m.composer.SetValue("Office printer")
-	updated, _ = m.Update(key("enter"))
-	m = updated.(*Model)
-	if task.calls != 2 {
-		t.Fatalf("task calls=%d", task.calls)
-	}
-	resolved := task.requests[1].Goal
-	for _, want := range []string{"print it", "Which printer?", "Send an external print job", "Do you approve?", "Office printer", "does not replace the original intent"} {
-		if !strings.Contains(resolved, want) {
-			t.Errorf("resolved intent missing %q:\n%s", want, resolved)
-		}
-	}
-	if resolved == "Office printer" {
-		t.Fatal("decision replaced the original intent")
-	}
-	updated, _ = m.Update(plyProcessEvent{Done: true, ExitCode: 2, ContractResult: &plyexec.ContractResult{
-		ContractID: "sha256:resolved", Status: "review_required", Outstanding: []plyexec.ContractCriterion{{ID: "printed", Judge: "human"}},
-	}})
-	m = updated.(*Model)
-	if m.pendingDecision != nil || m.pendingContract == nil {
-		t.Fatalf("decision=%#v review=%#v", m.pendingDecision, m.pendingContract)
+	if task.calls != 0 {
+		t.Fatalf("legacy decision presentation unexpectedly ran Ply: %d", task.calls)
 	}
 }
 
@@ -690,7 +931,7 @@ func TestContractCommandControlsOnlyFutureOutcomeCompilation(t *testing.T) {
 	m.composer.SetValue("/contract")
 	updated, _ := m.Update(key("enter"))
 	m = updated.(*Model)
-	if !strings.Contains(m.notice, "contracts on") {
+	if !strings.Contains(m.notice, "No durable contract") {
 		t.Fatalf("notice=%q", m.notice)
 	}
 	m.composer.SetValue("/contract off")
@@ -768,7 +1009,7 @@ func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(*Model)
 	assertTerminalBounds(t, m.View().Content, 80, 24)
-	if got := m.View().Content; !strings.Contains(got, "What outcome should we pursue?") || !strings.Contains(got, "UNDERSTAND") || !strings.Contains(got, "VERIFY") || !strings.Contains(got, "/check -- COMMAND") || !strings.Contains(got, "FULL SHELL") {
+	if got := m.View().Content; !strings.Contains(got, "What outcome should we pursue?") || !strings.Contains(got, "NEGOTIATE") || !strings.Contains(got, "ADMIT") || !strings.Contains(got, "VERIFY") || !strings.Contains(got, "/check -- COMMAND") || !strings.Contains(got, "FULL SHELL") {
 		t.Fatalf("default task contract is not visible:\n%s", got)
 	}
 
@@ -855,11 +1096,11 @@ func TestSafeTextDropsTerminalControlSequences(t *testing.T) {
 func TestContractPresentationDropsTerminalControlSequences(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
 	m := New(Config{Task: task, Session: "/tmp/run.jsonl", Workspace: "/work", InitialPrompt: "work", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
-	updated, _ := m.Update(key("enter"))
-	m = updated.(*Model)
+	armContractResultPresentation(m)
+	var updated tea.Model
 	updated, _ = m.Update(plyProcessEvent{Contract: "OUTCOME\x1b[2J\x1b]0;spoof\a\x00\nvisible", ContractDigest: "abc"})
 	m = updated.(*Model)
-	if len(m.messages) != 2 || m.messages[1].role != roleContract || m.messages[1].text != "OUTCOME\nvisible" {
+	if len(m.messages) != 1 || m.messages[0].role != roleContract || m.messages[0].text != "OUTCOME\nvisible" {
 		t.Fatalf("messages=%#v", m.messages)
 	}
 }

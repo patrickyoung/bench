@@ -43,6 +43,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		switch args[0] {
 		case "run", "ask":
 			return runHeadless(args[0], args[1:], stdin, stdout, stderr)
+		case "contract":
+			return runContractCLI(args[1:], stdin, stdout, stderr)
 		case "tui":
 			forceTUI = true
 			args = args[1:]
@@ -135,9 +137,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
 	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner}
 	m := ui.New(ui.Config{
-		Runner:   askRunner,
-		Recorder: askRunner,
-		Task:     taskRunner,
+		Runner:    askRunner,
+		Recorder:  askRunner,
+		Task:      taskRunner,
+		Contracts: taskRunner,
 		Draft: draftexec.Runner{
 			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
 			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
@@ -244,11 +247,21 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		return streamEvents(ctx, events, stdout, stderr)
 	}
 	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
-	events := (contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}).Work(ctx, plyexec.TaskRequest{
+	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}
+	request := plyexec.TaskRequest{
 		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
-	})
-	return streamPlyEvents(ctx, events, stdout, stderr)
+	}
+	if request.Options.IntentContract {
+		store := contractexec.FileStore{Dir: session.ContractsDir(benchDir(work), file)}
+		code := streamContractDraft(ctx, runner.Compile(ctx, contractexec.DraftRequest{Task: request, Store: store}), store, stdout, stderr)
+		if code == 0 {
+			fmt.Fprintf(stderr, "bench run: contract awaits review; inspect with `bench contract show -f %s`, revise or edit it, then accept it explicitly\n", file)
+			return 2
+		}
+		return code
+	}
+	return streamPlyEvents(ctx, runner.Work(ctx, request), stdout, stderr)
 }
 
 // streamEvents preserves Ask's filter contract without interpreting either
@@ -581,8 +594,9 @@ func printUsage(w io.Writer) {
 
   bench [flags] [initial task]   open the interactive workbench
   bench tui [flags] [task]       force the interactive workbench
-  bench run [flags] goal         Ask + Ply; stdin evidence, answer stdout
+  bench run [flags] goal         draft a contract; -contract=false runs Ask + Ply
   bench ask [flags] [message]    Ask only; stdin message/evidence
+  bench contract ...             draft, revise, edit, admit, or rerun a contract
   bench version                  print the version
   bench help                     print this summary
 
@@ -622,6 +636,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
 		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-contract=true|false] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "default: create an editable contract draft and exit 2 before Ply; use -contract=false for immediate work")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

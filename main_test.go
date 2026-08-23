@@ -14,7 +14,7 @@ import (
 	"github.com/patrickyoung/bench/internal/suite"
 )
 
-func TestHeadlessRunCompilesIntentBeforeWorkByDefault(t *testing.T) {
+func TestHeadlessRunDraftsContractAndDoesNotStartPlyByDefault(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixtures are POSIX programs")
 	}
@@ -30,6 +30,13 @@ func TestHeadlessRunCompilesIntentBeforeWorkByDefault(t *testing.T) {
 	t.Setenv("CAPTURE", capture)
 	askScript := `#!/bin/sh
 set -eu
+if [ "${1-}" = replay ]; then
+  n=$(cat "$CAPTURE.record.count")
+  printf '{"seq":1,"type":"note","data":{"source":"bench-user","kind":"bench.contract/v3","body":'
+  cat "$CAPTURE.record.$n.stdin"
+  printf '}}\n{"seq":2,"type":"seal","data":{"through":1,"sha256":"sha256:seal"}}\n'
+  exit 0
+fi
 if [ "${1-}" = note ]; then
   n=1
   if [ -f "$CAPTURE.record.count" ]; then n=$(( $(cat "$CAPTURE.record.count") + 1 )); fi
@@ -44,6 +51,9 @@ printf '%s' "$CONTRACT_FIXTURE"
 `
 	plyScript := `#!/bin/sh
 set -eu
+n=1
+if [ -f "$CAPTURE.ply.count" ]; then n=$(( $(cat "$CAPTURE.ply.count") + 1 )); fi
+printf '%s' "$n" > "$CAPTURE.ply.count"
 printf '%s\n' "$@" > "$CAPTURE.ply.args"
 session_out=
 session=
@@ -66,11 +76,11 @@ printf 'worked answer\n'
 	var stdout, stderr strings.Builder
 	session := filepath.Join(dir, "sessions", "run.jsonl")
 	code := run([]string{"run", "-C", dir, "-f", session, "-m", "openai/luna", "-check", "test -s gallery.html", "make art"}, strings.NewReader("source evidence"), &stdout, &stderr)
-	if code != 2 || stdout.String() != "worked answer\n" || !strings.Contains(stderr.String(), "Ready for review") {
+	if code != 2 || !strings.HasSuffix(strings.TrimSpace(stdout.String()), "draft.json") || !strings.Contains(stderr.String(), "Ply has not started") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "OUTCOME CONTRACT v2") {
-		t.Fatalf("contract was not visible on stderr:\n%s", stderr.String())
+	if _, err := os.Stat(strings.TrimSpace(stdout.String())); err != nil {
+		t.Fatalf("editable draft was not created: %v", err)
 	}
 	askArgs := string(mustRead(t, capture+".ask.args"))
 	for _, want := range []string{"-S\n" + contractexec.System + "\n", "-schema\n", "--\nCompile this user intent"} {
@@ -83,21 +93,114 @@ printf 'worked answer\n'
 		t.Fatalf("contract evidence:\n%s", askInput)
 	}
 	recordArgs := string(mustRead(t, capture+".record.1.args"))
-	if !strings.Contains(recordArgs, "-k\nbench.contract/v2\n") || !strings.Contains(recordArgs, "-seal\n") {
+	if !strings.Contains(recordArgs, "-k\nbench.contract-proposal/v1\n") || !strings.Contains(recordArgs, "-seal\n") {
 		t.Fatalf("contract was not sealed: %s", recordArgs)
 	}
-	if record := string(mustRead(t, capture+".record.1.stdin")); !strings.Contains(record, `"status":"compiled"`) {
-		t.Fatalf("compiled contract record: %s", record)
+	if record := string(mustRead(t, capture+".record.1.stdin")); !strings.Contains(record, `"status":"proposed"`) {
+		t.Fatalf("proposed contract record: %s", record)
 	}
-	if result := string(mustRead(t, capture+".record.2.stdin")); !strings.Contains(result, `"status":"review_required"`) || !strings.Contains(result, `"proposed_check_coverage":["exists"]`) || strings.Contains(result, `"status":"complete"`) {
-		t.Fatalf("contract result record: %s", result)
+	if _, err := os.Stat(capture + ".ply.args"); !os.IsNotExist(err) {
+		t.Fatalf("Ply ran before contract admission: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "revise", "-C", dir, "-f", session, "make mobile inspection explicit"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || !strings.HasSuffix(strings.TrimSpace(stdout.String()), "draft.json") || !strings.Contains(stderr.String(), "Ply has not started") {
+		t.Fatalf("revise code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if args := string(mustRead(t, capture+".ask.args")); !strings.Contains(args, "USER CHANGE REQUEST\nmake mobile inspection explicit") {
+		t.Fatalf("revision did not use Ask contract turn:\n%s", args)
+	}
+	if _, err := os.Stat(capture + ".ply.args"); !os.IsNotExist(err) {
+		t.Fatalf("Ply ran during contract revision: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "show", "-C", dir, "-f", session}, strings.NewReader(""), &stdout, &stderr)
+	showStore := contractexec.FileStore{Dir: sessionpkgContractDirForTest(dir, session)}
+	if code != 0 || stdout.String() != string(mustRead(t, showStore.DraftPath())) || !strings.Contains(stdout.String(), `"workspace": "`+dir+`"`) || !strings.Contains(stdout.String(), `"check": "test -s gallery.html"`) || !strings.Contains(stderr.String(), "generation 2") || !strings.Contains(stderr.String(), "exact draft.json sha256:") {
+		t.Fatalf("show code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	editor := filepath.Join(dir, "fake-editor")
+	if err := os.WriteFile(editor, []byte("#!/bin/sh\nprintf '%s' \"$1\" > \"$CAPTURE.editor.path\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDITOR", editor)
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "edit", "-C", dir, "-f", session}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || !strings.Contains(stderr.String(), "manual draft") || !strings.HasSuffix(string(mustRead(t, capture+".editor.path")), "draft.json") {
+		t.Fatalf("edit code=%d stdout=%q stderr=%q editor=%q", code, stdout.String(), stderr.String(), mustRead(t, capture+".editor.path"))
+	}
+	if _, err := os.Stat(capture + ".ply.args"); !os.IsNotExist(err) {
+		t.Fatalf("Ply ran during manual contract edit: %v", err)
+	}
+	store := contractexec.FileStore{Dir: sessionpkgContractDirForTest(dir, session)}
+	raw, err := os.ReadFile(store.DraftPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.DraftPath(), append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "import", "-C", dir, "-f", session}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || !strings.Contains(stderr.String(), "manual draft") {
+		t.Fatalf("import code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(capture + ".ply.args"); !os.IsNotExist(err) {
+		t.Fatalf("Ply ran during external contract import: %v", err)
+	}
+	draft, status, err := store.Load()
+	if err != nil || status != "draft" {
+		t.Fatalf("load draft status=%q err=%v", status, err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "accept", "-C", dir, "-f", session, "-expect", draft.DraftSHA256, "-m", "openai/luna"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 || stdout.String() != "worked answer\n" {
+		t.Fatalf("accepted code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	plyArgs := string(mustRead(t, capture+".ply.args"))
-	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v2", "sha256"} {
+	for _, want := range []string{"-f\n" + session + "\n", "-contract-id\nsha256:", "ORIGINAL INTENT\nmake art", "OUTCOME CONTRACT v2"} {
 		if !strings.Contains(plyArgs, want) {
-			t.Errorf("ply args missing %q:\n%s", want, plyArgs)
+			t.Errorf("admitted Ply args missing %q:\n%s", want, plyArgs)
 		}
 	}
+	if _, status, err := store.Load(); err != nil || status != "admitted" {
+		t.Fatalf("admitted status=%q err=%v", status, err)
+	}
+	admitted, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"contract", "edit", "-C", dir, "-f", session}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("amend edit code=%d stderr=%q", code, stderr.String())
+	}
+	amendment, status, err := store.Load()
+	if err != nil || status != "draft" || amendment.ParentRevisionID != admitted.RevisionID || amendment.RevisionID != "" || string(mustRead(t, capture+".ply.count")) != "1" {
+		t.Fatalf("amendment=%#v status=%q err=%v ply-count=%q", amendment, status, err, mustRead(t, capture+".ply.count"))
+	}
+}
+
+func TestContractAcceptAndRunRejectUnreviewedPolicyFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"accept", "-f", "/tmp/session.jsonl", "-expect", "sha256:draft", "-check", "true"},
+		{"run", "-f", "/tmp/session.jsonl", "-check-all"},
+	} {
+		var stdout, stderr strings.Builder
+		if code := runContractCLI(args, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func sessionpkgContractDirForTest(root, file string) string {
+	return session.ContractsDir(benchDir(root), file)
 }
 
 func TestHeadlessContractReviewPreservesReportAndReturnsNotDone(t *testing.T) {

@@ -157,6 +157,24 @@ func TestEditorReturnRechecksTheOrdinaryDesign(t *testing.T) {
 	}
 }
 
+func TestContractEditorErrorDoesNotMisrouteNextDesignEditorReturn(t *testing.T) {
+	draft := &fakeDraft{checkEvents: make(chan draftexec.Event)}
+	m := New(Config{Workspace: "/work", Draft: draft})
+	m.editingContract = true
+	updated, _ := m.Update(editorReturnedMsg{err: os.ErrPermission})
+	m = updated.(*Model)
+	if m.editingContract {
+		t.Fatal("contract editor routing remained armed after an error")
+	}
+	m.screen = screenDesignReview
+	m.designDir = "/work/agent"
+	updated, cmd := m.Update(editorReturnedMsg{})
+	m = updated.(*Model)
+	if cmd == nil || !m.running || m.job != jobDraftCheck || draft.checkDir != "/work/agent" {
+		t.Fatalf("editor return: running=%v job=%v check=%q", m.running, m.job, draft.checkDir)
+	}
+}
+
 func TestExistingProjectReopensThroughDraftCheck(t *testing.T) {
 	workspace := t.TempDir()
 	projectDir := filepath.Join(workspace, "existing-agent")

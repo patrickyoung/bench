@@ -127,6 +127,13 @@ type fakeAsk struct {
 	receipt      askexec.VerifierReceipt
 	receiptErr   error
 	receiptCalls int
+	admissionErr error
+	admissions   int
+}
+
+func (f *fakeAsk) AdmittedContract(_ context.Context, _ string, _ askexec.AdmissionExpectation) error {
+	f.admissions++
+	return f.admissionErr
 }
 
 func (f *fakeAsk) AcceptedVerifier(_ context.Context, _, _, contractID, verifier, candidateSHA, _ string) (askexec.VerifierReceipt, error) {
@@ -204,7 +211,7 @@ func TestRunnerCompilesThenWorksInOneSession(t *testing.T) {
 	}
 	var contract, digest string
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), req) {
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), req) {
 		if event.Contract != "" {
 			contract, digest = event.Contract, event.ContractDigest
 		}
@@ -266,7 +273,7 @@ func TestRunnerDoesNotWorkWhenContractRecordCannotBeSealed(t *testing.T) {
 	ask := &fakeAsk{answer: fixtureContract, recordErr: errors.New("disk full")}
 	ply := &fakePly{}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	}) {
@@ -284,7 +291,7 @@ func TestRunnerKeepsAllModelProposedCheckCoveragePending(t *testing.T) {
 	ask := &fakeAsk{answer: allCheck}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "./check"},
 	}) {
@@ -309,7 +316,7 @@ func TestOperatorCheckAllCompletesEveryCriterionFromMatchedReceipt(t *testing.T)
 	}
 	var done plyexec.Event
 	var stdout strings.Builder
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), req) {
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), req) {
 		if event.Stream == plyexec.Stdout {
 			stdout.WriteString(event.Text)
 		}
@@ -365,7 +372,7 @@ func TestOperatorCheckAllNeverCompletesWithoutAcceptedReceipt(t *testing.T) {
 			ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "unsealed answer"}, tt.terminal}}
 			var done plyexec.Event
 			var stdout strings.Builder
-			for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+			for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 				Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 				Options: plyexec.TaskOptions{IntentContract: true, Check: "./check", CheckAllCriteria: true},
 			}) {
@@ -393,7 +400,7 @@ func TestOperatorCheckAllJudgeMapMustSealBeforeWork(t *testing.T) {
 	ask := &fakeAsk{answer: fixtureContract, recordErr: errors.New("disk full"), recordErrAt: 2}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "true", CheckAllCriteria: true},
 	}) {
@@ -452,7 +459,7 @@ func TestRunnerLetsWorkProceedWithoutAuthoritativeCoverage(t *testing.T) {
 			ask := &fakeAsk{answer: tt.contract}
 			ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 			var done plyexec.Event
-			for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+			for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 				Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 				Options: plyexec.TaskOptions{IntentContract: true, Check: tt.check},
 			}) {
@@ -472,7 +479,7 @@ func TestRunnerFailsClosedWhenContractResultCannotBeSealed(t *testing.T) {
 	ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "apparent success"}, {Done: true, ExitCode: 0}}}
 	var done plyexec.Event
 	var stdout strings.Builder
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	}) {
@@ -493,7 +500,7 @@ func TestRunnerDoesNotLetWorkerRedirectAuthoritativeResultSession(t *testing.T) 
 	source := filepath.Join(t.TempDir(), "source.jsonl")
 	ask := &fakeAsk{answer: fixtureContract}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0, Session: successor}}
-	for range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: source,
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	}) {
@@ -508,7 +515,7 @@ func TestRunnerPausesBeforeWorkForOpenQuestions(t *testing.T) {
 	ask := &fakeAsk{answer: question}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "source.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true, Check: "true"},
 	}) {
@@ -529,7 +536,7 @@ func TestRunnerPausesBeforeWorkForPendingApproval(t *testing.T) {
 	ask := &fakeAsk{answer: approval}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "print it", Session: filepath.Join(t.TempDir(), "source.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true},
 	}) {
@@ -548,13 +555,13 @@ func TestDecisionThenResolvedContractRecordsInOrderBeforeWork(t *testing.T) {
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}
 	runner := Runner{Ask: ask, Ply: ply}
 	session := filepath.Join(t.TempDir(), "source.jsonl")
-	for range runner.Work(context.Background(), plyexec.TaskRequest{
+	for range runner.compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "Write, save, and print a poem", Session: session,
 		Options: plyexec.TaskOptions{IntentContract: true},
 	}) {
 	}
 	resolved := "ORIGINAL USER INTENT\nWrite, save, and print a poem\n\nOPEN QUESTIONS\n- Which printer?\n\nUSER DECISION\nOffice printer"
-	for range runner.Work(context.Background(), plyexec.TaskRequest{
+	for range runner.compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: resolved, Session: session,
 		Options: plyexec.TaskOptions{IntentContract: true},
 	}) {
@@ -580,7 +587,7 @@ func TestRunnerNeverStartsWorkWithInvalidContract(t *testing.T) {
 	ask := &fakeAsk{answer: `{"version":1}`}
 	ply := &fakePly{}
 	var done plyexec.Event
-	for event := range (Runner{Ask: ask, Ply: ply}).Work(context.Background(), plyexec.TaskRequest{
+	for event := range (Runner{Ask: ask, Ply: ply}).compileAndWork(context.Background(), plyexec.TaskRequest{
 		Dir: t.TempDir(), Goal: "work", Session: filepath.Join(t.TempDir(), "run.jsonl"),
 		Options: plyexec.TaskOptions{IntentContract: true},
 	}) {

@@ -75,10 +75,20 @@ func Resolve(dir, value string) string {
 // to one parent session live. The path hash prevents equal basenames from
 // unrelated explicit session paths colliding when they share a BENCH_DIR.
 func SubagentsDir(root, parent string) string {
+	return scopedDir(root, "subagents", parent)
+}
+
+// ContractsDir gives one explicit Ask session a durable, controller-owned
+// home for its editable contract and immutable admitted revisions.
+func ContractsDir(root, parent string) string {
+	return scopedDir(root, "contracts", parent)
+}
+
+func scopedDir(root, kind, parent string) string {
 	clean := filepath.Clean(parent)
 	sum := sha256.Sum256([]byte(clean))
 	name := safeComponent(strings.TrimSuffix(filepath.Base(clean), filepath.Ext(clean)))
-	return filepath.Join(root, "subagents", name+"-"+hex.EncodeToString(sum[:8]))
+	return filepath.Join(root, kind, name+"-"+hex.EncodeToString(sum[:8]))
 }
 
 func safeComponent(value string) string {

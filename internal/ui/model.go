@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/briefexec"
+	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
 	"github.com/patrickyoung/bench/internal/honeexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
@@ -38,6 +39,7 @@ const (
 	roleContract
 	roleOutcome
 	roleStatus
+	roleContractDraft
 )
 
 type message struct {
@@ -55,6 +57,7 @@ type Config struct {
 	Runner        askClient
 	Recorder      askexec.Recorder
 	Task          plyexec.Worker
+	Contracts     contractexec.Negotiator
 	Draft         draftexec.Client
 	Hone          honeexec.Client
 	Brief         briefexec.Client
@@ -81,6 +84,7 @@ type Model struct {
 	runner           askClient
 	recorder         askexec.Recorder
 	task             plyexec.Worker
+	contracts        contractexec.Negotiator
 	draft            draftexec.Client
 	hone             honeexec.Client
 	brief            briefexec.Client
@@ -96,6 +100,11 @@ type Model struct {
 	taskOptions      plyexec.TaskOptions
 	pendingContract  *plyexec.ContractResult
 	pendingDecision  *contractDecision
+	contractDraft    *contractexec.Draft
+	admittedContract *contractexec.Draft
+	contractStore    contractexec.FileStore
+	editingContract  bool
+	continueContract bool
 	activeTaskIntent string
 	taskMode         bool
 
@@ -152,24 +161,25 @@ type Model struct {
 	skillRunSession string
 	activeSkills    []string
 
-	width        int
-	height       int
-	dark         bool
-	ready        bool
-	running      bool
-	showHelp     bool
-	spinner      int
-	stdout       strings.Builder
-	activity     string
-	toolActivity string
-	notice       string
-	cancel       context.CancelFunc
-	events       <-chan askexec.Event
-	draftEvents  <-chan draftexec.Event
-	honeEvents   <-chan honeexec.Event
-	briefEvents  <-chan briefexec.Event
-	plyEvents    <-chan plyexec.Event
-	job          job
+	width          int
+	height         int
+	dark           bool
+	ready          bool
+	running        bool
+	showHelp       bool
+	spinner        int
+	stdout         strings.Builder
+	activity       string
+	toolActivity   string
+	notice         string
+	cancel         context.CancelFunc
+	events         <-chan askexec.Event
+	draftEvents    <-chan draftexec.Event
+	honeEvents     <-chan honeexec.Event
+	briefEvents    <-chan briefexec.Event
+	plyEvents      <-chan plyexec.Event
+	contractEvents <-chan contractexec.DraftEvent
+	job            job
 }
 
 type processEvent askexec.Event
@@ -180,6 +190,7 @@ type draftProcessEvent draftexec.Event
 type honeProcessEvent honeexec.Event
 type briefProcessEvent briefexec.Event
 type plyProcessEvent plyexec.Event
+type contractDraftProcessEvent contractexec.DraftEvent
 
 type askClient interface {
 	askexec.Starter
@@ -204,6 +215,7 @@ const (
 	jobBriefNew
 	jobPlyRefine
 	jobPlyTask
+	jobContractDraft
 )
 
 type screen uint8
@@ -219,6 +231,7 @@ const (
 	screenSkillDetail
 	screenSkillForm
 	screenSkillRun
+	screenContract
 )
 
 type buildState uint8
@@ -330,6 +343,7 @@ func New(cfg Config) *Model {
 		runner:         cfg.Runner,
 		recorder:       cfg.Recorder,
 		task:           cfg.Task,
+		contracts:      cfg.Contracts,
 		draft:          cfg.Draft,
 		hone:           cfg.Hone,
 		brief:          cfg.Brief,
@@ -337,6 +351,7 @@ func New(cfg Config) *Model {
 		session:        cfg.Session,
 		newSession:     cfg.NewSession,
 		subagentsDir:   session.SubagentsDir(cfg.DataDir, cfg.Session),
+		contractStore:  contractexec.FileStore{Dir: session.ContractsDir(cfg.DataDir, cfg.Session)},
 		modelName:      cfg.Model,
 		modelDefault:   cfg.Model,
 		workspace:      cfg.Workspace,
@@ -415,6 +430,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTaskProcess(plyexec.Event(msg))
 		}
 		return m.updateSkillRunProcess(plyexec.Event(msg))
+	case contractDraftProcessEvent:
+		return m.updateContractDraftProcess(contractexec.DraftEvent(msg))
+	case manualContractMsg:
+		return m.updateManualContract(msg)
 	case contractAcceptanceMsg:
 		return m.updateContractAcceptance(msg)
 	case shellReturnedMsg:
@@ -427,9 +446,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.composer.Focus()
 	case editorReturnedMsg:
 		if msg.err != nil {
+			m.editingContract = false
 			m.notice = "Editor exited with an error · " + msg.err.Error()
 			m.syncContent()
 			return m, nil
+		}
+		if m.editingContract {
+			m.editingContract = false
+			return m.reloadContractDraft()
 		}
 		m.notice = "Editor closed · rechecking DESIGN.md"
 		return m.startDraftCheck()
@@ -485,6 +509,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if isSkillScreen(m.screen) {
 			return m.updateSkills(msg, key)
+		}
+		if m.screen == screenContract {
+			return m.updateContractScreen(msg, key)
 		}
 		if m.screen == screenDesignForm {
 			return m.updateDesignForm(msg, key)
@@ -566,6 +593,16 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		m.notice = "ply task runner is unavailable"
 		return m, nil
 	}
+	if m.taskMode && m.taskOptions.IntentContract && m.contracts == nil {
+		m.notice = "Contract controller is unavailable · Ply has not started"
+		m.syncContent()
+		return m, nil
+	}
+	if m.taskMode && m.taskOptions.IntentContract && m.contractDraft != nil {
+		m.notice = "Contract draft pending · /contract reopens it; accept, revise, or start a new session"
+		m.syncContent()
+		return m, nil
+	}
 	if m.taskMode && m.pendingContract != nil {
 		m.notice = "Review pending · /accept after inspection · /continue to revise · /check -- CMD to strengthen the verifier"
 		m.syncContent()
@@ -595,6 +632,35 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 		options := m.taskOptions
 		m.taskOptions.Force = false
 		m.activeTaskIntent = goal
+		if options.IntentContract && m.contracts != nil && m.continueContract && m.admittedContract != nil {
+			m.continueContract = false
+			options.Check = m.admittedContract.Check
+			options.CheckAllCriteria = m.admittedContract.CheckAll
+			m.plyEvents = m.contracts.Run(ctx, contractexec.RunRequest{
+				Task: plyexec.TaskRequest{
+					Dir: m.workspace, Goal: m.admittedContract.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
+					Skills: append([]string(nil), m.admittedContract.Skills...), Toolbox: m.admittedContract.Toolbox, Model: m.modelName,
+					Options: options,
+				},
+				Draft: *m.admittedContract, Store: m.contractStore, Guidance: text,
+			})
+			m.job = jobPlyTask
+			m.syncContent()
+			return m, tea.Batch(waitPlyEvent(m.plyEvents), tick())
+		}
+		if options.IntentContract && m.contracts != nil {
+			m.contractEvents = m.contracts.Compile(ctx, contractexec.DraftRequest{
+				Task: plyexec.TaskRequest{
+					Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
+					Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
+					Options: options,
+				},
+				Store: m.contractStore,
+			})
+			m.job = jobContractDraft
+			m.syncContent()
+			return m, tea.Batch(waitContractDraftEvent(m.contractEvents), tick())
+		}
 		m.plyEvents = m.task.Work(ctx, plyexec.TaskRequest{
 			Dir: m.workspace, Goal: goal, Session: m.session, SubagentsDir: m.subagentsPath(),
 			Skills: append([]string(nil), m.activeSkills...), Toolbox: m.toolbox, Model: m.modelName,
@@ -641,6 +707,7 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 				m.messages = nil
 				m.picking = false
 				m.notice = "Session integrity verified and restored by Ask"
+				m.restoreContractState()
 			case errors.Is(event.Err, context.Canceled):
 				m.notice = "Restore interrupted"
 				m.picking = true
@@ -691,12 +758,18 @@ func (m *Model) updateProcess(event askexec.Event) (tea.Model, tea.Cmd) {
 func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if !event.Done {
 		if event.Contract != "" {
+			if loaded, status, err := m.contractStore.Load(); err == nil && status == "admitted" {
+				m.admittedContract = &loaded
+				m.contractDraft = nil
+			}
+			m.screen = screenAsk
+			m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 			m.messages = append(m.messages, message{role: roleContract, text: safeText(event.Contract)})
 			// Compiler progress belongs to the understanding phase. Start the
 			// visible work log cleanly when Ply receives the admitted contract.
 			m.toolActivity = ""
 			m.activity = ""
-			m.notice = "Outcome contract compiled · work continues under " + shortDigest(event.ContractDigest)
+			m.notice = "Contract admitted by you · work continues under " + shortDigest(event.ContractDigest)
 			m.syncContent()
 			return m, waitPlyEvent(m.plyEvents)
 		}
@@ -715,8 +788,15 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 
 	m.running = false
 	m.cancel = nil
+	if m.taskOptions.IntentContract {
+		if loaded, status, err := m.contractStore.Load(); err == nil && status == "admitted" {
+			m.admittedContract = &loaded
+			m.contractDraft = nil
+		}
+	}
 	if event.Session != "" {
 		m.session = event.Session
+		m.contractStore = contractexec.FileStore{Dir: session.ContractsDir(m.dataDir, event.Session)}
 	}
 	answer := strings.TrimSpace(m.stdout.String())
 	checked := m.taskOptions.Check != ""
@@ -860,6 +940,7 @@ func (m *Model) startReplay(path string) (tea.Model, tea.Cmd) {
 	}
 	m.session = path
 	m.subagentsDir = session.SubagentsDir(m.dataDir, path)
+	m.contractStore = contractexec.FileStore{Dir: session.ContractsDir(m.dataDir, path)}
 	m.picking = false
 	m.running = true
 	m.job = jobReplay
@@ -904,8 +985,11 @@ func (m *Model) updatePicker(key string) (tea.Model, tea.Cmd) {
 func (m *Model) startNew() (tea.Model, tea.Cmd) {
 	m.session = m.newSession
 	m.subagentsDir = session.SubagentsDir(m.dataDir, m.newSession)
+	m.contractStore = contractexec.FileStore{Dir: session.ContractsDir(m.dataDir, m.newSession)}
 	m.pendingContract = nil
 	m.pendingDecision = nil
+	m.contractDraft = nil
+	m.admittedContract = nil
 	m.activeTaskIntent = ""
 	m.taskOptions.Force = false
 	m.restored = ""
@@ -933,6 +1017,8 @@ func (m *Model) interrupt() {
 			name = "ply"
 		case jobPlyTask:
 			name = "task"
+		case jobContractDraft:
+			name = "contract compiler"
 		}
 		m.notice = "Interrupting " + name + "…"
 		m.cancel()
@@ -1012,6 +1098,8 @@ func (m *Model) syncContent() {
 		content = m.renderSkillForm(width)
 	} else if m.screen == screenSkillRun {
 		content = m.renderSkillRun(width)
+	} else if m.screen == screenContract {
+		content = m.renderContract(width)
 	} else if m.picking {
 		content = m.renderPicker(width)
 	} else {
@@ -1113,14 +1201,14 @@ func (m *Model) renderTranscript(width int) string {
 	t := makeTheme(m.dark)
 	if len(m.messages) == 0 && m.restored == "" && !m.running {
 		titleText := "What outcome should we pursue?"
-		bodyText := "1  UNDERSTAND  Agree on a visible outcome contract.\n2  WORK        Use ordinary programs and show their real output.\n3  VERIFY      Let evidence decide: complete, review, or revise."
+		bodyText := "1  NEGOTIATE   Review, revise, or edit a durable contract draft.\n2  ADMIT       You accept the exact contract before Ply starts.\n3  WORK        Use ordinary programs and show their real output.\n4  VERIFY      Let evidence decide: complete, review, or revise."
 		exampleText := "Try: Find why the tests fail and fix the smallest root cause.\nHave a check? /check -- COMMAND  ·  f1 shows the whole map."
 		if !m.taskMode {
 			titleText = "What should we think through?"
 			bodyText = "Ask continues the same replayable session without running commands.\nNo workspace program runs until you return with /work."
 			exampleText = "Try: Explain the tradeoffs in this design before we change it.\nNeed durable work? /work  ·  Need an agent project? /agent"
 		} else if m.toolbox != "" {
-			bodyText = "1  UNDERSTAND  Agree on a visible outcome contract.\n2  WORK        Use the " + filepath.Base(m.toolbox) + " toolbox and show real output.\n3  VERIFY      Let evidence decide: complete, review, or revise."
+			bodyText = "1  NEGOTIATE   Review, revise, or edit a durable contract draft.\n2  ADMIT       You accept the exact contract before Ply starts.\n3  WORK        Use the " + filepath.Base(m.toolbox) + " toolbox and show real output.\n4  VERIFY      Let evidence decide: complete, review, or revise."
 		}
 		title := t.hero.Render(titleText)
 		body := t.muted.Width(max(20, width-8)).Render(bodyText)
@@ -1153,6 +1241,9 @@ func (m *Model) renderTranscript(width int) string {
 			bodyStyle = t.restoredBlock
 		} else if msg.role == roleStatus {
 			label = t.sessionLabel.Render("STATUS")
+			bodyStyle = t.restoredBlock
+		} else if msg.role == roleContractDraft {
+			label = t.sessionLabel.Render("CONTRACT DRAFT")
 			bodyStyle = t.restoredBlock
 		}
 		bodyText := msg.text
@@ -1263,6 +1354,18 @@ func formatBytes(n int64) string {
 
 func (m *Model) renderHelp(width int) string {
 	t := makeTheme(m.dark)
+	if m.screen == screenContract {
+		rows := []string{
+			t.hero.Render("Contract review keyboard"), "",
+			helpRow(t, "type + enter", "revise the proposal without starting Ply", width),
+			helpRow(t, "e", "edit the durable JSON working copy", width),
+			helpRow(t, "ctrl+s", "admit the exact reviewed contract and begin work", width),
+			helpRow(t, "esc", "return to Work while retaining the draft", width),
+			helpRow(t, "f1", "close this help", width), "",
+			t.muted.Render("Drafts are mutable proposals. Admitted revisions and their evidence are immutable."),
+		}
+		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
+	}
 	if isSkillScreen(m.screen) {
 		rows := []string{t.hero.Render("Skills keyboard"), ""}
 		switch m.screen {
@@ -1367,7 +1470,7 @@ func (m *Model) renderHelp(width int) string {
 		}
 		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 	}
-	sendHelp := "run the task with Ask + tools"
+	sendHelp := "draft an outcome contract; Ply waits for your admission"
 	grantHelp := "Tools are Ply programs; without BENCH_TOOLS this is a full shell grant. Replay with:"
 	if !m.taskMode {
 		sendHelp = "send an Ask-only turn; no commands run"
@@ -1377,15 +1480,19 @@ func (m *Model) renderHelp(width int) string {
 	}
 	rows := []string{
 		t.hero.Render("Working with Bench"),
-		t.muted.Render("Outcome → visible contract → real work → executable evidence or your review."),
+		t.muted.Render("Outcome → editable proposal → your admission → real work → evidence or review."),
 		"",
 		t.sessionLabel.Render("OUTCOME & EVIDENCE"),
 		helpRow(t, "enter", sendHelp, width),
 		helpRow(t, "/check -- CMD", "attach one literal verifier to the next outcome", width),
 		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
-		helpRow(t, "/continue", "revise pending work, even when its old check passes", width),
-		helpRow(t, "/contract on|off", "show the agreement before work, or use direct Ply", width),
+		helpRow(t, "/continue", "retry work under the same admitted contract", width),
+		helpRow(t, "/contract", "reopen the durable draft or admitted revision", width),
+		helpRow(t, "/contract edit|import", "edit JSON here, or seal external edits", width),
+		helpRow(t, "/contract accept", "admit reviewed bytes, then start Ply", width),
+		helpRow(t, "/contract run", "retry the exact admitted revision", width),
+		helpRow(t, "/contract on|off", "negotiate before work, or use direct Ply", width),
 		"",
 		t.sessionLabel.Render("PARTNER & CAPABILITIES"),
 		helpRow(t, "/model SPEC", "show or switch provider/model", width),
@@ -1449,6 +1556,8 @@ func (m *Model) View() tea.View {
 		section = "learn"
 	} else if isSkillScreen(m.screen) {
 		section = "skills"
+	} else if m.screen == screenContract {
+		section = "contract"
 	}
 	if m.screen == screenDesignForm && m.running {
 		state = "drafting"
@@ -1492,6 +1601,12 @@ func (m *Model) View() tea.View {
 		state = "clean"
 	} else if isSkillScreen(m.screen) {
 		state = "ready"
+	} else if m.screen == screenContract && m.running {
+		state = "revising"
+	} else if m.screen == screenContract && m.contractDraft != nil {
+		state = "draft"
+	} else if m.screen == screenContract {
+		state = "admitted"
 	} else if m.picking {
 		state = "choose"
 	} else if m.running && m.job == jobReplay {
@@ -1543,7 +1658,12 @@ func (m *Model) View() tea.View {
 		}
 		composerLabel += t.warning.Render(ansi.Truncate(policy, max(12, w-lipgloss.Width(composerLabel)-2), "…"))
 	}
-	if m.screen == screenDesignForm {
+	if m.screen == screenContract {
+		composerLabel = t.sessionLabel.Render(" CONTRACT REVISION ")
+		if m.running {
+			composerContent = t.muted.Render("The read-only compiler is revising the proposal. Ply has not started.")
+		}
+	} else if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
 		if m.formFocus == 1 && !m.running {
 			composerLabel = t.sessionLabel.Render(" AGENT REQUIREMENTS ")
@@ -1632,7 +1752,9 @@ func (m *Model) View() tea.View {
 	composer := t.composer.Width(max(20, w-4)).Height(m.composer.Height()).Render(composerContent)
 	notice := m.notice
 	if notice == "" {
-		if m.screen == screenDesignForm {
+		if m.screen == screenContract {
+			notice = "type revise   e edit JSON   ctrl+s accept/run   esc keep for later   f1 help"
+		} else if m.screen == screenDesignForm {
 			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
 		} else if m.screen == screenDesignReview {
 			notice = "e edit   r recheck   b build   B admitted   pgup scroll   esc work"
@@ -1658,7 +1780,9 @@ func (m *Model) View() tea.View {
 	}
 	footerLeftText := ansi.Truncate(notice, max(8, w*2/3), "…")
 	rightContext := filepath.Base(m.session) + "  ·  " + m.modelDisplay()
-	if m.screen == screenDesignForm || m.screen == screenDesignReview {
+	if m.screen == screenContract {
+		rightContext = filepath.Base(m.contractStore.DraftPath())
+	} else if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		rightContext = filepath.Base(m.designDir)
 		if rightContext == "." || rightContext == "" {
 			rightContext = m.project.Value()
@@ -1707,17 +1831,20 @@ func (m *Model) defaultWorkHint() string {
 	if !m.taskMode {
 		return "enter ask   /work enables tools   /agent promotes durable work   f1 map"
 	}
+	if m.contractDraft != nil {
+		return "contract draft retained   /contract review   /contract accept runs"
+	}
 	if m.pendingDecision != nil {
 		return "decision pending   reply normally with the missing answer or approval"
 	}
 	if m.pendingContract != nil {
-		return "review pending   /accept after inspection   /continue to revise"
+		return "review pending   /accept after inspection   /continue retries same contract"
 	}
 	if m.taskOptions.CheckAllCriteria {
-		return "enter run   current check judges every criterion   /check inspects policy"
+		return "describe outcome   check will judge every criterion after contract admission"
 	}
 	if m.taskOptions.Check != "" {
-		return "enter run   check supplies evidence; review stays yours   /check all changes authority"
+		return "describe outcome   check is bound into the draft   /check all changes authority"
 	}
 	return "describe an outcome   /check adds evidence   /skills adds procedure   f1 shows the map"
 }
