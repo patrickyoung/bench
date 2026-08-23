@@ -511,14 +511,7 @@ func revisionMessage(current Draft, instruction, check string, checkAll bool, ap
 	if len(confinementValues) > 0 {
 		confinement = confinementValues[0]
 	}
-	verifier := "No executable verifier is configured."
-	if check != "" {
-		verifier = "The operator configured this exact verifier:\n" + check
-		if checkAll {
-			verifier = "The operator explicitly admits this exact verifier as judge of every criterion:\n" + check
-		}
-	}
-	return "Revise the proposed outcome contract according to the user's change request. Return the complete replacement contract, not a patch. Do not solve the task or emit shell commands. Preserve sound parts of the current contract. Remove an open question or approval only when the user's change request explicitly resolves or grants it.\n\nORIGINAL USER INTENT\n" + current.Intent + "\n\nCURRENT PROPOSED CONTRACT\n" + string(current.Contract) + "\n\nUSER CHANGE REQUEST\n" + instruction + "\n\nACTION APPROVAL POLICY\n" + approvalCompilerBoundary(approvalPolicy) + "\n\nACTION CONFINEMENT\n" + confinementCompilerBoundary(confinement) + "\n\nVERIFIER BOUNDARY\n" + verifier
+	return "Revise the proposed outcome contract according to the user's change request. Return the complete replacement contract, not a patch. Do not solve the task or emit shell commands. Preserve sound parts of the current contract. Remove an open question or approval only when the user's change request explicitly resolves or grants it.\n\nORIGINAL USER INTENT\n" + current.Intent + "\n\nCURRENT PROPOSED CONTRACT\n" + string(current.Contract) + "\n\nUSER CHANGE REQUEST\n" + instruction + "\n\nACTION APPROVAL POLICY\n" + approvalCompilerBoundary(approvalPolicy) + "\n\nACTION CONFINEMENT\n" + confinementCompilerBoundary(confinement) + "\n\nVERIFIER BOUNDARY\n" + verifierCompilerBoundary(check, checkAll)
 }
 
 func newOutcomeID() (string, error) {

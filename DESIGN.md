@@ -127,8 +127,13 @@ Bench passes that command as one literal argument and displays it through
 exact verifier directly establishes it. After Ply's factual verifier receipt,
 Bench mechanically seals `bench.contract-result/v1`. Model-assigned coverage
 is never authority: contracted work remains review-required and exits 2 until
-the interactive user explicitly accepts every pending criterion. The separate
-operator-only `-check-all` policy binds the exact check into the contract
+the interactive user explicitly accepts every pending criterion. The compiler
+also treats the verifier command as opaque: its path and arguments do
+not establish which tests, assertions, coverage, or output it contains. Unless
+separate read-only operator evidence says more, generated evidence may name
+only the exact passing verifier. An ordinary check assigns no criterion
+coverage or completion authority; its model-proposed labels remain pending.
+The separate operator-only `-check-all` policy binds the exact check into the contract
 envelope, seals every parsed criterion ID in `bench.judge-map/v1` before Ply,
 then requires a strictly matching sealed Ply receipt before a durable
 Review `bench.contract-result/v2` or Loop `bench.contract-result/v3` may say

@@ -712,6 +712,42 @@ func TestCompilerExplainsApprovalAuthorityForBothPolicies(t *testing.T) {
 	}
 }
 
+func TestCompilerTreatsVerifierImplementationAsOpaque(t *testing.T) {
+	check := "'/operator/oracle.sh' check 'l02'"
+	current := Draft{Intent: "repair it", Contract: []byte(fixtureContract)}
+	ordinary := []string{
+		compilerMessage(plyexec.TaskRequest{Goal: "repair it", Options: plyexec.TaskOptions{Check: check}}),
+		revisionMessage(current, "keep the scope", check, false, plyexec.ApprovalOff),
+	}
+	checkAll := []string{
+		compilerMessage(plyexec.TaskRequest{Goal: "repair it", Options: plyexec.TaskOptions{Check: check, CheckAllCriteria: true}}),
+		revisionMessage(current, "keep the scope", check, true, plyexec.ApprovalOff),
+	}
+	messages := append(append([]string{}, ordinary...), checkAll...)
+	for i, message := range messages {
+		for _, want := range []string{check, "does not reveal its implementation", "Never infer internal tests", "describe only that a passing receipt exists for the exact verifier"} {
+			if !strings.Contains(message, want) {
+				t.Errorf("message %d missing %q:\n%s", i, want, message)
+			}
+		}
+	}
+	for i, message := range ordinary {
+		if !strings.Contains(message, "assigns no criterion coverage or completion authority") || !strings.Contains(message, "remain pending") || strings.Contains(message, "operator assigned every contract criterion") {
+			t.Errorf("ordinary message %d blurred authority:\n%s", i, message)
+		}
+	}
+	for i, message := range checkAll {
+		if !strings.Contains(message, "operator assigned every contract criterion") || strings.Contains(message, "assigns no criterion coverage") {
+			t.Errorf("check-all message %d blurred authority:\n%s", i, message)
+		}
+	}
+	for _, want := range []string{"command's text identifies the command", "Never infer internal tests", "separate read-only operator evidence", "ordinary configured check assigns no criterion coverage"} {
+		if !strings.Contains(System, want) {
+			t.Errorf("compiler system missing %q:\n%s", want, System)
+		}
+	}
+}
+
 func TestAggregateRecordsInvocationScopedLoopPolicy(t *testing.T) {
 	result := aggregate(Contract{Criteria: []Criterion{{ID: "tests", Judge: "check"}}},
 		"sha256:test", true, nil, "", nil,

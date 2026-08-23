@@ -608,16 +608,20 @@ func envelopeIDFromDigests(contract, intentSHA, evidenceSHA, checkSHA string, ch
 }
 
 func compilerMessage(req plyexec.TaskRequest) string {
-	verifier := "No executable verifier is configured. Distinguish evidence the worker can gather from claims only a person can judge."
-	if req.Options.Check != "" {
-		verifier = "The operator configured this exact verifier. Use judge=check only for criteria it directly establishes, without treating it as broader proof:\n" + req.Options.Check
-		if req.Options.CheckAllCriteria {
-			verifier = "The operator explicitly admits this exact verifier as judge of every contract criterion. Still classify evidence honestly for explanation; the operator policy, never your labels, supplies authority:\n" + req.Options.Check
-		}
-	}
 	approval := approvalCompilerBoundary(req.Options.ApprovalPolicy)
 	confinement := confinementCompilerBoundary(req.Options.ActionConfinement)
-	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nACTION APPROVAL POLICY\n" + approval + "\n\nACTION CONFINEMENT\n" + confinement + "\n\nVERIFIER BOUNDARY\n" + verifier
+	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nACTION APPROVAL POLICY\n" + approval + "\n\nACTION CONFINEMENT\n" + confinement + "\n\nVERIFIER BOUNDARY\n" + verifierCompilerBoundary(req.Options.Check, req.Options.CheckAllCriteria)
+}
+
+func verifierCompilerBoundary(check string, checkAll bool) string {
+	if check == "" {
+		return "No executable verifier is configured. Distinguish evidence the worker can gather from claims only a person can judge."
+	}
+	opacity := "The command text identifies the verifier but does not reveal its implementation. Never infer internal tests, assertions, coverage, or output from its name or arguments; absent separate read-only operator evidence, describe only that a passing receipt exists for the exact verifier."
+	if checkAll {
+		return "The operator explicitly admits this exact verifier as judge of every contract criterion. You may say the operator assigned every contract criterion to it; do not invent why it passes. Still classify evidence honestly for explanation; the operator policy, never your labels, supplies authority. " + opacity + "\n" + check
+	}
+	return "The operator configured this exact verifier, but this configuration assigns no criterion coverage or completion authority. Any judge=check labels you propose are explanatory and remain pending. Use them only for criteria the verifier directly establishes, without treating them as broader proof. " + opacity + "\n" + check
 }
 
 func approvalCompilerBoundary(policy string) string {
