@@ -1,5 +1,14 @@
 #!/bin/sh
+# search text beneath workspace-relative paths
 set -eu
+case "${1-}" in
+  -h|--help)
+    test "$#" -eq 1
+    printf '%s\n' 'usage: search [--] PATTERN [RELATIVE_PATH ...]'
+    exit 0
+    ;;
+  --) shift ;;
+esac
 test "$#" -ge 1
 pattern=$1
 shift

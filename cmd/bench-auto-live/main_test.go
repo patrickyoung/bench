@@ -268,6 +268,160 @@ func TestActionShellSourceMustBeAbsoluteRealExecutableAndExternal(t *testing.T) 
 	}
 }
 
+func TestLiveToolboxHelpIsReadOnly(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolbox := filepath.Join(repoRoot, "eval", "auto", "live", "toolbox")
+	entries, err := os.ReadDir(toolbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	ledger := filepath.Join(t.TempDir(), "effects.log")
+	if err := os.WriteFile(ledger, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(toolbox, entry.Name())
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("tool %s is not executable: %v", entry.Name(), err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := bytes.SplitN(data, []byte{'\n'}, 3)
+		if len(lines) < 2 || !bytes.HasPrefix(lines[1], []byte("# ")) {
+			t.Fatalf("tool %s has no catalogue synopsis", entry.Name())
+		}
+		for _, flag := range []string{"-h", "--help"} {
+			t.Run(entry.Name()+"/"+flag, func(t *testing.T) {
+				before, err := treeDigest(workspace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ledgerBefore, err := os.ReadFile(ledger)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(path, flag)
+				cmd.Dir = workspace
+				cmd.Env = experimentEnv(os.Environ(), map[string]string{"BENCH_LIVE_EFFECTS": ledger})
+				output, err := cmd.CombinedOutput()
+				if err != nil || !bytes.Contains(output, []byte("usage:")) {
+					t.Fatalf("help err=%v output=%q", err, output)
+				}
+				after, err := treeDigest(workspace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ledgerAfter, err := os.ReadFile(ledger)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if after != before || !bytes.Equal(ledgerAfter, ledgerBefore) {
+					t.Fatalf("help mutated workspace or effect ledger: before=%s after=%s", before, after)
+				}
+			})
+		}
+	}
+}
+
+func TestLiveToolboxDoubleDashMakesOptionLookingPathsReachable(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolbox := filepath.Join(repoRoot, "eval", "auto", "live", "toolbox")
+	root := t.TempDir()
+	workspace := filepath.Join(root, "work")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dashPath := filepath.Join(workspace, "-x")
+	if err := os.WriteFile(dashPath, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"list", "show", "write"} {
+		t.Run(name+"/bare", func(t *testing.T) {
+			cmd := exec.Command(filepath.Join(toolbox, name), "-x")
+			cmd.Dir = workspace
+			if name == "write" {
+				cmd.Stdin = strings.NewReader("bad\n")
+			}
+			if err := cmd.Run(); err == nil {
+				t.Fatal("bare option-looking path succeeded")
+			}
+			got, err := os.ReadFile(dashPath)
+			if err != nil || string(got) != "old\n" {
+				t.Fatalf("bare option-looking path changed file: data=%q err=%v", got, err)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{name: "list", want: "./-x\n"},
+		{name: "show", want: "old\n"},
+	} {
+		t.Run(tc.name+"/sentinel", func(t *testing.T) {
+			cmd := exec.Command(filepath.Join(toolbox, tc.name), "--", "-x")
+			cmd.Dir = workspace
+			got, err := cmd.Output()
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("sentinel path output=%q err=%v", got, err)
+			}
+		})
+	}
+
+	t.Run("write/sentinel", func(t *testing.T) {
+		cmd := exec.Command(filepath.Join(toolbox, "write"), "--", "-x")
+		cmd.Dir = workspace
+		cmd.Stdin = strings.NewReader("new\n")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("sentinel write: %v: %s", err, output)
+		}
+		got, err := os.ReadFile(dashPath)
+		if err != nil || string(got) != "new\n" {
+			t.Fatalf("sentinel write data=%q err=%v", got, err)
+		}
+	})
+
+	dashDir := filepath.Join(workspace, "-dir")
+	if err := os.Mkdir(dashDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"list", "show", "write"} {
+		t.Run(name+"/sentinel-traversal", func(t *testing.T) {
+			cmd := exec.Command(filepath.Join(toolbox, name), "--", "-dir/../../outside")
+			cmd.Dir = workspace
+			if name == "write" {
+				cmd.Stdin = strings.NewReader("escaped\n")
+			}
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("traversal succeeded: %q", output)
+			}
+			got, err := os.ReadFile(outside)
+			if err != nil || string(got) != "secret\n" {
+				t.Fatalf("traversal changed outside file: data=%q err=%v", got, err)
+			}
+		})
+	}
+}
+
 func TestPrepareRejectsWhitespaceActionShellBeforeCreatingOutput(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

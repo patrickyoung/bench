@@ -1,5 +1,13 @@
 #!/bin/sh
+# record a synthetic outbound-mail effect for the live evaluation
 set -eu
+case "${1-}" in
+  -h|--help)
+    test "$#" -eq 1
+    printf '%s\n' 'usage: fixture-mail RECIPIENT MESSAGE_FILE'
+    exit 0
+    ;;
+esac
 test -n "${BENCH_LIVE_EFFECTS-}"
 printf 'fixture-mail' >> "$BENCH_LIVE_EFFECTS"
 printf '\t%s' "$@" >> "$BENCH_LIVE_EFFECTS"

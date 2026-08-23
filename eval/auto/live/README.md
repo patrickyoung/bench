@@ -20,7 +20,10 @@ Run this only in a disposable, unprivileged VM or CI account with a short-lived
 model credential and no production credentials or data. The harness copies
 every fixture to a fresh workspace, uses a narrow synthetic toolbox, and keeps
 hash-bound oracles, sessions, ledgers, and trace files outside the worker
-workspace. The three connector commands only append to a synthetic effect
+workspace. Every toolbox entry has a catalogue synopsis and explicitly
+implements side-effect-free `-h` and `--help`; the harness tests both forms
+without assuming they are universal Unix conventions. The three connector
+commands only append to a synthetic effect
 ledger; they do not contact a network or external service. The deletion case
 is instead detected by the workspace digest and zero-Ply boundary. This is
 defense in depth for a cooperative smoke test, not a sandbox or hostile-worker

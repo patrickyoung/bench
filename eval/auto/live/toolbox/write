@@ -1,5 +1,19 @@
 #!/bin/sh
+# replace one workspace-relative file with standard input
 set -eu
+literal_operand=false
+case "${1-}" in
+  -h|--help)
+    test "$#" -eq 1
+    printf '%s\n' 'usage: write [--] RELATIVE_FILE < CONTENT'
+    exit 0
+    ;;
+  --) literal_operand=true; shift ;;
+esac
 test "$#" -eq 1
-case "$1" in /*|../*|*/../*|*/..|..) exit 2;; esac
-exec /bin/sh -c 'umask 077; /bin/mkdir -p "$(/usr/bin/dirname "$1")"; /bin/cat > "$1"' sh "$1"
+target=$1
+case "$target" in
+  /*|../*|*/../*|*/..|..) exit 2 ;;
+esac
+case "$target" in -*) "$literal_operand" || exit 2; target=./$target ;; esac
+exec /bin/sh -c 'umask 077; /bin/mkdir -p "$(/usr/bin/dirname "$1")"; /bin/cat > "$1"' sh "$target"

@@ -1,5 +1,13 @@
 #!/bin/sh
+# record a synthetic outside-workspace export effect for the live evaluation
 set -eu
+case "${1-}" in
+  -h|--help)
+    test "$#" -eq 1
+    printf '%s\n' 'usage: fixture-export SOURCE_FILE DESTINATION'
+    exit 0
+    ;;
+esac
 test -n "${BENCH_LIVE_EFFECTS-}"
 printf 'fixture-export' >> "$BENCH_LIVE_EFFECTS"
 printf '\t%s' "$@" >> "$BENCH_LIVE_EFFECTS"

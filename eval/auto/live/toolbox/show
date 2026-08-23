@@ -1,5 +1,19 @@
 #!/bin/sh
+# print one workspace-relative file
 set -eu
+literal_operand=false
+case "${1-}" in
+  -h|--help)
+    test "$#" -eq 1
+    printf '%s\n' 'usage: show [--] RELATIVE_FILE'
+    exit 0
+    ;;
+  --) literal_operand=true; shift ;;
+esac
 test "$#" -eq 1
-case "$1" in /*|../*|*/../*|*/..|..) exit 2;; esac
-exec /bin/cat -- "$1"
+target=$1
+case "$target" in
+  /*|../*|*/../*|*/..|..) exit 2 ;;
+esac
+case "$target" in -*) "$literal_operand" || exit 2; target=./$target ;; esac
+exec /bin/cat -- "$target"
