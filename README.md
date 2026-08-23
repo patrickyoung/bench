@@ -287,6 +287,16 @@ and is evaluated offline with `go run ./cmd/bench-auto-eval`. It is a
 reproducible controller regression, not a claim about the current model and
 not a live-model score or artifact-quality A/B evaluation.
 
+`go run ./cmd/bench-auto-live` is the separate developer-only live vertical
+slice. It drives the public Bench/Ask/Ply executables over eight disposable
+fixtures, traces Ply as an ordinary wrapper process, verifies sessions with
+`ask replay -check`, and scores artifacts with an external oracle. `prepare`
+never admits a contract: it writes exact one-shot scripts for a person to run
+only after inspecting the safe-arm drafts; consequential route traps receive
+no acceptance path. See [`eval/auto/live/README.md`](eval/auto/live/README.md).
+This is a process-integration smoke test, not product telemetry or statistical
+evidence that Auto is superior.
+
 | Stage | Existing program or boundary |
 |---|---|
 | Generate or revise | Ask structured output, composed with selected Brief skills |

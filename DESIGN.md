@@ -82,6 +82,15 @@ floors, and 60 reviewed routing cases without network, model, shell, or worker
 execution. It must not be presented as a score for a current live model or as
 an outcome-quality A/B test.
 
+The developer-only `bench-auto-live` command tests the next boundary without
+changing the product protocol. It invokes the public Bench, Ask, and Ply
+executables against fresh fixture copies, records a Ply wrapper trace outside
+the worker, and relies on external artifact oracles. Contract admission stays
+a literal human action: preparation emits inspectable one-shot scripts for
+safe drafts and no script for consequential traps. Its eight cases establish
+only live process integration and exact-fixture parity, not a general model
+score, telemetry stream, or automated acceptance authority.
+
 The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its
 default task work phase executes the equivalent of:

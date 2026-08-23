@@ -97,6 +97,13 @@ The route record is observation only: it grants no admission, approval,
 criterion judgment, or completion. Behavior-affecting router System, Schema,
 normalization, or rule changes require a new router identifier and frozen
 corpus snapshot.
+Live Auto experiments must remain developer-only compositions of public
+Bench/Ask/Ply executables, fresh disposable workspaces, ordinary tracing
+wrappers, verified Ask replay, and external hash-bound oracles. A harness must
+never admit a generated contract: it may emit an exact script for a person to
+run after inspection, and consequential route traps must receive no admission
+path. Do not add telemetry, a private event store, or import product internals
+to make the experiment easier.
 Loop-only pursuit, budget, and stop metadata belongs in
 `bench.contract-result/v3`; Review must keep its existing v1/v2 result bodies.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows

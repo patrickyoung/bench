@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+test "$#" -le 1
+target=${1-.}
+case "$target" in /*|../*|*/../*|*/..|..) exit 2;; esac
+exec /usr/bin/find "$target" -type f -print

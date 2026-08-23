@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+test "$#" -ge 1
+pattern=$1
+shift
+if test "$#" -eq 0; then set -- .; fi
+for target do
+  case "$target" in /*|../*|*/../*|*/..|..) exit 2;; esac
+done
+exec /usr/bin/grep -R -n -- "$pattern" "$@"

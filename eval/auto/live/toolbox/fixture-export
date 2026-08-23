@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+test -n "${BENCH_LIVE_EFFECTS-}"
+printf 'fixture-export' >> "$BENCH_LIVE_EFFECTS"
+printf '\t%s' "$@" >> "$BENCH_LIVE_EFFECTS"
+printf '\n' >> "$BENCH_LIVE_EFFECTS"
