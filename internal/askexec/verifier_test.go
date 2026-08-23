@@ -295,6 +295,58 @@ func TestSelectLatestApprovalResultRestoresOnlyAdjacentReceipt(t *testing.T) {
 	}
 }
 
+func TestSelectTerminalConfinementBindsAdjacentSpentCagedApproval(t *testing.T) {
+	contractID, job := "sha256:contract", "bench-job"
+	mayPath, cagePath := "/suite/bin/may", "/suite/bin/cage"
+	maySHA, cageSHA := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	conf := &approvalConfinementBody{Kind: "cage", CagePath: cagePath, CageSHA256: cageSHA, Argv: []string{cagePath, "-w", "/workspace", "--", "/bin/sh", "-c", "write then fail"}, Workspace: "/workspace", TempDir: "/control/run.cage-tmp", Network: false}
+	action := approvalActionBody{Version: 2, ContractID: contractID, Directory: "/workspace", Shell: "/bin/sh", Path: "/tools", TimeoutNS: 1, Script: "write then fail", Confinement: conf}
+	actionBytes, _ := json.Marshal(action)
+	actionBytes = append(actionBytes, '\n')
+	digest := mayDigest(job, string(actionBytes))
+	mayResult, _ := json.Marshal(mayResultBody{Version: 1, Job: job, Digest: digest, Action: string(actionBytes), Verdict: "spent"})
+	mayResult = append(mayResult, '\n')
+	approval := approvalBody{Version: 2, ContractID: contractID, Job: job, Digest: digest, Action: action, ActionSHA256: digestText(string(actionBytes)), Verdict: "spent", MayPath: mayPath, MaySHA256: maySHA, MayArgv: []string{mayPath, "request", job}, MayInputSHA256: digestText(string(actionBytes)), MayStdoutSHA256: digestText(string(mayResult)), MayStdoutBytes: int64(len(mayResult)), MayExitCode: 0}
+	approvalBytes, _ := json.Marshal(approval)
+	output := []byte{0xff, 'x'}
+	confinement := confinementBody{Version: 1, ContractID: contractID, ApprovalDigest: digest, ApprovalActionSHA256: approval.ActionSHA256, ScriptSHA256: digestText(action.Script), CagePath: cagePath, CageSHA256: cageSHA, Workspace: conf.Workspace, TempDir: conf.TempDir, ExitCode: 125, MayHaveRun: true, Detail: "child returned reserved status 125", Output: output, OutputSHA256: digestText(string(output)), OutputBytes: int64(len(output))}
+	confinementBytes, _ := json.Marshal(confinement)
+	replay := marshalReplayEvents(t, []map[string]any{{"seq": 1, "type": "session", "data": map[string]any{"id": "run"}}, {"seq": 2, "type": "note", "data": map[string]any{"source": "ply", "kind": "ply.approval/v2", "body": json.RawMessage(approvalBytes)}}, {"seq": 3, "type": "seal", "data": map[string]any{"through": 2, "sha256": "sha256:approval-seal"}}, {"seq": 4, "type": "note", "data": map[string]any{"source": "ply", "kind": "ply.confinement/v1", "body": json.RawMessage(confinementBytes)}}, {"seq": 5, "type": "seal", "data": map[string]any{"through": 4, "sha256": "sha256:confinement-seal"}}})
+	got, err := selectTerminalConfinement(replay, contractID, job, "/workspace", mayPath, maySHA, cagePath, cageSHA)
+	if err != nil || !got.MayHaveRun || got.ExitCode != 125 || got.ActionSHA256 != approval.ActionSHA256 {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	result := plyexec.ContractResult{ContractID: contractID, Status: "confinement_failed", WorkerExitCode: 125, ApprovalPolicy: plyexec.ApprovalEveryAction, ActionConfinement: plyexec.ConfinementCage, StopReason: "confinement_failed", ConfinementReceipt: &plyexec.ConfinementReceiptRef{Seq: got.Seq, BodySHA256: got.BodySHA256, SealSHA256: got.SealSHA256, ActionSHA256: got.ActionSHA256, MayHaveRun: got.MayHaveRun, Detail: got.Detail}}
+	resultBytes, _ := json.Marshal(result)
+	withResult := appendReplayEvent(t, replay, map[string]any{"seq": 6, "type": "note", "data": map[string]any{"source": "bench", "kind": "bench.contract-result/v5", "body": json.RawMessage(resultBytes)}})
+	withResult = appendReplayEvent(t, withResult, map[string]any{"seq": 7, "type": "seal", "data": map[string]any{"through": 6, "sha256": "sha256:result-seal"}})
+	restored, found, err := selectLatestApprovalResult(withResult, contractID, job, "/workspace", mayPath, maySHA, cagePath, cageSHA)
+	if err != nil || !found || restored.Status != "confinement_failed" {
+		t.Fatalf("restored=%#v found=%v err=%v", restored, found, err)
+	}
+	confinement.ApprovalDigest = "wrong"
+	badBytes, _ := json.Marshal(confinement)
+	bad := bytes.Replace(replay, confinementBytes, badBytes, 1)
+	if _, err := selectTerminalConfinement(bad, contractID, job, "/workspace", mayPath, maySHA, cagePath, cageSHA); err == nil {
+		t.Fatal("mismatched confinement receipt accepted")
+	}
+	confinement.ApprovalDigest = digest
+	confinement.Output = []byte("head\n[ply: 10 bytes elided]\ntail")
+	confinement.OutputSHA256 = digestText(string(confinement.Output))
+	confinement.OutputBytes = int64(len("headtail")) + 10
+	confinement.ElidedBytes = 10
+	elidedBytes, _ := json.Marshal(confinement)
+	elidedReplay := bytes.Replace(replay, confinementBytes, elidedBytes, 1)
+	if _, err := selectTerminalConfinement(elidedReplay, contractID, job, "/workspace", mayPath, maySHA, cagePath, cageSHA); err != nil {
+		t.Fatalf("valid elided confinement receipt rejected: %v", err)
+	}
+	for _, counts := range [][2]int64{{-1, 0}, {1, -1}, {1, 2}} {
+		if validCapturedOutput(nil, counts[0], counts[1]) {
+			t.Fatalf("accepted invalid byte counts total=%d elided=%d", counts[0], counts[1])
+		}
+	}
+}
+
 func approvalReplay(t *testing.T, receipt approvalBody) []byte {
 	t.Helper()
 	body, err := json.Marshal(receipt)

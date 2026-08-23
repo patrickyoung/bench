@@ -67,24 +67,35 @@ type ApprovalReceiptRef struct {
 }
 
 type ContractResult struct {
-	ContractID            string              `json:"contract_id"`
-	Status                string              `json:"status"`
-	CheckConfigured       bool                `json:"check_configured"`
-	CheckPassed           bool                `json:"check_passed"`
-	WorkerExitCode        int                 `json:"worker_exit_code"`
-	ProposedCheckCoverage []string            `json:"proposed_check_coverage"`
-	AdmittedCheckCoverage []string            `json:"admitted_check_coverage"`
-	Outstanding           []ContractCriterion `json:"outstanding"`
-	JudgeMapSHA256        string              `json:"judge_map_sha256,omitempty"`
-	VerifierReceipt       *VerifierReceiptRef `json:"verifier_receipt,omitempty"`
-	OpenQuestions         []string            `json:"open_questions"`
-	PendingApprovals      []string            `json:"pending_approvals"`
-	Pursuit               string              `json:"pursuit,omitempty"`
-	CycleBudget           string              `json:"cycle_budget,omitempty"`
-	TurnBudget            string              `json:"turn_budget,omitempty"`
-	StopReason            string              `json:"stop_reason,omitempty"`
-	ApprovalPolicy        string              `json:"approval_policy,omitempty"`
-	ApprovalReceipt       *ApprovalReceiptRef `json:"approval_receipt,omitempty"`
+	ContractID            string                 `json:"contract_id"`
+	Status                string                 `json:"status"`
+	CheckConfigured       bool                   `json:"check_configured"`
+	CheckPassed           bool                   `json:"check_passed"`
+	WorkerExitCode        int                    `json:"worker_exit_code"`
+	ProposedCheckCoverage []string               `json:"proposed_check_coverage"`
+	AdmittedCheckCoverage []string               `json:"admitted_check_coverage"`
+	Outstanding           []ContractCriterion    `json:"outstanding"`
+	JudgeMapSHA256        string                 `json:"judge_map_sha256,omitempty"`
+	VerifierReceipt       *VerifierReceiptRef    `json:"verifier_receipt,omitempty"`
+	OpenQuestions         []string               `json:"open_questions"`
+	PendingApprovals      []string               `json:"pending_approvals"`
+	Pursuit               string                 `json:"pursuit,omitempty"`
+	CycleBudget           string                 `json:"cycle_budget,omitempty"`
+	TurnBudget            string                 `json:"turn_budget,omitempty"`
+	StopReason            string                 `json:"stop_reason,omitempty"`
+	ApprovalPolicy        string                 `json:"approval_policy,omitempty"`
+	ApprovalReceipt       *ApprovalReceiptRef    `json:"approval_receipt,omitempty"`
+	ActionConfinement     string                 `json:"action_confinement,omitempty"`
+	ConfinementReceipt    *ConfinementReceiptRef `json:"confinement_receipt,omitempty"`
+}
+
+type ConfinementReceiptRef struct {
+	Seq          int    `json:"seq"`
+	BodySHA256   string `json:"body_sha256"`
+	SealSHA256   string `json:"seal_sha256"`
+	ActionSHA256 string `json:"action_sha256"`
+	MayHaveRun   bool   `json:"may_have_run"`
+	Detail       string `json:"detail"`
 }
 
 const (
@@ -93,6 +104,8 @@ const (
 	DefaultLoopTurns    = 50
 	ApprovalOff         = "off"
 	ApprovalEveryAction = "every-action"
+	ConfinementOff      = "off"
+	ConfinementCage     = "cage"
 )
 
 func LoopCycleBudget(options TaskOptions) string {
@@ -141,23 +154,24 @@ type TaskRequest struct {
 // distinction between an omitted option (Ply owns its default) and an
 // explicit zero (Ply documents zero as unbounded).
 type TaskOptions struct {
-	IntentContract   bool
-	ContractID       string
-	Check            string
-	CheckAllCriteria bool
-	ApprovalPolicy   string
-	Loop             bool
-	Force            bool
-	Effort           string
-	Cycles           int
-	HasCycles        bool
-	Turns            int
-	HasTurns         bool
-	Timeout          time.Duration
-	HasTimeout       bool
-	Compact          bool
-	Compactions      int
-	HasCompactions   bool
+	IntentContract    bool
+	ContractID        string
+	Check             string
+	CheckAllCriteria  bool
+	ApprovalPolicy    string
+	ActionConfinement string
+	Loop              bool
+	Force             bool
+	Effort            string
+	Cycles            int
+	HasCycles         bool
+	Turns             int
+	HasTurns          bool
+	Timeout           time.Duration
+	HasTimeout        bool
+	Compact           bool
+	Compactions       int
+	HasCompactions    bool
 }
 
 type Client interface {
@@ -173,6 +187,7 @@ type Runner struct {
 	AskPath   string
 	BriefPath string
 	MayPath   string
+	CagePath  string
 }
 
 // Work lets ply compose Ask with ordinary programs in the workspace. The
@@ -187,9 +202,17 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	goal := strings.TrimSpace(req.Goal)
 	session := strings.TrimSpace(req.Session)
 	mayPath := ""
+	cagePath := ""
 	if approvalPolicy(req.Options) == ApprovalEveryAction {
 		var err error
 		mayPath, err = ResolveMayPath(r.MayPath)
+		if err != nil {
+			return failed(err.Error())
+		}
+	}
+	if confinementPolicy(req.Options) == ConfinementCage {
+		var err error
+		cagePath, err = ResolveCagePath(r.CagePath)
 		if err != nil {
 			return failed(err.Error())
 		}
@@ -232,6 +255,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 			return failed("every-action approval needs an admitted contract id")
 		}
 		args = append(args, "-may-job", MayJob(req.Options.ContractID))
+	}
+	if confinementPolicy(req.Options) == ConfinementCage {
+		args = append(args, "-cage")
 	}
 	if effort := strings.TrimSpace(req.Options.Effort); effort != "" {
 		args = append(args, "-effort", effort)
@@ -296,6 +322,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if mayPath != "" {
 		env = append(env, "MAY="+mayPath)
 	}
+	if cagePath != "" {
+		env = append(env, "CAGE="+cagePath)
+	}
 	// The parent has an explicit session, but nested Ply processes normally
 	// choose their own. Give those subagents a durable, parent-scoped home
 	// without changing either process's stdout/stderr contract.
@@ -333,6 +362,23 @@ func ResolveMayPath(path string) (string, error) {
 	abs, err := filepath.Abs(resolved)
 	if err != nil {
 		return "", fmt.Errorf("resolve May: %w", err)
+	}
+	return abs, nil
+}
+
+// ResolveCagePath resolves Cage in the controller before the worker changes
+// directory. Ply binds the exact executable bytes in each caged action receipt.
+func ResolveCagePath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		path = "cage"
+	}
+	resolved, err := exec.LookPath(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve Cage: %w", err)
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve Cage: %w", err)
 	}
 	return abs, nil
 }
@@ -377,6 +423,21 @@ func Validate(req TaskRequest) error {
 	default:
 		return fmt.Errorf("approval policy %q is not supported", req.Options.ApprovalPolicy)
 	}
+	switch confinementPolicy(req.Options) {
+	case ConfinementOff:
+	case ConfinementCage:
+		if !req.Options.IntentContract {
+			return errors.New("Cage confinement needs an outcome contract")
+		}
+		if approvalPolicy(req.Options) != ApprovalEveryAction {
+			return errors.New("Cage confinement needs every-action approval")
+		}
+		if req.Options.Compact {
+			return errors.New("Cage confinement does not support compaction")
+		}
+	default:
+		return fmt.Errorf("action confinement %q is not supported", req.Options.ActionConfinement)
+	}
 	if req.Options.Loop && !req.Options.IntentContract {
 		return errors.New("loop autonomy needs an outcome contract")
 	}
@@ -417,6 +478,13 @@ func approvalPolicy(options TaskOptions) string {
 		return ApprovalOff
 	}
 	return strings.TrimSpace(options.ApprovalPolicy)
+}
+
+func confinementPolicy(options TaskOptions) string {
+	if strings.TrimSpace(options.ActionConfinement) == "" {
+		return ConfinementOff
+	}
+	return strings.TrimSpace(options.ActionConfinement)
 }
 
 // MayJob is one stable, finite namespace per admitted contract. May still

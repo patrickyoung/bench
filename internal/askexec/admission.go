@@ -21,6 +21,7 @@ type AdmissionExpectation struct {
 	CheckSHA256            string
 	CheckAll               bool
 	ApprovalPolicy         string
+	ActionConfinement      string
 	Workspace              string
 	Toolbox                string
 	Skills                 []string
@@ -36,25 +37,26 @@ type AdmissionReader interface {
 }
 
 type admissionBody struct {
-	Status          string          `json:"status"`
-	AdmittedBy      string          `json:"admitted_by"`
-	ContractID      string          `json:"contract_id"`
-	ContractSHA     string          `json:"contract_sha256"`
-	ContractBodySHA string          `json:"contract_body_sha256"`
-	IntentSHA       string          `json:"intent_sha256"`
-	EvidenceSHA     string          `json:"compiler_evidence_sha256"`
-	CheckSHA        string          `json:"check_sha256"`
-	CheckAll        bool            `json:"check_all"`
-	ApprovalPolicy  string          `json:"approval_policy,omitempty"`
-	Workspace       string          `json:"workspace"`
-	Toolbox         string          `json:"toolbox,omitempty"`
-	Skills          []string        `json:"skills"`
-	OutcomeID       string          `json:"outcome_id"`
-	RevisionID      string          `json:"revision_id"`
-	DraftSHA        string          `json:"draft_sha256"`
-	Generation      int             `json:"generation"`
-	Parent          string          `json:"parent_revision_id,omitempty"`
-	Contract        json.RawMessage `json:"contract"`
+	Status            string          `json:"status"`
+	AdmittedBy        string          `json:"admitted_by"`
+	ContractID        string          `json:"contract_id"`
+	ContractSHA       string          `json:"contract_sha256"`
+	ContractBodySHA   string          `json:"contract_body_sha256"`
+	IntentSHA         string          `json:"intent_sha256"`
+	EvidenceSHA       string          `json:"compiler_evidence_sha256"`
+	CheckSHA          string          `json:"check_sha256"`
+	CheckAll          bool            `json:"check_all"`
+	ApprovalPolicy    string          `json:"approval_policy,omitempty"`
+	ActionConfinement string          `json:"action_confinement,omitempty"`
+	Workspace         string          `json:"workspace"`
+	Toolbox           string          `json:"toolbox,omitempty"`
+	Skills            []string        `json:"skills"`
+	OutcomeID         string          `json:"outcome_id"`
+	RevisionID        string          `json:"revision_id"`
+	DraftSHA          string          `json:"draft_sha256"`
+	Generation        int             `json:"generation"`
+	Parent            string          `json:"parent_revision_id,omitempty"`
+	Contract          json.RawMessage `json:"contract"`
 }
 
 // AdmittedContract verifies one Ask snapshot and requires its latest contract
@@ -93,14 +95,16 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 		if err := json.Unmarshal(events[i].Data, &probe); err != nil {
 			return fmt.Errorf("decode latest contract admission candidate: %w", err)
 		}
-		if probe.Kind == "bench.contract/v3" || probe.Kind == "bench.contract/v4" {
+		if probe.Kind == "bench.contract/v3" || probe.Kind == "bench.contract/v4" || probe.Kind == "bench.contract/v5" {
 			index = i
 			kind = probe.Kind
 			break
 		}
 	}
 	wantKind := "bench.contract/v3"
-	if strings.TrimSpace(want.ApprovalPolicy) == "every-action" {
+	if normalizeConfinement(want.ActionConfinement) == "cage" {
+		wantKind = "bench.contract/v5"
+	} else if strings.TrimSpace(want.ApprovalPolicy) == "every-action" {
 		wantKind = "bench.contract/v4"
 	}
 	if index < 0 || kind != wantKind || !sealedNote(events, index, wantKind) {
@@ -124,6 +128,7 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 		body.IntentSHA != want.IntentSHA256 || body.EvidenceSHA != want.CompilerEvidenceSHA256 || body.CheckSHA != want.CheckSHA256 ||
 		body.CheckAll != want.CheckAll || body.Workspace != want.Workspace || body.Toolbox != want.Toolbox || !equalStrings(body.Skills, want.Skills) ||
 		normalizeApproval(body.ApprovalPolicy) != normalizeApproval(want.ApprovalPolicy) ||
+		normalizeConfinement(body.ActionConfinement) != normalizeConfinement(want.ActionConfinement) ||
 		body.OutcomeID != want.OutcomeID || body.RevisionID != want.RevisionID || body.DraftSHA != want.DraftSHA256 ||
 		body.Generation != want.Generation || body.Parent != want.ParentRevisionID || recomputeAdmissionID(body) != body.ContractID {
 		return fmt.Errorf("latest sealed contract admission does not match the durable revision and policy")
@@ -132,6 +137,25 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 }
 
 func recomputeAdmissionID(body admissionBody) string {
+	if normalizeConfinement(body.ActionConfinement) == "cage" {
+		value, _ := json.Marshal(struct {
+			Version     int      `json:"version"`
+			Revision    string   `json:"revision_id"`
+			Draft       string   `json:"draft_sha256"`
+			Intent      string   `json:"intent_sha256"`
+			Evidence    string   `json:"compiler_evidence_sha256"`
+			Check       string   `json:"check_sha256"`
+			CheckAll    bool     `json:"check_all"`
+			Approval    string   `json:"approval_policy"`
+			Confinement string   `json:"action_confinement"`
+			Workspace   string   `json:"workspace"`
+			Toolbox     string   `json:"toolbox,omitempty"`
+			Skills      []string `json:"skills"`
+			Method      string   `json:"method"`
+		}{3, body.RevisionID, body.DraftSHA, body.IntentSHA, body.EvidenceSHA, body.CheckSHA, body.CheckAll, "every-action", "cage", body.Workspace, body.Toolbox, append([]string{}, body.Skills...), body.AdmittedBy})
+		digest := sha256.Sum256(value)
+		return "sha256:" + hex.EncodeToString(digest[:])
+	}
 	if normalizeApproval(body.ApprovalPolicy) == "every-action" {
 		value, _ := json.Marshal(struct {
 			Version   int      `json:"version"`
@@ -176,6 +200,13 @@ func recomputeAdmissionID(body admissionBody) string {
 }
 
 func normalizeApproval(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "off"
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeConfinement(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "off"
 	}

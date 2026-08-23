@@ -261,6 +261,12 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 		m.notice = "Contract admission is unavailable"
 		return m, nil
 	}
+	if loaded.ActionConfinement == plyexec.ConfinementCage {
+		if err := cageStateOutsideWorkspace(m.workspace, m.dataDir, m.session); err != nil {
+			m.notice = "Contract cannot start · " + err.Error()
+			return m, nil
+		}
+	}
 	task := m.taskForContract(loaded, m.taskOptions)
 	m.taskOptions.Force = false
 	if err := plyexec.Validate(task); err != nil {
@@ -275,6 +281,7 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
+	m.taskOptions.ActionConfinement = loaded.ActionConfinement
 	m.contractDraft = &loaded
 	m.running = true
 	m.job = jobPlyTask
@@ -305,6 +312,12 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 		m.notice = "Contract cannot run · " + err.Error()
 		return m, nil
 	}
+	if loaded.ActionConfinement == plyexec.ConfinementCage {
+		if err := cageStateOutsideWorkspace(m.workspace, m.dataDir, m.session); err != nil {
+			m.notice = "Contract cannot run · " + err.Error()
+			return m, nil
+		}
+	}
 	task := m.taskForContract(loaded, m.taskOptions)
 	m.taskOptions.Force = false
 	if err := plyexec.Validate(task); err != nil {
@@ -319,6 +332,7 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
+	m.taskOptions.ActionConfinement = loaded.ActionConfinement
 	m.admittedContract = &loaded
 	m.contractDraft = nil
 	m.screen = screenAsk
@@ -346,6 +360,7 @@ func (m *Model) taskForContract(draft contractexec.Draft, options plyexec.TaskOp
 	options.Check = draft.Check
 	options.CheckAllCriteria = draft.CheckAll
 	options.ApprovalPolicy = draft.ApprovalPolicy
+	options.ActionConfinement = draft.ActionConfinement
 	return plyexec.TaskRequest{
 		Dir: m.workspace, Goal: draft.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
 		Skills: append([]string(nil), draft.Skills...), Toolbox: draft.Toolbox, Model: m.modelName, Options: options,
@@ -372,6 +387,7 @@ func (m *Model) openContract() (tea.Model, tea.Cmd) {
 		m.taskOptions.Check = loaded.Check
 		m.taskOptions.CheckAllCriteria = loaded.CheckAll
 		m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
+		m.taskOptions.ActionConfinement = loaded.ActionConfinement
 	}
 	m.screen = screenContract
 	m.composer.SetValue("")
@@ -395,6 +411,7 @@ func (m *Model) restoreContractState() {
 		m.taskOptions.Check = loaded.Check
 		m.taskOptions.CheckAllCriteria = loaded.CheckAll
 		m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
+		m.taskOptions.ActionConfinement = loaded.ActionConfinement
 		m.screen = screenContract
 		m.notice = "Session verified · unadmitted contract draft restored · Ply has not started"
 		return
@@ -404,11 +421,34 @@ func (m *Model) restoreContractState() {
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
 	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
+	m.taskOptions.ActionConfinement = loaded.ActionConfinement
 	m.notice = "Local admitted revision restored · its sealed admission is reverified before any retry"
 	if loaded.ApprovalPolicy == plyexec.ApprovalEveryAction && m.approvalResults != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		result, found, resultErr := m.approvalResults.LatestApprovalResult(ctx, m.session, loaded.ContractID, m.workspace, m.mayPath)
+		var result plyexec.ContractResult
+		var found bool
+		var resultErr error
+		if loaded.ActionConfinement == plyexec.ConfinementCage {
+			reader, ok := m.approvalResults.(askexec.CagedApprovalResultReader)
+			if !ok {
+				resultErr = errors.New("approval reader cannot restore caged results")
+			} else {
+				cagePath, err := plyexec.ResolveCagePath(m.cagePath)
+				if err != nil {
+					resultErr = err
+				} else {
+					cageSHA, hashErr := plyexec.ExecutableSHA256(cagePath)
+					if hashErr != nil {
+						resultErr = hashErr
+					} else {
+						result, found, resultErr = reader.LatestCagedApprovalResult(ctx, m.session, loaded.ContractID, m.workspace, m.mayPath, cagePath, cageSHA)
+					}
+				}
+			}
+		} else {
+			result, found, resultErr = m.approvalResults.LatestApprovalResult(ctx, m.session, loaded.ContractID, m.workspace, m.mayPath)
+		}
 		if resultErr != nil {
 			m.pendingApproval = nil
 			m.notice = "Session verified, but the latest approval result could not be restored · " + resultErr.Error()
@@ -424,6 +464,14 @@ func (m *Model) restoreContractState() {
 			m.pendingApproval = nil
 			m.retryContract = true
 			m.notice = "Approval decline restored · the action was not executed · /continue can pursue another approach"
+		}
+		if found && result.Status == "confinement_failed" {
+			m.pendingApproval = nil
+			m.retryContract = false
+			m.notice = "Confinement failure restored · inspect the sealed receipt and workspace before an explicit /contract run"
+			if result.ConfinementReceipt != nil && result.ConfinementReceipt.MayHaveRun {
+				m.notice = "Untrusted confinement result restored · the approved action may have run · inspect before retrying"
+			}
 		}
 	}
 }
@@ -499,7 +547,7 @@ func contractSemanticChanges(before, after contractexec.Draft) string {
 	if !slices.Equal(a.Criteria, b.Criteria) {
 		changed = append(changed, "evidence")
 	}
-	if before.Intent != after.Intent || before.Workspace != after.Workspace || before.Toolbox != after.Toolbox || before.Check != after.Check || before.CheckAll != after.CheckAll || before.ApprovalPolicy != after.ApprovalPolicy || !slices.Equal(before.Skills, after.Skills) {
+	if before.Intent != after.Intent || before.Workspace != after.Workspace || before.Toolbox != after.Toolbox || before.Check != after.Check || before.CheckAll != after.CheckAll || before.ApprovalPolicy != after.ApprovalPolicy || before.ActionConfinement != after.ActionConfinement || !slices.Equal(before.Skills, after.Skills) {
 		changed = append(changed, "execution policy")
 	}
 	if len(changed) == 0 {
@@ -547,13 +595,17 @@ func contractExecutionPolicy(draft contractexec.Draft, policies ...plyexec.TaskO
 	if draft.ApprovalPolicy == plyexec.ApprovalEveryAction {
 		approval = "every action · exact May decision immediately before execution"
 	}
+	confinement := "off"
+	if draft.ActionConfinement == plyexec.ConfinementCage {
+		confinement = "Cage · workspace + private temp writable · host network denied · host reads unrestricted · Ask/May/check outside"
+	}
 	pursuit := "review · one Ply invocation after admission"
 	if len(policies) > 0 && policies[0].Loop {
 		cycles := plyexec.LoopCycleBudget(policies[0])
 		turns := plyexec.LoopTurnBudget(policies[0])
 		pursuit = fmt.Sprintf("loop · this invocation · cycles=%s · turns=%s", cycles, turns)
 	}
-	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nAction approval: %s\nBrief skills: %s\nPursuit: %s", draft.Intent, draft.Workspace, tools, check, authority, approval, skills, pursuit))
+	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nAction approval: %s\nAction confinement: %s\nBrief skills: %s\nPursuit: %s", draft.Intent, draft.Workspace, tools, check, authority, approval, confinement, skills, pursuit))
 }
 
 func failureDetail(code int, err error) string {

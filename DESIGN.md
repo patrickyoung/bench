@@ -129,8 +129,14 @@ Runner action. Parked and declined actions stop before another model turn or
 the verifier. Bench verifies that terminal receipt through `ask replay
 -check -json` and seals `bench.contract-result/v4`. `/approval decide` yields
 the terminal to `may decide`; Bench itself cannot grant approval. Quick cannot
-use this durable policy. Cage remains a separate static confinement boundary;
-May and controller state must stay outside every worker-writable Cage root.
+use this durable policy. The optional admitted Cage policy composes at that
+same action seam: caged actions use `ply.approval/v2`, whose exact May envelope
+binds Cage path, digest, argv, physical workspace, private temporary directory,
+and denied-network policy. Ask, Brief, May, Bench, and the verifier remain
+ordinary processes outside Cage. Exit 125 is reserved; Ply seals
+`ply.confinement/v1`, Bench seals result v5, and no later model turn or verifier
+runs. Controller state must live under an absolute external `BENCH_DIR`,
+outside every Cage-writable root.
 
 On the direct compatibility path, compaction may move the work into a successor
 Ask session. For checked or compacting work, Bench passes Ply a private

@@ -20,8 +20,9 @@ type Runner struct {
 		askexec.Client
 		askexec.AdmissionReader
 	}
-	Ply     plyexec.Worker
-	MayPath string
+	Ply      plyexec.Worker
+	MayPath  string
+	CagePath string
 }
 
 func (r Runner) Work(ctx context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
@@ -136,6 +137,9 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction {
 			result.ApprovalPolicy = plyexec.ApprovalEveryAction
 		}
+		if req.Options.ActionConfinement == plyexec.ConfinementCage {
+			result.ActionConfinement = plyexec.ConfinementCage
+		}
 		result = withPursuit(result, req.Options)
 		setStopReason(&result, req.Options, "needs_decision")
 		if err := r.recordResult(ctx, req.Session, result); err != nil {
@@ -159,10 +163,23 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	work.Goal = workGoal(req.Goal, canonical, digest, req.Options.Check, req.Options.CheckAllCriteria)
 	mayPath := ""
 	maySHA256 := ""
+	cagePath := ""
+	cageSHA256 := ""
 	receiptDirectory := req.Dir
 	if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction {
 		var err error
 		receiptDirectory, err = canonicalApprovalDirectory(req.Dir)
+		if err != nil {
+			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
+			return
+		}
+	}
+	if req.Options.ActionConfinement == plyexec.ConfinementCage {
+		var err error
+		cagePath, err = plyexec.ResolveCagePath(r.CagePath)
+		if err == nil {
+			cageSHA256, err = plyexec.ExecutableSHA256(cagePath)
+		}
 		if err != nil {
 			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 			return
@@ -212,11 +229,24 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	var approvalReceipt *plyexec.ApprovalReceiptRef
 	var approvalErr error
 	if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction && !errors.Is(terminal.Err, context.Canceled) && (terminal.ExitCode == 75 || terminal.ExitCode == 3) {
-		reader, ok := r.Ask.(askexec.ApprovalReader)
-		if !ok {
-			approvalErr = errors.New("Ask adapter cannot read approval receipts")
+		var got askexec.ApprovalReceipt
+		var err error
+		if cagePath != "" {
+			reader, ok := r.Ask.(askexec.CagedApprovalReader)
+			if !ok {
+				approvalErr = errors.New("Ask adapter cannot read caged approval receipts")
+			} else {
+				got, err = reader.TerminalCagedApproval(ctx, req.Session, contractID, plyexec.MayJob(contractID), receiptDirectory, mayPath, maySHA256, cagePath, cageSHA256)
+			}
 		} else {
-			got, err := reader.TerminalApproval(ctx, req.Session, contractID, plyexec.MayJob(contractID), receiptDirectory, mayPath, maySHA256)
+			reader, ok := r.Ask.(askexec.ApprovalReader)
+			if !ok {
+				approvalErr = errors.New("Ask adapter cannot read approval receipts")
+			} else {
+				got, err = reader.TerminalApproval(ctx, req.Session, contractID, plyexec.MayJob(contractID), receiptDirectory, mayPath, maySHA256)
+			}
+		}
+		if approvalErr == nil {
 			if err != nil {
 				approvalErr = err
 			} else if map[int]string{75: "parked", 3: "declined"}[terminal.ExitCode] != got.Verdict {
@@ -226,6 +256,21 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 					Seq: got.Seq, BodySHA256: got.BodySHA256, SealSHA256: got.SealSHA256,
 					Job: got.Job, Digest: got.Digest, Verdict: got.Verdict, Action: got.Action, ActionSHA256: got.ActionSHA256, MayPath: mayPath, MaySHA256: got.MaySHA256,
 				}
+			}
+		}
+	}
+	var confinementReceipt *plyexec.ConfinementReceiptRef
+	var confinementErr error
+	if req.Options.ActionConfinement == plyexec.ConfinementCage && !errors.Is(terminal.Err, context.Canceled) && terminal.ExitCode == 125 {
+		reader, ok := r.Ask.(askexec.ConfinementReader)
+		if !ok {
+			confinementErr = errors.New("Ask adapter cannot read confinement receipts")
+		} else {
+			got, err := reader.TerminalConfinement(ctx, req.Session, contractID, plyexec.MayJob(contractID), receiptDirectory, mayPath, maySHA256, cagePath, cageSHA256)
+			if err != nil {
+				confinementErr = err
+			} else {
+				confinementReceipt = &plyexec.ConfinementReceiptRef{Seq: got.Seq, BodySHA256: got.BodySHA256, SealSHA256: got.SealSHA256, ActionSHA256: got.ActionSHA256, MayHaveRun: got.MayHaveRun, Detail: got.Detail}
 			}
 		}
 	}
@@ -247,6 +292,7 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	}
 	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", admitted, judgeMapSHA, receipt, req.Options, *terminal)
 	result.ApprovalReceipt = approvalReceipt
+	result.ConfinementReceipt = confinementReceipt
 	if receiptErr != nil {
 		result.Status = "failed"
 		setStopReason(&result, req.Options, "verifier_receipt_unverified")
@@ -256,6 +302,11 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		result.ApprovalReceipt = nil
 		result.StopReason = "approval_receipt_unverified"
 	}
+	if confinementErr != nil {
+		result.Status = "failed"
+		result.ConfinementReceipt = nil
+		result.StopReason = "confinement_receipt_unverified"
+	}
 	// The original request session is controller-owned input and already holds
 	// the compiled contract. Ply's session-out path is worker-visible control
 	// data; do not let it redirect an authoritative Bench record.
@@ -263,7 +314,7 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 		return
 	}
-	if receiptErr == nil && approvalErr == nil && result.Status != "awaiting_approval" && result.Status != "approval_declined" {
+	if receiptErr == nil && approvalErr == nil && confinementErr == nil && result.Status != "awaiting_approval" && result.Status != "approval_declined" && result.Status != "confinement_failed" {
 		for _, event := range heldStdout {
 			emit(ctx, events, event)
 		}
@@ -285,9 +336,11 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		terminal.Stream = plyexec.Stderr
 		terminal.Text = resultSummary(result)
 	case "failed":
-		if receiptErr != nil || approvalErr != nil {
+		if receiptErr != nil || approvalErr != nil || confinementErr != nil {
 			terminal.ExitCode = 1
-			if approvalErr != nil {
+			if confinementErr != nil {
+				terminal.Err = fmt.Errorf("verify Ply confinement receipt: %w", confinementErr)
+			} else if approvalErr != nil {
 				terminal.Err = fmt.Errorf("verify Ply approval receipt: %w", approvalErr)
 			} else {
 				terminal.Err = fmt.Errorf("verify accepted Ply receipt: %w", receiptErr)
@@ -305,6 +358,15 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		terminal.Err = nil
 		terminal.Stream = plyexec.Stderr
 		terminal.Text = fmt.Sprintf("Approval declined · action %s was not executed\n", result.ApprovalReceipt.Digest)
+	case "confinement_failed":
+		terminal.ExitCode = 125
+		terminal.Err = nil
+		terminal.Stream = plyexec.Stderr
+		if result.ConfinementReceipt.MayHaveRun {
+			terminal.Text = "Confinement result was not accepted; the approved action may have run. No later model turn or verifier ran. Inspect the workspace and evidence before retrying.\n"
+		} else {
+			terminal.Text = "Cage could not establish the admitted confinement boundary; the action did not run. No later model turn or verifier ran.\n"
+		}
 	}
 	emitFinal(ctx, events, *terminal)
 }
@@ -332,7 +394,9 @@ func (r Runner) recordResult(ctx context.Context, session string, result plyexec
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	kind := "bench.contract-result/v1"
-	if result.ApprovalPolicy != "" {
+	if result.ActionConfinement != "" {
+		kind = "bench.contract-result/v5"
+	} else if result.ApprovalPolicy != "" {
 		kind = "bench.contract-result/v4"
 	} else if result.Pursuit != "" {
 		kind = "bench.contract-result/v3"
@@ -399,6 +463,9 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 	if options.ApprovalPolicy == plyexec.ApprovalEveryAction {
 		result.ApprovalPolicy = plyexec.ApprovalEveryAction
 	}
+	if options.ActionConfinement == plyexec.ConfinementCage {
+		result.ActionConfinement = plyexec.ConfinementCage
+	}
 	checkAccepted := checkConfigured && terminal.Err == nil && terminal.ExitCode == 0
 	if judgeMapSHA != "" {
 		checkAccepted = checkAccepted && receipt != nil
@@ -430,6 +497,9 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 	case options.ApprovalPolicy == plyexec.ApprovalEveryAction && !errors.Is(terminal.Err, context.Canceled) && terminal.ExitCode == 3:
 		result.Status = "approval_declined"
 		result.StopReason = "approval_declined"
+	case options.ActionConfinement == plyexec.ConfinementCage && !errors.Is(terminal.Err, context.Canceled) && terminal.ExitCode == 125:
+		result.Status = "confinement_failed"
+		result.StopReason = "confinement_failed"
 	case errors.Is(terminal.Err, context.Canceled):
 		result.Status = "interrupted"
 		setStopReason(&result, options, "interrupted")
@@ -546,7 +616,8 @@ func compilerMessage(req plyexec.TaskRequest) string {
 		}
 	}
 	approval := approvalCompilerBoundary(req.Options.ApprovalPolicy)
-	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nACTION APPROVAL POLICY\n" + approval + "\n\nVERIFIER BOUNDARY\n" + verifier
+	confinement := confinementCompilerBoundary(req.Options.ActionConfinement)
+	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nACTION APPROVAL POLICY\n" + approval + "\n\nACTION CONFINEMENT\n" + confinement + "\n\nVERIFIER BOUNDARY\n" + verifier
 }
 
 func approvalCompilerBoundary(policy string) string {

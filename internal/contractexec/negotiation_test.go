@@ -132,6 +132,53 @@ func TestEveryActionPolicyCannotBeRemovedAtAdmission(t *testing.T) {
 	}
 }
 
+func TestCagePolicyIsEditableAdmittedAndCannotBeRemovedAtRun(t *testing.T) {
+	req := negotiationRequest(t)
+	req.Options.ApprovalPolicy = plyexec.ApprovalEveryAction
+	req.Options.ActionConfinement = plyexec.ConfinementCage
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 2}}
+	ask := &fakeAsk{answer: fixtureContract}
+	store := FileStore{Dir: filepath.Join(req.Dir, "contracts")}
+	draft := *collectDraft(t, (Runner{Ask: ask, Ply: ply}).Compile(context.Background(), DraftRequest{Task: req, Store: store})).Draft
+	if draft.Schema != 3 || draft.ActionConfinement != plyexec.ConfinementCage || ask.record.Kind != "bench.contract-proposal/v3" {
+		t.Fatalf("draft=%#v record=%#v", draft, ask.record)
+	}
+	raw, err := os.ReadFile(store.DraftPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `"format": "bench.contract-draft/v3"`) || !strings.Contains(body, `"action_confinement": "cage"`) {
+		t.Fatalf("draft file:\n%s", body)
+	}
+	cage := filepath.Join(req.Dir, "cage")
+	if err := os.WriteFile(cage, []byte("cage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply, CagePath: cage}).Admit(context.Background(), AdmitRequest{Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256}))
+	if terminal.ContractResult == nil || terminal.ContractResult.ActionConfinement != plyexec.ConfinementCage || ask.record.Kind != "bench.contract-result/v5" {
+		t.Fatalf("terminal=%#v record=%#v", terminal, ask.record)
+	}
+	found := false
+	for _, record := range ask.recordLog {
+		if record.Kind == "bench.contract/v5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("records=%#v", ask.recordLog)
+	}
+	admitted, status, err := store.Load()
+	if err != nil || status != "admitted" {
+		t.Fatalf("load admitted status=%q err=%v", status, err)
+	}
+	req.Options.ActionConfinement = plyexec.ConfinementOff
+	bad := collectPly(t, (Runner{Ask: ask, Ply: ply, CagePath: cage}).Run(context.Background(), RunRequest{Task: req, Draft: admitted, Store: store}))
+	if bad.Err == nil || !strings.Contains(bad.Err.Error(), "action confinement changed") {
+		t.Fatalf("bad=%#v", bad)
+	}
+}
+
 func TestAdmissionRequiresExactReviewedBytesBeforePly(t *testing.T) {
 	req := negotiationRequest(t)
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 0}}

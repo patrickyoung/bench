@@ -113,29 +113,43 @@ func TestEvidenceIsReadOnlyBoundedAndExcludesBenchState(t *testing.T) {
 }
 
 type fakeAsk struct {
-	req           askexec.Request
-	record        askexec.RecordRequest
-	recordLog     []askexec.RecordRequest
-	answer        string
-	answers       []string
-	reqLog        []askexec.Request
-	exit          int
-	err           error
-	recordErr     error
-	recordErrAt   int
-	calls         int
-	records       int
-	receipt       askexec.VerifierReceipt
-	receiptErr    error
-	receiptCalls  int
-	approval      askexec.ApprovalReceipt
-	approvalErr   error
-	approvalCalls int
-	approvalDir   string
-	approvalMay   string
-	approvalSHA   string
-	admissionErr  error
-	admissions    int
+	req              askexec.Request
+	record           askexec.RecordRequest
+	recordLog        []askexec.RecordRequest
+	answer           string
+	answers          []string
+	reqLog           []askexec.Request
+	exit             int
+	err              error
+	recordErr        error
+	recordErrAt      int
+	calls            int
+	records          int
+	receipt          askexec.VerifierReceipt
+	receiptErr       error
+	receiptCalls     int
+	approval         askexec.ApprovalReceipt
+	approvalErr      error
+	approvalCalls    int
+	approvalDir      string
+	approvalMay      string
+	approvalSHA      string
+	confinement      askexec.ConfinementReceipt
+	confinementErr   error
+	confinementCalls int
+	admissionErr     error
+	admissions       int
+}
+
+func (f *fakeAsk) TerminalConfinement(_ context.Context, _, _, _, _, _, _, _, _ string) (askexec.ConfinementReceipt, error) {
+	f.confinementCalls++
+	if f.confinementErr != nil {
+		return askexec.ConfinementReceipt{}, f.confinementErr
+	}
+	if f.confinement.BodySHA256 != "" {
+		return f.confinement, nil
+	}
+	return askexec.ConfinementReceipt{Seq: 11, ExitCode: 125, BodySHA256: "sha256:confinement", SealSHA256: "sha256:seal", ActionSHA256: "sha256:action", MayHaveRun: true, Detail: "reserved child status"}, nil
 }
 
 func (f *fakeAsk) TerminalApproval(_ context.Context, _, contractID, job, directory, mayPath, maySHA256 string) (askexec.ApprovalReceipt, error) {
@@ -528,6 +542,61 @@ func TestEveryActionTerminalApprovalRequiresReceiptAndUsesResultV4(t *testing.T)
 				t.Fatalf("result record=%#v", got)
 			}
 		})
+	}
+}
+
+func TestCagedConfinementFailureRequiresReceiptAndUsesResultV5(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	may := filepath.Join(t.TempDir(), "may")
+	cage := filepath.Join(t.TempDir(), "cage")
+	for _, path := range []string{may, cage} {
+		if err := os.WriteFile(path, []byte("binary"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask := &fakeAsk{confinement: askexec.ConfinementReceipt{Seq: 11, ExitCode: 125, BodySHA256: "sha256:confinement", SealSHA256: "sha256:seal", ActionSHA256: "sha256:action", MayHaveRun: true, Detail: "child returned 125"}}
+	ply := &fakePly{events: []plyexec.Event{{Stream: plyexec.Stdout, Text: "held"}, {Done: true, ExitCode: 125, Err: errors.New("exit status 125")}}}
+	events := make(chan plyexec.Event, 8)
+	go func() {
+		(Runner{Ask: ask, Ply: ply, MayPath: may, CagePath: cage}).runAccepted(context.Background(), plyexec.TaskRequest{Dir: workspace, Goal: "make it", Session: "/sessions/run.jsonl", Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction, ActionConfinement: plyexec.ConfinementCage}}, contract, canonical, digest, "sha256:contract", events)
+		close(events)
+	}()
+	terminal := collectPly(t, events)
+	if terminal.ExitCode != 125 || terminal.ContractResult == nil || terminal.ContractResult.Status != "confinement_failed" || terminal.ContractResult.ConfinementReceipt == nil || !terminal.ContractResult.ConfinementReceipt.MayHaveRun || ask.confinementCalls != 1 {
+		t.Fatalf("terminal=%#v calls=%d", terminal, ask.confinementCalls)
+	}
+	if got := ask.recordLog[len(ask.recordLog)-1]; got.Kind != "bench.contract-result/v5" || !strings.Contains(got.JSON, `"action_confinement":"cage"`) {
+		t.Fatalf("record=%#v", got)
+	}
+}
+
+func TestCagedConfinementResultSealFailureFailsBeforeExposingExit125(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	may := filepath.Join(t.TempDir(), "may")
+	cage := filepath.Join(t.TempDir(), "cage")
+	for _, path := range []string{may, cage} {
+		if err := os.WriteFile(path, []byte("binary"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask := &fakeAsk{recordErr: errors.New("seal failed"), confinement: askexec.ConfinementReceipt{Seq: 11, ExitCode: 125, BodySHA256: "sha256:confinement", SealSHA256: "sha256:seal", ActionSHA256: "sha256:action", Detail: "setup failed"}}
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 125, Err: errors.New("exit status 125")}}
+	events := make(chan plyexec.Event, 8)
+	go func() {
+		(Runner{Ask: ask, Ply: ply, MayPath: may, CagePath: cage}).runAccepted(context.Background(), plyexec.TaskRequest{Dir: workspace, Goal: "make it", Session: "/sessions/run.jsonl", Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction, ActionConfinement: plyexec.ConfinementCage}}, contract, canonical, digest, "sha256:contract", events)
+		close(events)
+	}()
+	terminal := collectPly(t, events)
+	if terminal.ExitCode != 1 || terminal.Err == nil || terminal.ContractResult != nil {
+		t.Fatalf("terminal=%#v", terminal)
 	}
 }
 

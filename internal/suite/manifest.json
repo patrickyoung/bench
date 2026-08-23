@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.6.4",
+  "version": "0.6.5",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -33,7 +33,16 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "55156bb0206988f222abafce61b994f9f9837cd6",
+      "revision": "cf00576c491bce4453aea79da1989940d7683a10",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "cage",
+      "repository": "https://github.com/patrickyoung/cage.git",
+      "revision": "4a8b51c669925505c440b177675a7b8fc8bc725a",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",

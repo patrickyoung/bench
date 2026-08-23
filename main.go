@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	version      = "0.6.4"
+	version      = "0.6.5"
 	maxPipeInput = 16 << 20
 )
 
@@ -110,6 +110,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(stderr, err)
 	}
 	root := benchDir(workspace)
+	if o.task.options().ActionConfinement == plyexec.ConfinementCage {
+		if err := validateCageControllerRoot(workspace, root); err != nil {
+			return report(stderr, err)
+		}
+	}
 	sessionsDir := filepath.Join(root, "sessions")
 	saved, err := session.Discover(sessionsDir)
 	if err != nil {
@@ -132,11 +137,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if resuming {
 		active = session.Resolve(sessionsDir, o.resume)
 	}
+	if o.task.options().ActionConfinement == plyexec.ConfinementCage {
+		if err := validateCageControllerPath(workspace, active, "Ask session"); err != nil {
+			return report(stderr, err)
+		}
+	}
 
 	paths := filterPaths()
 	askRunner := askexec.Runner{Path: paths.ask, BriefPath: paths.brief}
-	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may}
-	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner, MayPath: paths.may}
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may, CagePath: paths.cage}
+	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner, MayPath: paths.may, CagePath: paths.cage}
 	m := ui.New(ui.Config{
 		Runner:          askRunner,
 		ApprovalResults: askRunner,
@@ -164,6 +174,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		ActiveSkills:  append([]string(nil), o.skills...),
 		TaskOptions:   o.task.options(),
 		MayPath:       paths.may,
+		CagePath:      paths.cage,
 	})
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return report(stderr, err)
@@ -239,6 +250,14 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 	} else if !filepath.IsAbs(file) {
 		file = filepath.Join(work, file)
 	}
+	if task.options().ActionConfinement == plyexec.ConfinementCage {
+		if err := validateCageControllerRoot(work, benchDir(work)); err != nil {
+			return report(stderr, err)
+		}
+		if err := validateCageControllerPath(work, file, "Ask session"); err != nil {
+			return report(stderr, err)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -249,8 +268,8 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		})
 		return streamEvents(ctx, events, stdout, stderr)
 	}
-	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may}
-	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner, MayPath: paths.may}
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may, CagePath: paths.cage}
+	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner, MayPath: paths.may, CagePath: paths.cage}
 	request := plyexec.TaskRequest{
 		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
@@ -400,13 +419,97 @@ func benchDir(workspace string) string {
 	return filepath.Join(workspace, ".bench")
 }
 
-type paths struct{ ask, ply, brief, draft, hone, may string }
+func validateCageControllerRoot(workspace, root string) error {
+	configured := strings.TrimSpace(os.Getenv("BENCH_DIR"))
+	if configured == "" || !filepath.IsAbs(configured) {
+		return errors.New("Cage needs an absolute external BENCH_DIR so controller sessions and contracts are outside the writable workspace; for example BENCH_DIR=$HOME/.local/state/bench/PROJECT")
+	}
+	rawWork, err := filepath.Abs(workspace)
+	if err != nil {
+		return err
+	}
+	work := rawWork
+	if resolved, resolveErr := filepath.EvalSymlinks(rawWork); resolveErr == nil {
+		work = resolved
+	}
+	rawControl, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	control, err := prospectivePath(root)
+	if err != nil {
+		return fmt.Errorf("resolve BENCH_DIR for Cage: %w", err)
+	}
+	if pathContains(rawWork, rawControl) || pathContains(rawControl, rawWork) || pathContains(work, rawControl) || pathContains(rawControl, work) || pathContains(work, control) || pathContains(control, work) {
+		return errors.New("Cage controller state must be outside and separate from the writable workspace")
+	}
+	return nil
+}
+
+func validateCageControllerPath(workspace, path, label string) error {
+	rawWork, err := filepath.Abs(workspace)
+	if err != nil {
+		return err
+	}
+	work := rawWork
+	if resolved, e := filepath.EvalSymlinks(rawWork); e == nil {
+		work = resolved
+	}
+	rawTarget, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	target, err := prospectivePath(path)
+	if err != nil {
+		return fmt.Errorf("resolve %s for Cage: %w", label, err)
+	}
+	if pathContains(rawWork, rawTarget) || pathContains(work, rawTarget) || pathContains(work, target) {
+		return fmt.Errorf("Cage %s must be outside the writable workspace", label)
+	}
+	return nil
+}
+
+func prospectivePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	cur, tail := abs, []string{}
+	for {
+		if _, err := os.Lstat(cur); err == nil {
+			resolved, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return "", err
+			}
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return filepath.Clean(resolved), nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return filepath.Clean(abs), nil
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func pathContains(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+type paths struct{ ask, ply, brief, draft, hone, may, cage string }
 
 func filterPaths() paths {
 	return paths{
 		ask: toolPath("BENCH_ASK", "ask"), ply: toolPath("BENCH_PLY", "ply"),
 		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
 		hone: toolPath("BENCH_HONE", "hone"), may: toolPath("BENCH_MAY", "may"),
+		cage: toolPath("BENCH_CAGE", "cage"),
 	}
 }
 
@@ -469,6 +572,19 @@ type trackedString struct {
 	set   bool
 }
 
+type trackedBool struct{ value, set bool }
+
+func (b *trackedBool) String() string { return strconv.FormatBool(b.value) }
+func (b *trackedBool) Set(value string) error {
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	b.value, b.set = parsed, true
+	return nil
+}
+func (b *trackedBool) IsBoolFlag() bool { return true }
+
 func (s *trackedString) String() string { return s.value }
 func (s *trackedString) Set(value string) error {
 	if strings.TrimSpace(value) == "" {
@@ -496,6 +612,7 @@ type taskFlags struct {
 	check       string
 	checkAll    bool
 	approval    string
+	cage        bool
 	effort      string
 	cycles      trackedInt
 	turns       trackedInt
@@ -514,6 +631,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
 	fs.StringVar(&task.approval, "approval", plyexec.ApprovalOff, "execution approval: off or every-action")
+	fs.BoolVar(&task.cage, "cage", false, "confine every approved model action with Cage")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
@@ -523,19 +641,33 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 }
 
 func (f taskFlags) options() plyexec.TaskOptions {
-	return plyexec.TaskOptions{
+	options := plyexec.TaskOptions{
 		IntentContract:   f.mustAutonomy().UsesContract(),
 		Loop:             f.mustAutonomy() == autonomy.Loop,
 		Check:            f.check,
 		CheckAllCriteria: f.checkAll,
 		ApprovalPolicy:   f.approval,
-		Effort:           f.effort,
-		Cycles:           f.cycles.value, HasCycles: f.cycles.set,
+		ActionConfinement: func() string {
+			if f.cage {
+				return plyexec.ConfinementCage
+			}
+			return plyexec.ConfinementOff
+		}(),
+		Effort: f.effort,
+		Cycles: f.cycles.value, HasCycles: f.cycles.set,
 		Turns: f.turns.value, HasTurns: f.turns.set,
 		Timeout: f.timeout.value, HasTimeout: f.timeout.set,
 		Compact:     f.compact,
 		Compactions: f.compactions.value, HasCompactions: f.compactions.set,
 	}
+	return implyCageApproval(options)
+}
+
+func implyCageApproval(options plyexec.TaskOptions) plyexec.TaskOptions {
+	if options.ActionConfinement == plyexec.ConfinementCage {
+		options.ApprovalPolicy = plyexec.ApprovalEveryAction
+	}
+	return options
 }
 
 func (f taskFlags) autonomy() (autonomy.Mode, error) {
@@ -568,6 +700,11 @@ func validateTaskPolicy(f taskFlags) error {
 	if policy == plyexec.ApprovalEveryAction && mode == autonomy.Quick {
 		return errors.New("every-action approval needs review or loop autonomy")
 	}
+	if f.cage && mode == autonomy.Quick {
+		return errors.New("Cage confinement needs review or loop autonomy")
+	}
+	// Cage is the conservative composition: every confined action first passes
+	// through the exact May approval boundary, even when -approval was omitted.
 	if !f.checkAll {
 		if mode == autonomy.Loop && strings.TrimSpace(f.check) == "" {
 			return errors.New("loop autonomy needs a configured check")
@@ -664,6 +801,7 @@ Interactive flags:
   -check command      literal verifier for the next open work outcome
   -check-all          admit that check as judge of every contract criterion
   -approval MODE      off, or every-action through exact May decisions
+  -cage               confine each approved model action (needs external BENCH_DIR)
   -effort level       reasoning effort passed literally through Ply to Ask
   -cycles n           rejected candidates before Ply stops (0 = unbounded)
   -turns n            model turns before Ply stops (0 = unbounded)
@@ -679,7 +817,7 @@ Ask naturally for up to three independent read-heavy subagent jobs. Bench
 keeps their Ply sessions and evidence under $BENCH_DIR/subagents for inspection.
 
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
-BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · NO_COLOR
+BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · NO_COLOR
 
 When stdin or stdout is not a terminal, plain bench behaves like bench run:
   git diff | bench -m provider/model 'review this patch'`)
@@ -687,7 +825,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-approval off|every-action] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-approval off|every-action] [-cage] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		fmt.Fprintln(w, "review drafts and exits 2; quick starts immediately; loop drafts a checked contract, then accept/run -mode loop pursues it")
 		return
 	}

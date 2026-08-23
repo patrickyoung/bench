@@ -326,6 +326,43 @@ func TestWorkPassesAdmittedEveryActionGateAsLiteralUnixInputs(t *testing.T) {
 	}
 }
 
+func TestWorkPassesCageAsLiteralActionPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fixture")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	may := filepath.Join(dir, "may")
+	cage := filepath.Join(dir, "cage")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > args\nprintf '%s' \"$CAGE\" > cage-env\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{may, cage} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contractID := "sha256:" + strings.Repeat("b", 64)
+	for range (Runner{Path: fixture, MayPath: may, CagePath: cage}).Work(context.Background(), TaskRequest{Dir: dir, Goal: "make it", Session: filepath.Join(dir, "task.jsonl"), Options: TaskOptions{IntentContract: true, ContractID: contractID, ApprovalPolicy: ApprovalEveryAction, ActionConfinement: ConfinementCage}}) {
+	}
+	args := string(mustReadFile(t, filepath.Join(dir, "args")))
+	if !strings.Contains(args, "-may-job\n"+MayJob(contractID)+"\n-cage\n") {
+		t.Fatalf("args=%q", args)
+	}
+	if got := string(mustReadFile(t, filepath.Join(dir, "cage-env"))); got != cage {
+		t.Fatalf("CAGE=%q want %q", got, cage)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func TestWorkHonorsExplicitLoopBudgets(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")
@@ -420,6 +457,8 @@ func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
 		{IntentContract: true, Loop: true, Check: "true", Turns: 0, HasTurns: true},
 		{ApprovalPolicy: ApprovalEveryAction},
 		{IntentContract: true, ApprovalPolicy: "sometimes"},
+		{IntentContract: true, ActionConfinement: ConfinementCage},
+		{ApprovalPolicy: ApprovalEveryAction, ActionConfinement: ConfinementCage},
 	} {
 		var done Event
 		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{

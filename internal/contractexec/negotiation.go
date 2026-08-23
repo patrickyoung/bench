@@ -37,6 +37,7 @@ type Draft struct {
 	CheckSHA256            string          `json:"check_sha256"`
 	CheckAll               bool            `json:"check_all"`
 	ApprovalPolicy         string          `json:"approval_policy,omitempty"`
+	ActionConfinement      string          `json:"action_confinement,omitempty"`
 	Skills                 []string        `json:"skills"`
 }
 
@@ -174,7 +175,7 @@ func (r Runner) compile(ctx context.Context, req DraftRequest, events chan<- Dra
 		generation = current.Generation + 1
 		outcomeID = current.OutcomeID
 		parent = current.ParentRevisionID
-		message = revisionMessage(current, req.Instruction, req.Task.Options.Check, req.Task.Options.CheckAllCriteria, req.Task.Options.ApprovalPolicy)
+		message = revisionMessage(current, req.Instruction, req.Task.Options.Check, req.Task.Options.CheckAllCriteria, req.Task.Options.ApprovalPolicy, req.Task.Options.ActionConfinement)
 	} else {
 		id, err := newOutcomeID()
 		if err != nil {
@@ -211,11 +212,11 @@ func (r Runner) compile(ctx context.Context, req DraftRequest, events chan<- Dra
 		return
 	}
 	draft := Draft{
-		Schema: draftSchema(req.Task.Options.ApprovalPolicy), OutcomeID: outcomeID, Generation: generation, ParentRevisionID: parent,
+		Schema: draftSchema(req.Task.Options.ApprovalPolicy, req.Task.Options.ActionConfinement), OutcomeID: outcomeID, Generation: generation, ParentRevisionID: parent,
 		Intent: req.Task.Goal, Workspace: req.Task.Dir, Toolbox: req.Task.Toolbox, Contract: json.RawMessage(canonical),
 		ContractSHA256:         "sha256:" + contractDigest,
 		CompilerEvidenceSHA256: sha256Text(evidence), Check: req.Task.Options.Check, CheckSHA256: sha256Text(req.Task.Options.Check),
-		CheckAll: req.Task.Options.CheckAllCriteria, ApprovalPolicy: policyForFile(req.Task.Options.ApprovalPolicy), Skills: append([]string{}, req.Task.Skills...),
+		CheckAll: req.Task.Options.CheckAllCriteria, ApprovalPolicy: policyForFile(req.Task.Options.ApprovalPolicy), ActionConfinement: confinementForFile(req.Task.Options.ActionConfinement), Skills: append([]string{}, req.Task.Skills...),
 	}
 	expected := ""
 	if req.Current != nil {
@@ -257,7 +258,7 @@ func UpdateDraft(draft Draft, body string) (Draft, error) {
 	if err != nil {
 		return Draft{}, err
 	}
-	draft.Schema = draftSchema(draft.ApprovalPolicy)
+	draft.Schema = draftSchema(draft.ApprovalPolicy, draft.ActionConfinement)
 	draft.Contract = json.RawMessage(canonical)
 	draft.ContractSHA256 = "sha256:" + digest
 	draft.ContractID = ""
@@ -322,29 +323,30 @@ func (r Runner) Admit(ctx context.Context, request AdmitRequest) <-chan plyexec.
 		}
 		contract, canonical, contractDigest, _ := Parse(string(draft.Contract))
 		body, err := json.Marshal(struct {
-			Status          string          `json:"status"`
-			AdmittedBy      string          `json:"admitted_by"`
-			ContractID      string          `json:"contract_id"`
-			ContractSHA     string          `json:"contract_sha256"`
-			ContractBodySHA string          `json:"contract_body_sha256"`
-			IntentSHA       string          `json:"intent_sha256"`
-			EvidenceSHA     string          `json:"compiler_evidence_sha256"`
-			CheckSHA        string          `json:"check_sha256"`
-			CheckAll        bool            `json:"check_all"`
-			ApprovalPolicy  string          `json:"approval_policy,omitempty"`
-			Workspace       string          `json:"workspace"`
-			Toolbox         string          `json:"toolbox,omitempty"`
-			Skills          []string        `json:"skills"`
-			OutcomeID       string          `json:"outcome_id"`
-			RevisionID      string          `json:"revision_id"`
-			DraftSHA        string          `json:"draft_sha256"`
-			Generation      int             `json:"generation"`
-			Parent          string          `json:"parent_revision_id,omitempty"`
-			Contract        json.RawMessage `json:"contract"`
+			Status            string          `json:"status"`
+			AdmittedBy        string          `json:"admitted_by"`
+			ContractID        string          `json:"contract_id"`
+			ContractSHA       string          `json:"contract_sha256"`
+			ContractBodySHA   string          `json:"contract_body_sha256"`
+			IntentSHA         string          `json:"intent_sha256"`
+			EvidenceSHA       string          `json:"compiler_evidence_sha256"`
+			CheckSHA          string          `json:"check_sha256"`
+			CheckAll          bool            `json:"check_all"`
+			ApprovalPolicy    string          `json:"approval_policy,omitempty"`
+			ActionConfinement string          `json:"action_confinement,omitempty"`
+			Workspace         string          `json:"workspace"`
+			Toolbox           string          `json:"toolbox,omitempty"`
+			Skills            []string        `json:"skills"`
+			OutcomeID         string          `json:"outcome_id"`
+			RevisionID        string          `json:"revision_id"`
+			DraftSHA          string          `json:"draft_sha256"`
+			Generation        int             `json:"generation"`
+			Parent            string          `json:"parent_revision_id,omitempty"`
+			Contract          json.RawMessage `json:"contract"`
 		}{
 			Status: "admitted", AdmittedBy: "interactive-user", ContractID: draft.ContractID,
 			ContractSHA: draft.ContractSHA256, ContractBodySHA: compactJSONSHA(draft.Contract), IntentSHA: sha256Text(draft.Intent), EvidenceSHA: draft.CompilerEvidenceSHA256,
-			CheckSHA: draft.CheckSHA256, CheckAll: draft.CheckAll, ApprovalPolicy: draft.ApprovalPolicy, Workspace: draft.Workspace, Toolbox: draft.Toolbox, Skills: append([]string{}, draft.Skills...),
+			CheckSHA: draft.CheckSHA256, CheckAll: draft.CheckAll, ApprovalPolicy: draft.ApprovalPolicy, ActionConfinement: draft.ActionConfinement, Workspace: draft.Workspace, Toolbox: draft.Toolbox, Skills: append([]string{}, draft.Skills...),
 			OutcomeID: draft.OutcomeID, RevisionID: draft.RevisionID, DraftSHA: draft.DraftSHA256,
 			Generation: draft.Generation, Parent: draft.ParentRevisionID, Contract: json.RawMessage(canonical),
 		})
@@ -353,7 +355,9 @@ func (r Runner) Admit(ctx context.Context, request AdmitRequest) <-chan plyexec.
 			return
 		}
 		admissionKind := "bench.contract/v3"
-		if approvalPolicy(draft.ApprovalPolicy) == plyexec.ApprovalEveryAction {
+		if confinementPolicy(draft.ActionConfinement) == plyexec.ConfinementCage {
+			admissionKind = "bench.contract/v5"
+		} else if approvalPolicy(draft.ApprovalPolicy) == plyexec.ApprovalEveryAction {
 			admissionKind = "bench.contract/v4"
 		}
 		if err := r.Ask.Record(ctx, askexec.RecordRequest{
@@ -432,18 +436,43 @@ func admissionExpectation(draft Draft) askexec.AdmissionExpectation {
 	return askexec.AdmissionExpectation{
 		ContractID: draft.ContractID, ContractSHA256: draft.ContractSHA256, ContractBodySHA256: compactJSONSHA(draft.Contract), IntentSHA256: sha256Text(draft.Intent),
 		CompilerEvidenceSHA256: draft.CompilerEvidenceSHA256, CheckSHA256: draft.CheckSHA256, CheckAll: draft.CheckAll,
-		ApprovalPolicy: draft.ApprovalPolicy,
-		Workspace:      draft.Workspace, Toolbox: draft.Toolbox, Skills: append([]string{}, draft.Skills...),
+		ApprovalPolicy:    draft.ApprovalPolicy,
+		ActionConfinement: draft.ActionConfinement,
+		Workspace:         draft.Workspace, Toolbox: draft.Toolbox, Skills: append([]string{}, draft.Skills...),
 		OutcomeID: draft.OutcomeID, RevisionID: draft.RevisionID, DraftSHA256: draft.DraftSHA256,
 		Generation: draft.Generation, ParentRevisionID: draft.ParentRevisionID,
 	}
 }
 
 func proposalKind(draft Draft) string {
+	if confinementPolicy(draft.ActionConfinement) == plyexec.ConfinementCage {
+		return "bench.contract-proposal/v3"
+	}
 	if approvalPolicy(draft.ApprovalPolicy) == plyexec.ApprovalEveryAction {
 		return "bench.contract-proposal/v2"
 	}
 	return "bench.contract-proposal/v1"
+}
+
+func confinementPolicy(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return plyexec.ConfinementOff
+	}
+	return strings.TrimSpace(value)
+}
+
+func confinementForFile(value string) string {
+	if confinementPolicy(value) == plyexec.ConfinementOff {
+		return ""
+	}
+	return confinementPolicy(value)
+}
+
+func confinementCompilerBoundary(value string) string {
+	if confinementPolicy(value) == plyexec.ConfinementCage {
+		return "cage — every approved model-authored action runs with workspace and a private temporary directory writable, host network denied, and host reads otherwise unrestricted; Ask, May, Brief, and the verifier remain outside Cage"
+	}
+	return "off — model-authored actions use the admitted ordinary Ply tool grant without Cage confinement"
 }
 
 func compactJSONSHA(body []byte) string {
@@ -468,13 +497,20 @@ func validateAdmission(req plyexec.TaskRequest, draft Draft) error {
 	if approvalPolicy(req.Options.ApprovalPolicy) != approvalPolicy(draft.ApprovalPolicy) {
 		return errors.New("contract approval policy changed; revise the draft before admission")
 	}
+	if confinementPolicy(req.Options.ActionConfinement) != confinementPolicy(draft.ActionConfinement) {
+		return errors.New("contract action confinement changed; revise the draft before admission")
+	}
 	if !slices.Equal(req.Skills, draft.Skills) {
 		return errors.New("contract skills changed; revise the draft before admission")
 	}
 	return nil
 }
 
-func revisionMessage(current Draft, instruction, check string, checkAll bool, approvalPolicy string) string {
+func revisionMessage(current Draft, instruction, check string, checkAll bool, approvalPolicy string, confinementValues ...string) string {
+	confinement := ""
+	if len(confinementValues) > 0 {
+		confinement = confinementValues[0]
+	}
 	verifier := "No executable verifier is configured."
 	if check != "" {
 		verifier = "The operator configured this exact verifier:\n" + check
@@ -482,7 +518,7 @@ func revisionMessage(current Draft, instruction, check string, checkAll bool, ap
 			verifier = "The operator explicitly admits this exact verifier as judge of every criterion:\n" + check
 		}
 	}
-	return "Revise the proposed outcome contract according to the user's change request. Return the complete replacement contract, not a patch. Do not solve the task or emit shell commands. Preserve sound parts of the current contract. Remove an open question or approval only when the user's change request explicitly resolves or grants it.\n\nORIGINAL USER INTENT\n" + current.Intent + "\n\nCURRENT PROPOSED CONTRACT\n" + string(current.Contract) + "\n\nUSER CHANGE REQUEST\n" + instruction + "\n\nACTION APPROVAL POLICY\n" + approvalCompilerBoundary(approvalPolicy) + "\n\nVERIFIER BOUNDARY\n" + verifier
+	return "Revise the proposed outcome contract according to the user's change request. Return the complete replacement contract, not a patch. Do not solve the task or emit shell commands. Preserve sound parts of the current contract. Remove an open question or approval only when the user's change request explicitly resolves or grants it.\n\nORIGINAL USER INTENT\n" + current.Intent + "\n\nCURRENT PROPOSED CONTRACT\n" + string(current.Contract) + "\n\nUSER CHANGE REQUEST\n" + instruction + "\n\nACTION APPROVAL POLICY\n" + approvalCompilerBoundary(approvalPolicy) + "\n\nACTION CONFINEMENT\n" + confinementCompilerBoundary(confinement) + "\n\nVERIFIER BOUNDARY\n" + verifier
 }
 
 func newOutcomeID() (string, error) {

@@ -809,7 +809,7 @@ case $prefix in /*) ;; *) prefix=$PWD/$prefix ;; esac
 lib=$prefix/lib/bench-suite
 dest=$lib/$version
 bindir=$prefix/bin
-tools='bench ask brief ply hone draft may'
+tools='bench ask brief ply hone draft may cage'
 
 verify() {
 	dir=$1

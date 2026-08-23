@@ -50,8 +50,26 @@ type ApprovalReader interface {
 	TerminalApproval(context.Context, string, string, string, string, string, string) (ApprovalReceipt, error)
 }
 
+type CagedApprovalReader interface {
+	TerminalCagedApproval(context.Context, string, string, string, string, string, string, string, string) (ApprovalReceipt, error)
+}
+
 type ApprovalResultReader interface {
 	LatestApprovalResult(context.Context, string, string, string, string) (plyexec.ContractResult, bool, error)
+}
+
+type CagedApprovalResultReader interface {
+	LatestCagedApprovalResult(context.Context, string, string, string, string, string, string) (plyexec.ContractResult, bool, error)
+}
+
+type ConfinementReceipt struct {
+	Seq, ExitCode                                int
+	BodySHA256, SealSHA256, ActionSHA256, Detail string
+	MayHaveRun                                   bool
+}
+
+type ConfinementReader interface {
+	TerminalConfinement(context.Context, string, string, string, string, string, string, string, string) (ConfinementReceipt, error)
 }
 
 // AcceptedVerifier reads one verified Ask snapshot, then selects the terminal
@@ -72,6 +90,14 @@ func (r Runner) TerminalApproval(ctx context.Context, session, contractID, job, 
 		return ApprovalReceipt{}, err
 	}
 	return selectTerminalApproval(data, contractID, job, directory, mayPath, maySHA256)
+}
+
+func (r Runner) TerminalCagedApproval(ctx context.Context, session, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256 string) (ApprovalReceipt, error) {
+	data, err := r.verifiedReplay(ctx, session, "caged approval receipts")
+	if err != nil {
+		return ApprovalReceipt{}, err
+	}
+	return selectTerminalApproval(data, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256)
 }
 
 // LatestApprovalResult restores only a terminal, controller-sealed v4 result
@@ -99,6 +125,38 @@ func (r Runner) LatestApprovalResult(ctx context.Context, session, contractID, d
 		return plyexec.ContractResult{}, false, err
 	}
 	return selectLatestApprovalResult(data, contractID, plyexec.MayJob(contractID), resolvedDir, resolvedMay, maySHA256)
+}
+
+func (r Runner) LatestCagedApprovalResult(ctx context.Context, session, contractID, directory, mayPath, cagePath, cageSHA256 string) (plyexec.ContractResult, bool, error) {
+	resolvedMay, err := plyexec.ResolveMayPath(mayPath)
+	if err != nil {
+		return plyexec.ContractResult{}, false, err
+	}
+	maySHA256, err := plyexec.ExecutableSHA256(resolvedMay)
+	if err != nil {
+		return plyexec.ContractResult{}, false, err
+	}
+	abs, err := filepath.Abs(directory)
+	if err != nil {
+		return plyexec.ContractResult{}, false, err
+	}
+	resolvedDir, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return plyexec.ContractResult{}, false, err
+	}
+	data, err := r.verifiedReplay(ctx, session, "caged contract approval results")
+	if err != nil {
+		return plyexec.ContractResult{}, false, err
+	}
+	return selectLatestApprovalResult(data, contractID, plyexec.MayJob(contractID), resolvedDir, resolvedMay, maySHA256, cagePath, cageSHA256)
+}
+
+func (r Runner) TerminalConfinement(ctx context.Context, session, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256 string) (ConfinementReceipt, error) {
+	data, err := r.verifiedReplay(ctx, session, "confinement receipts")
+	if err != nil {
+		return ConfinementReceipt{}, err
+	}
+	return selectTerminalConfinement(data, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256)
 }
 
 func (r Runner) verifiedReplay(ctx context.Context, session, label string) ([]byte, error) {
@@ -192,13 +250,24 @@ type verifierBody struct {
 }
 
 type approvalActionBody struct {
-	Version    int    `json:"version"`
-	ContractID string `json:"contract_id,omitempty"`
-	Directory  string `json:"directory"`
-	Shell      string `json:"shell"`
-	Path       string `json:"path"`
-	TimeoutNS  int64  `json:"timeout_ns"`
-	Script     string `json:"script"`
+	Version     int                      `json:"version"`
+	ContractID  string                   `json:"contract_id,omitempty"`
+	Directory   string                   `json:"directory"`
+	Shell       string                   `json:"shell"`
+	Path        string                   `json:"path"`
+	TimeoutNS   int64                    `json:"timeout_ns"`
+	Script      string                   `json:"script"`
+	Confinement *approvalConfinementBody `json:"confinement,omitempty"`
+}
+
+type approvalConfinementBody struct {
+	Kind       string   `json:"kind"`
+	CagePath   string   `json:"cage_path"`
+	CageSHA256 string   `json:"cage_sha256"`
+	Argv       []string `json:"argv"`
+	Workspace  string   `json:"workspace"`
+	TempDir    string   `json:"temp_dir"`
+	Network    bool     `json:"network"`
 }
 
 type approvalBody struct {
@@ -228,7 +297,7 @@ type mayResultBody struct {
 
 var lowerHex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-func selectTerminalApproval(data []byte, contractID, job, directory, mayPath, maySHA256 string) (ApprovalReceipt, error) {
+func selectTerminalApproval(data []byte, contractID, job, directory, mayPath, maySHA256 string, cage ...string) (ApprovalReceipt, error) {
 	events, err := decodeReplayEvents(data)
 	if err != nil {
 		return ApprovalReceipt{}, err
@@ -237,7 +306,11 @@ func selectTerminalApproval(data []byte, contractID, job, directory, mayPath, ma
 		return ApprovalReceipt{}, fmt.Errorf("verified Ask replay has no terminal approval receipt")
 	}
 	i := len(events) - 2
-	if !sealedNote(events, i, "ply.approval/v1") {
+	kind := "ply.approval/v1"
+	if len(cage) > 0 && strings.TrimSpace(cage[0]) != "" {
+		kind = "ply.approval/v2"
+	}
+	if !sealedNote(events, i, kind) {
 		return ApprovalReceipt{}, fmt.Errorf("Ply approval receipt is not the terminal sealed record")
 	}
 	var note replayNote
@@ -246,7 +319,7 @@ func selectTerminalApproval(data []byte, contractID, job, directory, mayPath, ma
 		return ApprovalReceipt{}, fmt.Errorf("terminal sealed approval receipt has invalid attribution")
 	}
 	var body approvalBody
-	if decodeStrict(note.Body, &body) != nil || !validTerminalApproval(body, contractID, job, directory, mayPath, maySHA256) {
+	if decodeStrict(note.Body, &body) != nil || !validTerminalApproval(body, contractID, job, directory, mayPath, maySHA256, cage...) {
 		return ApprovalReceipt{}, fmt.Errorf("terminal sealed approval receipt does not match the admitted action boundary")
 	}
 	action, _ := json.Marshal(body.Action)
@@ -258,7 +331,7 @@ func selectTerminalApproval(data []byte, contractID, job, directory, mayPath, ma
 	}, nil
 }
 
-func selectLatestApprovalResult(data []byte, contractID, job, directory, mayPath, maySHA256 string) (plyexec.ContractResult, bool, error) {
+func selectLatestApprovalResult(data []byte, contractID, job, directory, mayPath, maySHA256 string, cage ...string) (plyexec.ContractResult, bool, error) {
 	events, err := decodeReplayEvents(data)
 	if err != nil {
 		return plyexec.ContractResult{}, false, err
@@ -268,15 +341,34 @@ func selectLatestApprovalResult(data []byte, contractID, job, directory, mayPath
 	}
 	i := len(events) - 2
 	var candidate replayNote
-	if events[i].Type != "note" || decodeStrict(events[i].Data, &candidate) != nil || candidate.Kind != "bench.contract-result/v4" {
+	resultKind := "bench.contract-result/v4"
+	approvalKind := "ply.approval/v1"
+	if len(cage) > 0 && strings.TrimSpace(cage[0]) != "" {
+		resultKind, approvalKind = "bench.contract-result/v5", "ply.approval/v2"
+	}
+	if events[i].Type != "note" || decodeStrict(events[i].Data, &candidate) != nil || candidate.Kind != resultKind {
 		return plyexec.ContractResult{}, false, nil
 	}
-	if !sealedNote(events, i, "bench.contract-result/v4") || candidate.Source != "bench" {
+	if !sealedNote(events, i, resultKind) || candidate.Source != "bench" {
 		return plyexec.ContractResult{}, false, fmt.Errorf("terminal contract approval result is not a valid sealed Bench record")
 	}
 	var result plyexec.ContractResult
-	if decodeStrict(candidate.Body, &result) != nil || result.ContractID != contractID || result.ApprovalPolicy != plyexec.ApprovalEveryAction {
+	if decodeStrict(candidate.Body, &result) != nil || result.ContractID != contractID || result.ApprovalPolicy != plyexec.ApprovalEveryAction || (approvalKind == "ply.approval/v2") != (result.ActionConfinement == plyexec.ConfinementCage) {
 		return plyexec.ContractResult{}, false, fmt.Errorf("terminal contract approval result does not match the admitted boundary")
+	}
+	if result.Status == "confinement_failed" && approvalKind == "ply.approval/v2" {
+		if result.WorkerExitCode != 125 || result.StopReason != "confinement_failed" || result.ConfinementReceipt == nil || i < 4 {
+			return plyexec.ContractResult{}, false, fmt.Errorf("terminal confinement result has inconsistent status")
+		}
+		got, err := validateConfinementEvidence(events, i-2, contractID, job, directory, mayPath, maySHA256, cage[0], cage[1])
+		if err != nil {
+			return plyexec.ContractResult{}, false, err
+		}
+		ref := result.ConfinementReceipt
+		if ref.Seq != got.Seq || ref.BodySHA256 != got.BodySHA256 || ref.SealSHA256 != got.SealSHA256 || ref.ActionSHA256 != got.ActionSHA256 || ref.MayHaveRun != got.MayHaveRun || ref.Detail != got.Detail {
+			return plyexec.ContractResult{}, false, fmt.Errorf("terminal confinement result reference does not match Ply evidence")
+		}
+		return result, true, nil
 	}
 	if result.Status != "awaiting_approval" && result.Status != "approval_declined" {
 		return result, true, nil
@@ -286,13 +378,13 @@ func selectLatestApprovalResult(data []byte, contractID, job, directory, mayPath
 	if result.WorkerExitCode != wantExit || result.StopReason != map[string]string{"awaiting_approval": "approval_required", "approval_declined": "approval_declined"}[result.Status] || result.ApprovalReceipt == nil || result.ApprovalReceipt.Verdict != wantVerdict {
 		return plyexec.ContractResult{}, false, fmt.Errorf("terminal contract approval result has inconsistent status")
 	}
-	if i < 2 || !sealedNote(events, i-2, "ply.approval/v1") {
+	if i < 2 || !sealedNote(events, i-2, approvalKind) {
 		return plyexec.ContractResult{}, false, fmt.Errorf("terminal contract approval result has no adjacent Ply receipt")
 	}
 	var approvalNote replayNote
 	var approvalSeal replaySeal
 	var body approvalBody
-	if decodeStrict(events[i-2].Data, &approvalNote) != nil || approvalNote.Source != "ply" || decodeStrict(events[i-1].Data, &approvalSeal) != nil || decodeStrict(approvalNote.Body, &body) != nil || !validTerminalApproval(body, contractID, job, directory, mayPath, maySHA256) {
+	if decodeStrict(events[i-2].Data, &approvalNote) != nil || approvalNote.Source != "ply" || decodeStrict(events[i-1].Data, &approvalSeal) != nil || decodeStrict(approvalNote.Body, &body) != nil || !validTerminalApproval(body, contractID, job, directory, mayPath, maySHA256, cage...) {
 		return plyexec.ContractResult{}, false, fmt.Errorf("terminal contract approval result references an invalid Ply receipt")
 	}
 	action, _ := json.Marshal(body.Action)
@@ -304,8 +396,9 @@ func selectLatestApprovalResult(data []byte, contractID, job, directory, mayPath
 	return result, true, nil
 }
 
-func validTerminalApproval(body approvalBody, contractID, job, directory, mayPath, maySHA256 string) bool {
-	if body.Version != 1 || body.ContractID != contractID || body.Job != job || body.Action.Version != 1 ||
+func validTerminalApproval(body approvalBody, contractID, job, directory, mayPath, maySHA256 string, cage ...string) bool {
+	caged := len(cage) >= 2 && strings.TrimSpace(cage[0]) != ""
+	if body.Version != map[bool]int{false: 1, true: 2}[caged] || body.ContractID != contractID || body.Job != job || body.Action.Version != body.Version ||
 		body.Action.ContractID != contractID || body.Action.Directory != directory || body.Action.TimeoutNS <= 0 ||
 		!filepath.IsAbs(body.Action.Directory) || !filepath.IsAbs(body.Action.Shell) || body.Action.Script == "" ||
 		body.MayPath != mayPath || body.MaySHA256 != maySHA256 || !filepath.IsAbs(body.MayPath) || !lowerHex64.MatchString(body.Digest) ||
@@ -313,8 +406,16 @@ func validTerminalApproval(body approvalBody, contractID, job, directory, mayPat
 		len(body.MayArgv) != 3 || body.MayArgv[0] != body.MayPath || body.MayArgv[1] != "request" || body.MayArgv[2] != job {
 		return false
 	}
-	wantExit := map[string]int{"parked": 75, "declined": 3}[body.Verdict]
-	if wantExit == 0 || body.MayExitCode != wantExit {
+	if caged {
+		c := body.Action.Confinement
+		if c == nil || c.Kind != "cage" || c.CagePath != cage[0] || c.CageSHA256 != cage[1] || !strings.HasPrefix(c.CageSHA256, "sha256:") || !lowerHex64.MatchString(strings.TrimPrefix(c.CageSHA256, "sha256:")) || c.Workspace != directory || c.Network || !filepath.IsAbs(c.TempDir) || len(c.Argv) != 7 || c.Argv[0] != c.CagePath || c.Argv[1] != "-w" || c.Argv[2] != c.Workspace || c.Argv[3] != "--" || c.Argv[4] != body.Action.Shell || c.Argv[5] != "-c" || c.Argv[6] != body.Action.Script {
+			return false
+		}
+	} else if body.Action.Confinement != nil {
+		return false
+	}
+	wantExit, ok := map[string]int{"spent": 0, "parked": 75, "declined": 3}[body.Verdict]
+	if !ok || body.MayExitCode != wantExit {
 		return false
 	}
 	action, err := json.Marshal(body.Action)
@@ -332,6 +433,72 @@ func validTerminalApproval(body approvalBody, contractID, job, directory, mayPat
 	}
 	result = append(result, '\n')
 	return body.MayStdoutSHA256 == digestText(string(result)) && body.MayStdoutBytes == int64(len(result))
+}
+
+type confinementBody struct {
+	Version              int    `json:"version"`
+	ContractID           string `json:"contract_id"`
+	ApprovalDigest       string `json:"approval_digest"`
+	ApprovalActionSHA256 string `json:"approval_action_sha256"`
+	ScriptSHA256         string `json:"script_sha256"`
+	CagePath             string `json:"cage_path"`
+	CageSHA256           string `json:"cage_sha256"`
+	Workspace            string `json:"workspace"`
+	TempDir              string `json:"temp_dir"`
+	ExitCode             int    `json:"exit_code"`
+	MayHaveRun           bool   `json:"may_have_run"`
+	Detail               string `json:"detail"`
+	Output               []byte `json:"output,omitempty"`
+	OutputSHA256         string `json:"output_sha256"`
+	OutputBytes          int64  `json:"output_bytes"`
+	ElidedBytes          int64  `json:"elided_bytes,omitempty"`
+}
+
+func selectTerminalConfinement(data []byte, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256 string) (ConfinementReceipt, error) {
+	events, err := decodeReplayEvents(data)
+	if err != nil {
+		return ConfinementReceipt{}, err
+	}
+	if len(events) < 2 {
+		return ConfinementReceipt{}, fmt.Errorf("verified Ask replay has no terminal confinement receipt")
+	}
+	i := len(events) - 2
+	return validateConfinementEvidence(events, i, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256)
+}
+
+func validateConfinementEvidence(events []replayEvent, i int, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256 string) (ConfinementReceipt, error) {
+	if !sealedNote(events, i, "ply.confinement/v1") {
+		return ConfinementReceipt{}, fmt.Errorf("Ply confinement receipt is not terminal and sealed")
+	}
+	var note replayNote
+	var seal replaySeal
+	var body confinementBody
+	if decodeStrict(events[i].Data, &note) != nil || note.Source != "ply" || decodeStrict(events[i+1].Data, &seal) != nil || decodeStrict(note.Body, &body) != nil {
+		return ConfinementReceipt{}, fmt.Errorf("terminal confinement receipt is invalid")
+	}
+	if body.Version != 1 || body.ContractID != contractID || body.CagePath != cagePath || body.CageSHA256 != cageSHA256 || body.ExitCode != 125 || body.Detail == "" || digestText(string(body.Output)) != body.OutputSHA256 || !validCapturedOutput(body.Output, body.OutputBytes, body.ElidedBytes) {
+		return ConfinementReceipt{}, fmt.Errorf("terminal confinement receipt does not match the admitted boundary")
+	}
+	if i < 2 || !sealedNote(events, i-2, "ply.approval/v2") {
+		return ConfinementReceipt{}, fmt.Errorf("terminal confinement receipt has no adjacent caged approval")
+	}
+	var approvalNote replayNote
+	var approval approvalBody
+	if decodeStrict(events[i-2].Data, &approvalNote) != nil || approvalNote.Source != "ply" || decodeStrict(approvalNote.Body, &approval) != nil || !validTerminalApproval(approval, contractID, job, directory, mayPath, maySHA256, cagePath, cageSHA256) || approval.Verdict != "spent" || approval.MayExitCode != 0 || body.ApprovalDigest != approval.Digest || body.ApprovalActionSHA256 != approval.ActionSHA256 || body.ScriptSHA256 != digestText(approval.Action.Script) || approval.Action.Confinement == nil || body.Workspace != approval.Action.Confinement.Workspace || body.TempDir != approval.Action.Confinement.TempDir {
+		return ConfinementReceipt{}, fmt.Errorf("terminal confinement receipt does not match its adjacent approval")
+	}
+	return ConfinementReceipt{Seq: events[i].Seq, ExitCode: body.ExitCode, BodySHA256: digestBytes(note.Body), SealSHA256: seal.SHA256, ActionSHA256: body.ApprovalActionSHA256, MayHaveRun: body.MayHaveRun, Detail: body.Detail}, nil
+}
+
+func validCapturedOutput(output []byte, total, elided int64) bool {
+	if total < 0 || elided < 0 || elided > total {
+		return false
+	}
+	if elided == 0 {
+		return int64(len(output)) == total
+	}
+	marker := []byte(fmt.Sprintf("\n[ply: %d bytes elided]\n", elided))
+	return bytes.Contains(output, marker) && int64(len(output)) == total-elided+int64(len(marker))
 }
 
 func mayDigest(job, action string) string {

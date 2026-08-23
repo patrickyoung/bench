@@ -190,6 +190,44 @@ printf 'worked answer\n'
 	}
 }
 
+func TestCageRequiresAbsoluteExternalBenchDirBeforeCompiler(t *testing.T) {
+	workspace := t.TempDir()
+	ask := filepath.Join(workspace, "ask")
+	marker := filepath.Join(workspace, "started")
+	if err := os.WriteFile(ask, []byte("#!/bin/sh\ntouch \"$MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_ASK", ask)
+	t.Setenv("MARKER", marker)
+	t.Setenv("BENCH_DIR", "")
+	var out, errout strings.Builder
+	code := run([]string{"run", "-C", workspace, "-cage", "do it"}, strings.NewReader(""), &out, &errout)
+	if code != 1 || !strings.Contains(errout.String(), "absolute external BENCH_DIR") {
+		t.Fatalf("code=%d stderr=%q", code, errout.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("compiler started: %v", err)
+	}
+	external := t.TempDir()
+	t.Setenv("BENCH_DIR", external)
+	if err := validateCageControllerRoot(workspace, external); err != nil {
+		t.Fatalf("external rejected: %v", err)
+	}
+	if err := validateCageControllerPath(workspace, filepath.Join(workspace, "session.jsonl"), "Ask session"); err == nil {
+		t.Fatal("workspace session accepted")
+	}
+}
+
+func TestCageImpliesEveryActionApproval(t *testing.T) {
+	flags := taskFlags{contract: true, cage: true, approval: plyexec.ApprovalOff}
+	if err := validateTaskPolicy(flags); err != nil {
+		t.Fatal(err)
+	}
+	if got := flags.options().ApprovalPolicy; got != plyexec.ApprovalEveryAction {
+		t.Fatalf("approval=%q", got)
+	}
+}
+
 func TestContractAcceptAndRunRejectUnreviewedPolicyFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"accept", "-f", "/tmp/session.jsonl", "-expect", "sha256:draft", "-check", "true"},

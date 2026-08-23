@@ -78,6 +78,7 @@ type Config struct {
 	ActiveSkills    []string
 	TaskOptions     plyexec.TaskOptions
 	MayPath         string
+	CagePath        string
 }
 
 // Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
@@ -115,6 +116,7 @@ type Model struct {
 	steeringPath     string
 	activeTaskIntent string
 	mayPath          string
+	cagePath         string
 	taskMode         bool
 
 	composer       textarea.Model
@@ -369,6 +371,7 @@ func New(cfg Config) *Model {
 		toolbox:         cfg.Toolbox,
 		taskOptions:     cfg.TaskOptions,
 		mayPath:         cfg.MayPath,
+		cagePath:        cfg.CagePath,
 		taskMode:        true,
 		composer:        composer,
 		project:         project,
@@ -927,6 +930,14 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		if m.notice == "" {
 			m.notice = "Approval declined · the action was not executed · /continue can pursue another approach"
 		}
+	case event.ContractResult != nil && event.ContractResult.Status == "confinement_failed":
+		m.pendingApproval = nil
+		m.pendingContract = nil
+		m.retryContract = false
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" {
+			m.notice = "Confinement result was not accepted · inspect evidence before an explicit /contract run"
+		}
 	case m.taskOptions.IntentContract && event.ContractResult == nil:
 		if answer != "" {
 			m.messages = append(m.messages, message{role: roleAssistant, text: answer})
@@ -1022,6 +1033,17 @@ func contractResultCard(result plyexec.ContractResult) string {
 		lines = append(lines, "Next: press a or /approval decide to hand the exact digest to May.")
 	case "approval_declined":
 		lines = append(lines, "APPROVAL DECLINED", "The proposed action was not executed.", "Next: /continue can pursue a different action, or /contract can amend the outcome.")
+	case "confinement_failed":
+		mayHaveRun := result.ConfinementReceipt != nil && result.ConfinementReceipt.MayHaveRun
+		if mayHaveRun {
+			lines = append(lines, "CONFINEMENT RESULT UNTRUSTED", "The approved action may have run. No later model turn or verifier ran.")
+		} else {
+			lines = append(lines, "CONFINEMENT FAILED", "Cage did not establish the admitted boundary; the action did not run.")
+		}
+		if result.ConfinementReceipt != nil {
+			lines = append(lines, "Evidence: terminal Ply confinement receipt · "+shortDigest(result.ConfinementReceipt.BodySHA256), "Detail: "+result.ConfinementReceipt.Detail)
+		}
+		lines = append(lines, "Next: inspect the workspace and evidence; fix Cage and use /contract run, or amend and re-admit with Cage off.")
 	case "not_done":
 		lines = append(lines, "NOT DONE", "Ply stopped before the outcome check accepted the work.", "Next: review the work log, then /continue under this admission · or /contract to amend it.")
 	case "interrupted":
@@ -1599,6 +1621,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/check -- CMD", "attach one literal verifier to the next outcome", width),
 		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
 		helpRow(t, "/approval every-action", "require an exact May decision before each model action", width),
+		helpRow(t, "/cage on|off", "confine approved model actions; implies every-action May", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
 		helpRow(t, "/continue", "retry work under the same admitted contract", width),
 		helpRow(t, "/mode quick|review|loop", "choose immediate, negotiated, or verifier-loop work", width),

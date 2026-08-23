@@ -73,6 +73,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m.commandCheck(line)
 	case "approval", "approve":
 		return m.commandApproval(args)
+	case "cage":
+		return m.commandCage(args)
 	case "contract":
 		return m.commandContract(args)
 	case "accept":
@@ -125,6 +127,7 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 	m.retryContract = false
 	if mode == autonomy.Quick {
 		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
+		m.taskOptions.ActionConfinement = plyexec.ConfinementOff
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.pendingApproval = nil
@@ -145,6 +148,128 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 	}
 	m.syncContent()
 	return m, nil
+}
+
+func (m *Model) commandCage(args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		bound, staged, isBound := m.confinementPolicyState()
+		m.notice = "Action confinement · " + staged
+		if isBound {
+			m.notice = "Action confinement · bound " + bound
+			if staged != bound {
+				m.notice += " · requested for next amendment " + staged
+			}
+		}
+		m.syncContent()
+		return m, nil
+	}
+	if len(args) != 1 {
+		m.notice = "usage: /cage [on|off]"
+		return m, nil
+	}
+	switch strings.ToLower(args[0]) {
+	case "on":
+		if !m.taskOptions.IntentContract {
+			m.notice = "Cage needs Review or Loop · select /mode review first"
+			return m, nil
+		}
+		if err := cageStateOutsideWorkspace(m.workspace, m.dataDir, m.session); err != nil {
+			m.notice = err.Error()
+			m.syncContent()
+			return m, nil
+		}
+		m.taskOptions.ActionConfinement = plyexec.ConfinementCage
+		m.taskOptions.ApprovalPolicy = plyexec.ApprovalEveryAction
+	case "off":
+		m.taskOptions.ActionConfinement = plyexec.ConfinementOff
+	default:
+		m.notice = "usage: /cage [on|off]"
+		return m, nil
+	}
+	m.notice = "Action confinement set to " + m.taskOptions.ActionConfinement + " for the next contract revision"
+	if m.contractDraft != nil || m.admittedContract != nil {
+		m.notice += " · revise or amend before it becomes admitted policy"
+	}
+	m.syncContent()
+	return m, nil
+}
+
+func cageStateOutsideWorkspace(workspace, dataDir string, controllerPaths ...string) error {
+	if configured := strings.TrimSpace(os.Getenv("BENCH_DIR")); configured != "" && !filepath.IsAbs(configured) {
+		return errors.New("Cage needs an absolute external BENCH_DIR")
+	}
+	if !filepath.IsAbs(dataDir) {
+		return errors.New("Cage needs an absolute external BENCH_DIR")
+	}
+	rawWork, err := filepath.Abs(workspace)
+	if err != nil {
+		return err
+	}
+	work := rawWork
+	if resolved, e := filepath.EvalSymlinks(rawWork); e == nil {
+		work = resolved
+	}
+	rawState, err := filepath.Abs(dataDir)
+	if err != nil {
+		return err
+	}
+	state, err := cageProspectivePath(dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve BENCH_DIR for Cage: %w", err)
+	}
+	if cagePathContains(rawWork, rawState) || cagePathContains(rawState, rawWork) || cagePathContains(work, rawState) || cagePathContains(rawState, work) || cagePathContains(work, state) || cagePathContains(state, work) {
+		return errors.New("Cage needs BENCH_DIR outside and separate from the writable workspace")
+	}
+	for _, path := range controllerPaths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		rawTarget, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		target, err := cageProspectivePath(path)
+		if err != nil {
+			return fmt.Errorf("resolve Ask session for Cage: %w", err)
+		}
+		if cagePathContains(rawWork, rawTarget) || cagePathContains(work, rawTarget) || cagePathContains(work, target) {
+			return errors.New("Cage Ask session must be outside the writable workspace")
+		}
+	}
+	return nil
+}
+
+func cageProspectivePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	cur, tail := abs, []string{}
+	for {
+		if _, err := os.Lstat(cur); err == nil {
+			resolved, err := filepath.EvalSymlinks(cur)
+			if err != nil {
+				return "", err
+			}
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return filepath.Clean(resolved), nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return filepath.Clean(abs), nil
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func cagePathContains(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (m *Model) commandApproval(args []string) (tea.Model, tea.Cmd) {
@@ -176,6 +301,9 @@ func (m *Model) commandApproval(args []string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.taskOptions.ApprovalPolicy = policy
+		if policy == plyexec.ApprovalOff {
+			m.taskOptions.ActionConfinement = plyexec.ConfinementOff
+		}
 		m.composer.SetValue("")
 		m.notice = "Action approval set to " + policy + " for the next contract revision"
 		if m.contractDraft != nil || m.admittedContract != nil {
@@ -264,6 +392,7 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.taskOptions.IntentContract = false
 		m.taskOptions.Loop = false
 		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
+		m.taskOptions.ActionConfinement = plyexec.ConfinementOff
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.pendingApproval = nil
@@ -556,6 +685,7 @@ func (m *Model) statusReport() string {
 		"Outcome contract: " + contract,
 		"Check: " + check,
 		"Action approval: " + approval,
+		"Action confinement: " + m.confinementStatus(),
 		"Brief skills: " + skills,
 		"Session evidence: " + m.session,
 		"Contract files: " + m.contractStore.DraftPath(),
@@ -588,6 +718,13 @@ func (m *Model) taskPolicyDisplay() string {
 	if approvalBound && stagedApproval != boundApproval {
 		parts = append(parts, "next amendment approval="+stagedApproval)
 	}
+	boundConfinement, stagedConfinement, confinementBound := m.confinementPolicyState()
+	if boundConfinement == plyexec.ConfinementCage {
+		parts = append(parts, "Cage around every approved action")
+	}
+	if confinementBound && stagedConfinement != boundConfinement {
+		parts = append(parts, "next amendment confinement="+stagedConfinement)
+	}
 	if m.taskOptions.HasCycles {
 		parts = append(parts, "cycles="+plyexec.LoopCycleBudget(m.taskOptions))
 	} else if m.taskOptions.Loop {
@@ -612,6 +749,43 @@ func (m *Model) taskPolicyDisplay() string {
 		parts = append(parts, fmt.Sprintf("compactions=%d", m.taskOptions.Compactions))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func (m *Model) confinementPolicyState() (bound, staged string, isBound bool) {
+	staged = strings.TrimSpace(m.taskOptions.ActionConfinement)
+	if staged == "" {
+		staged = plyexec.ConfinementOff
+	}
+	if m.contractDraft != nil {
+		bound, isBound = m.contractDraft.ActionConfinement, true
+	} else if m.admittedContract != nil {
+		bound, isBound = m.admittedContract.ActionConfinement, true
+	}
+	if strings.TrimSpace(bound) == "" {
+		bound = plyexec.ConfinementOff
+	}
+	if !isBound {
+		bound = staged
+	}
+	return
+}
+
+func (m *Model) confinementStatus() string {
+	bound, staged, isBound := m.confinementPolicyState()
+	label := func(v string) string {
+		if v == plyexec.ConfinementCage {
+			return "Cage · workspace + private temp writable · network denied · host reads unrestricted"
+		}
+		return "Off"
+	}
+	result := label(bound)
+	if isBound {
+		result = "Bound: " + result
+		if staged != bound {
+			result += " · requested for next amendment: " + label(staged)
+		}
+	}
+	return result
 }
 
 func (m *Model) approvalPolicyState() (bound, staged string, isBound bool) {

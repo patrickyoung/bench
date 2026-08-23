@@ -15,18 +15,19 @@ version number.
 | `ply` | tool loop and executable verdict | native executable |
 | `hone` | verified learning path | native executable |
 | `draft` | agent design/build/prove composition | script plus `skills/draft` |
+| `may` | exact, single-use human action decisions | native executable |
+| `cage` | kernel-enforced model-action confinement | native executable |
 
-`cage`, `may`, `rules`, `trail`, `vouch`, and `web` are useful capabilities,
-but Bench does not require them to start or to complete its documented base
-loop. They should remain standalone installs until an actual Bench surface
-depends on them; later they can form an explicit extended suite without
-silently enlarging the base.
+`rules`, `trail`, `vouch`, and `web` remain useful standalone capabilities.
+May and Cage are now required suite components because Review/Loop can admit
+their exact-action approval and confinement policies. They remain ordinary
+independent filters; packaging them does not merge their runtimes into Bench.
 
 The release layout is relocatable:
 
 ```text
 bench-suite-VERSION-GOOS-GOARCH/
-  bin/bench  bin/ask  bin/brief  bin/ply  bin/hone  bin/draft
+  bin/bench  bin/ask  bin/brief  bin/ply  bin/hone  bin/draft  bin/may  bin/cage
   skills/draft/...
   licenses/COMPONENT/LICENSE
   licenses/third-party/MODULE-ID/...
@@ -40,7 +41,8 @@ bench-suite-VERSION-GOOS-GOARCH/
 
 When `bin/bench` sees the valid `suite.json` marker above it, it resolves its
 companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
-`BENCH_PLY`, `BENCH_HONE`, and `BENCH_DRAFT` values still win. Without the
+`BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values
+still win. Without the
 marker, a standalone or `go install` build retains the existing `PATH`
 behavior. This lets an application invoke a private `bin/bench` by absolute
 path without mutating the user's environment.
@@ -59,7 +61,7 @@ pins every component to an exact Git commit and records its standalone
 
 An update to any required component is a manifest change followed by the full
 suite build and smoke tests. Compatibility is therefore demonstrated by the
-artifact that ships, rather than inferred from six independent `@latest`
+artifact that ships, rather than inferred from eight independent `@latest`
 resolutions. Exact revisions are intentional while the command contracts are
 young; version ranges can be introduced only after those contracts have
 declared compatibility majors of their own.
@@ -138,10 +140,10 @@ still checked without executing a foreign binary.
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all six commands without overwriting unrelated files.
+  directory, and links all eight commands without overwriting unrelated files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install six `HEAD` formulas. It can link the six commands and
+  independently install eight `HEAD` formulas. It can link the eight commands and
   keep `skills/draft` beside the versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
   checksum during the app build, and launch its `bin/bench` by absolute path.
@@ -170,9 +172,10 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all six commands;
+   versions for all eight commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
-   the bundled Ask/Ply/Draft boundaries in an offline fake-model smoke test.
+   the bundled Ask/Ply/Draft boundaries, and all eight commands report their
+   pinned versions, in offline smoke tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.
 

@@ -70,7 +70,10 @@ to the editable draft/admission, is forbidden in Quick, and may be removed only
 by amendment and re-admission. It composes exact `may request` results through
 Ply's pre-execution seam: parked/declined actions execute nothing and stop;
 Bench verifies the sealed `ply.approval/v1` terminal receipt and uses result
-v4. Bench must never interpret model/skill prose as approval or implement its
+v4. Caged admissions use `ply.approval/v2`; Cage wraps only the approved model
+action, while Ask, May, Brief, Bench, and checks remain outside. A terminal
+confinement failure must have sealed `ply.confinement/v1` evidence and result
+v5 before Bench exposes exit 125. Bench must never interpret model/skill prose as approval or implement its
 own yes path; the TUI yields to literal `may decide DIGEST`.
 Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one
 action, returns its evidence, and decides when to ask again. `/ask` uses direct

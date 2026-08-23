@@ -103,7 +103,7 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("component %q has unsafe license path %q", c.Name, c.LicenseFile)
 		}
 	}
-	for _, required := range []string{"bench", "ask", "brief", "ply", "may", "hone", "draft"} {
+	for _, required := range []string{"bench", "ask", "brief", "ply", "may", "cage", "hone", "draft"} {
 		if !seen[required] {
 			return fmt.Errorf("suite is missing required component %q", required)
 		}

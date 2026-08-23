@@ -26,6 +26,51 @@ type fakeRunner struct {
 	replayPath   string
 }
 
+func TestCageCommandStagesEveryActionOnlyWithExternalControllerState(t *testing.T) {
+	workspace := t.TempDir()
+	control := t.TempDir()
+	m := New(Config{Workspace: workspace, DataDir: control, TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	model, _ := m.commandCage([]string{"on"})
+	got := model.(*Model)
+	if got.taskOptions.ActionConfinement != plyexec.ConfinementCage || got.taskOptions.ApprovalPolicy != plyexec.ApprovalEveryAction {
+		t.Fatalf("options=%#v notice=%q", got.taskOptions, got.notice)
+	}
+	inside := New(Config{Workspace: workspace, DataDir: filepath.Join(workspace, ".bench"), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	model, _ = inside.commandCage([]string{"on"})
+	blocked := model.(*Model)
+	if blocked.taskOptions.ActionConfinement == plyexec.ConfinementCage || !strings.Contains(blocked.notice, "outside") {
+		t.Fatalf("options=%#v notice=%q", blocked.taskOptions, blocked.notice)
+	}
+
+	external := t.TempDir()
+	insideSession := New(Config{Workspace: workspace, DataDir: external, Session: filepath.Join(workspace, ".bench", "session.jsonl"), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	model, _ = insideSession.commandCage([]string{"on"})
+	blocked = model.(*Model)
+	if blocked.taskOptions.ActionConfinement == plyexec.ConfinementCage || !strings.Contains(blocked.notice, "Ask session") {
+		t.Fatalf("in-workspace session accepted: options=%#v notice=%q", blocked.taskOptions, blocked.notice)
+	}
+
+	outsideTarget := t.TempDir()
+	link := filepath.Join(workspace, "controller-link")
+	if err := os.Symlink(outsideTarget, link); err != nil {
+		t.Fatal(err)
+	}
+	throughWorkspaceLink := New(Config{Workspace: workspace, DataDir: external, Session: filepath.Join(link, "session.jsonl"), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	model, _ = throughWorkspaceLink.commandCage([]string{"on"})
+	blocked = model.(*Model)
+	if blocked.taskOptions.ActionConfinement == plyexec.ConfinementCage {
+		t.Fatalf("workspace symlink component accepted: options=%#v notice=%q", blocked.taskOptions, blocked.notice)
+	}
+
+	t.Setenv("BENCH_DIR", "../controller")
+	relativeConfigured := New(Config{Workspace: workspace, DataDir: external, Session: filepath.Join(external, "session.jsonl"), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	model, _ = relativeConfigured.commandCage([]string{"on"})
+	blocked = model.(*Model)
+	if blocked.taskOptions.ActionConfinement == plyexec.ConfinementCage || !strings.Contains(blocked.notice, "absolute external BENCH_DIR") {
+		t.Fatalf("relative BENCH_DIR accepted: options=%#v notice=%q", blocked.taskOptions, blocked.notice)
+	}
+}
+
 type fakeTask struct {
 	events   chan plyexec.Event
 	req      plyexec.TaskRequest

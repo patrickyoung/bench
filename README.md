@@ -31,6 +31,8 @@ Requirements when running from source rather than a suite archive:
   `hone` are draft's own dependencies)
 - `brief` and `ply` on `PATH` to browse, author, and refine skills
 - `hone` on `PATH` to admit lessons from verified build recoveries
+- `may` and `cage` on `PATH` for admitted exact-action approval and action-only
+  confinement
 
 Build a relocatable development suite from the sibling repositories with:
 
@@ -40,7 +42,7 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-six commands under `~/.local`. Pass `-prefix DIR` to change the destination.
+eight commands under `~/.local`. Pass `-prefix DIR` to change the destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.
 
@@ -136,14 +138,15 @@ through Ask's native structured-output boundary. The validated canonical
 contract is written to an ordinary editable `draft.json` under
 `.bench/contracts`, and a sealed `bench.contract-proposal/v1` snapshot records
 each ordinary generated or manual proposal. A draft with the operator-owned
-`approval_policy: "every-action"` uses proposal v2; the policy is visible in
+`approval_policy: "every-action"` uses proposal v2. Adding
+`action_confinement: "cage"` uses proposal v3; these policies are visible in
 the editable envelope and changes its exact digest. Natural-language changes use another Ask
 schema turn. `bench contract edit` or `/contract edit` uses `$VISUAL` or
 `$EDITOR`; changes made by another JSON editor become admissible only after
 `bench contract import` or `/contract import` validates and seals them.
 Neither path can start Ply. `/contract accept` re-reads the displayed exact
-draft digest, publishes an immutable revision, seals `bench.contract/v3` (or
-v4 for every-action approval), and
+draft digest, publishes an immutable revision, seals `bench.contract/v3` (v4
+for every-action approval, or v5 for Cage confinement), and
 only then passes those exact admitted bytes to Ply. Ply binds every
 sealed `ply.verifier/v1` receipt to the contract envelope ID. `ask replay -check`
 verifies conversation folds, event sequence, and those record-prefix seals.
@@ -154,7 +157,8 @@ Bench first seals `bench.judge-map/v1`, strictly matches Ply's accepted verifier
 receipt, and seals `bench.contract-result/v2`; only that path may automatically
 complete a contracted outcome. Invocation-scoped Loop runs seal the same verdict
 and evidence fields plus their effective budgets and terminal reason as
-`bench.contract-result/v3`; action-gated runs use result v4, while ordinary
+`bench.contract-result/v3`; action-gated runs use result v4, caged runs use
+result v5, while ordinary
 Review continues to emit unchanged v1/v2 records.
 A consequential open question or unresolved approval stops before work. The
 next reply is compiled with the full original intent, exact questions and
@@ -186,6 +190,29 @@ it. Bench replay-verifies Ply's sealed approval receipt and records result v4
 before showing an approval state. This policy gates every action deliberately;
 neither model prose nor Bench attempts to classify which arbitrary shell text
 is risky.
+
+`-cage` (or `/cage on`) composes that admitted every-action boundary with the
+standalone Cage process. It confines only model-authored action children:
+workspace and a private per-session temporary directory are writable, host
+network is denied, and host reads are otherwise unrestricted. Ask, Brief, May,
+Bench, and the configured verifier stay outside Cage. The policy requires
+Review or Loop, implies `every-action`, rejects compaction, and is stored in
+the editable contract; disabling it requires amendment and re-admission.
+Cage exit 125 is reserved as an untrusted confinement result. Ply seals
+`ply.confinement/v1` before returning it; the action may have run when the
+child itself returned 125 or Cage changed after execution.
+
+Caged work requires an absolute `BENCH_DIR` outside the writable workspace:
+
+```sh
+BENCH_DIR="$HOME/.local/state/bench/my-project" bench -mode review \
+  -approval every-action -cage 'update the project under the reviewed contract'
+```
+
+The verifier is intentionally not caged. A verifier such as `make test` or
+`go test` can execute model-modified workspace code with the caller's ordinary
+authority; use a non-executing checker or separately constrain the verifier
+when that distinction matters.
 
 Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
 to the next outcome; Bench displays it beside the composer and passes it to
@@ -246,6 +273,12 @@ single bounded verifier-pursuit invocation.
 | Record and restore | sealed Ask notes and `ask replay -check` |
 | Execute | unchanged Ply, after explicit admission only |
 | Verify | the existing literal check, judge map, and Ply receipts |
+
+The public filter exit contract is stable: 0 is accepted completion, 1 is a
+broken run, 2 is not done or awaiting review, 3 is an exact May decline, 75 is
+an exact May decision pending, 125 is an untrusted Cage confinement result,
+and 130 is interruption. Exit 125 never means “no effects”: the sealed
+confinement receipt says whether the action may have run.
 
 Model choice follows the filters' existing convention. `-m provider/model`
 overrides `ASK_MODEL` at startup; `/model provider/model` switches future Ask,
@@ -310,7 +343,7 @@ passes the command as one argv value and never evaluates it itself. Agent
 designs remain the durable home for recurring checked work.
 
 Both the interactive workbench and `bench run` accept `-contract=true|false`,
-`-check COMMAND`, `-check-all`, `-approval off|every-action`, and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
+`-check COMMAND`, `-check-all`, `-approval off|every-action`, `-cage`, and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
 `-compact`, and `-compactions N`. Bench passes effort names literally through
 Ply; Ask and its provider decide which names are supported. Omitted controls
 stay omitted so the installed Ply owns its defaults; an explicit zero retains
