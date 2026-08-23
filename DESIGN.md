@@ -55,7 +55,10 @@ revision stays in Ask; manual revision stays in `$EDITOR`. Neither invokes
 Ply. Only a literal user admission publishes an immutable revision and repeats
 those exact bytes in the next user message to Ply. Every Ply verifier receipt names its digest, so Ask replay
 checks request folds, event sequence, and the exact sealed record prefixes.
-`/contract off` and `-contract=false` retain an explicit direct-Ply seam.
+Autonomy is explicit product language: `quick` uses the direct-Ply seam for
+immediate work without contract review, while `review` negotiates and admits the durable
+contract first. `/contract off` and `-contract=false` remain compatibility
+aliases rather than the primary mental model.
 
 The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its
@@ -119,7 +122,7 @@ boundary with controller evidence outside Cage write roots.
 The same seam is available without a TUI. `bench contract draft`, `revise`,
 `show`, `edit`, `import`, `accept`, and `run` use the same contractexec and file-store APIs as the
 Contract Review screen. Default `bench run` creates a proposal and exits 2
-without Ply; `bench run -contract=false` preserves the direct filter seam.
+without Ply; `bench run -mode quick` preserves the direct filter seam.
 `bench ask` remains direct Ask. `bench tui` is the explicit presentation
 override; there is no TUI-only contract engine.
 

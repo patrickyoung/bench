@@ -36,7 +36,7 @@ func TestParseCanonicalizesAndNamesExactContract(t *testing.T) {
 		t.Fatalf("contract=%#v digest=%q canonical=%s", c, digest, canonical)
 	}
 	rendered := Render(c, digest)
-	for _, want := range []string{"OUTCOME CONTRACT v2", "Acceptance evidence:", "[check]", "mobile layouts"} {
+	for _, want := range []string{"OUTCOME CONTRACT v2", "Acceptance evidence:", "[check]", "mobile layouts", "Assumptions:", "Create one self-contained HTML file", "Limits:", "Visual appeal remains a human judgment"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("render missing %q:\n%s", want, rendered)
 		}

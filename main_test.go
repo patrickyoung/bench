@@ -289,7 +289,7 @@ printf 'answer only\n'
 	t.Setenv("CAPTURE", capture)
 	var stdout, stderr strings.Builder
 	session := filepath.Join(dir, "sessions", "work.jsonl")
-	code := run([]string{"run", "-contract=false", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "inspect; $(literal)"},
+	code := run([]string{"run", "-mode", "quick", "-C", dir, "-f", session, "-m", "openai/test", "-s", "go-review", "inspect; $(literal)"},
 		strings.NewReader("piped evidence\n"), &stdout, &stderr)
 	if code != 0 || stdout.String() != "answer only\n" || stderr.String() != "tool transcript\n" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -482,6 +482,7 @@ func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
 	for _, args := range [][]string{
 		{"run", "-C", dir, "-check-all", "goal"},
 		{"run", "-C", dir, "-contract=false", "-check", "true", "-check-all", "goal"},
+		{"run", "-C", dir, "-mode", "quick", "-check", "true", "-check-all", "goal"},
 	} {
 		var stdout, stderr strings.Builder
 		code := run(args, strings.NewReader(""), &stdout, &stderr)
@@ -489,8 +490,32 @@ func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
 			t.Fatalf("%v: code=%d stderr=%q", args, code, stderr.String())
 		}
 	}
+	var stdout, stderr strings.Builder
+	if code := run([]string{"run", "-C", dir, "-mode", "unknown", "goal"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "not supported") {
+		t.Fatalf("invalid mode: code=%d stderr=%q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"contract", "draft", "-C", dir, "-mode", "quick", "goal"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("contract draft accepted contradictory mode: code=%d stderr=%q", code, stderr.String())
+	}
 	if _, err := os.Stat(started); !os.IsNotExist(err) {
 		t.Fatalf("Ply started for invalid policy: %v", err)
+	}
+}
+
+func TestModeFlagExplicitlyOverridesLegacyContractAlias(t *testing.T) {
+	for _, tc := range []struct {
+		flags taskFlags
+		want  string
+	}{
+		{taskFlags{contract: false, mode: "review"}, "review"},
+		{taskFlags{contract: true, mode: "quick"}, "quick"},
+	} {
+		got, err := tc.flags.autonomy()
+		if err != nil || string(got) != tc.want {
+			t.Fatalf("autonomy() = %q, %v; want %q", got, err, tc.want)
+		}
 	}
 }
 

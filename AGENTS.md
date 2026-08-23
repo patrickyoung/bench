@@ -49,8 +49,9 @@ parsed criterion, must be sealed before Ply, and may complete only from a
 strictly matching sealed accepted receipt followed by a durable v2 result.
 Neither a skill nor model output may set or infer that policy. `/continue` begins another
 implementation attempt under the same admitted revision even when
-the retained check already passes. `/contract off` and
-`-contract=false` are the explicit direct-Ply compatibility seam. Work then
+the retained check already passes. User-facing autonomy is `quick` or `review`:
+quick uses the direct Ply seam and review requires contract admission.
+`/contract off` and `-contract=false` remain compatibility aliases. Work then
 runs through `ply` with that one explicit Ask session; the full-shell or toolbox
 grant, deferred unobserved actions, and the resulting typescript stay visible,
 while unchecked exit zero is only a model stop, never a completed verdict.
@@ -63,7 +64,7 @@ Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one
 action, returns its evidence, and decides when to ask again. `/ask` uses direct
 `ask` for a no-tools turn in that same session. The public `bench contract`
 draft/revise/show/edit/import/accept/run commands must use the same store and controller API
-as the TUI. Default `bench run` drafts and exits 2 without Ply; `-contract=false`
+as the TUI. Default `bench run` drafts and exits 2 without Ply; `-mode quick`
 is the explicit immediate-work filter. `bench ask` remains direct Ask. `-m` and `/model` must propagate
 through every model-backed stage. Open-task `-effort` passes literally through
 Ply to Ask; Bench must not validate provider-specific effort names.

@@ -168,13 +168,37 @@ func Render(c Contract, digest string) string {
 		short = short[:12]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "OUTCOME CONTRACT v%d · %s\n%s\n\nDeliverables:\n", c.Version, short, c.Outcome)
+	fmt.Fprintf(&b, "OUTCOME CONTRACT v%d · %s\n", c.Version, short)
+	b.WriteString(renderSummary(c))
+	return strings.TrimSpace(b.String())
+}
+
+// RenderSummary is the human review surface. Protocol versions and digests
+// remain available in audit views, while the ordinary decision stays focused
+// on outcome, guardrails, and evidence.
+func RenderSummary(c Contract) string { return strings.TrimSpace(renderSummary(c)) }
+
+func renderSummary(c Contract) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Outcome:\n%s\n\nDeliverables:\n", c.Outcome)
 	for _, item := range c.Deliverables {
 		fmt.Fprintf(&b, "- %s\n", item)
 	}
 	if len(c.Invariants) > 0 {
 		b.WriteString("\nPreserve:\n")
 		for _, item := range c.Invariants {
+			fmt.Fprintf(&b, "- %s\n", item)
+		}
+	}
+	if len(c.Limits) > 0 {
+		b.WriteString("\nLimits:\n")
+		for _, item := range c.Limits {
+			fmt.Fprintf(&b, "- %s\n", item)
+		}
+	}
+	if len(c.Assumptions) > 0 {
+		b.WriteString("\nAssumptions:\n")
+		for _, item := range c.Assumptions {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
 	}
@@ -186,7 +210,7 @@ func Render(c Contract, digest string) string {
 			checkCount++
 		}
 	}
-	fmt.Fprintf(&b, "\nProposed coverage: configured check %d/%d · review %d/%d\n",
+	fmt.Fprintf(&b, "\nEvidence plan: executable check %d/%d · inspection/human %d/%d\n",
 		checkCount, len(c.Criteria), len(c.Criteria)-checkCount, len(c.Criteria))
 	if len(c.Approvals) > 0 {
 		b.WriteString("\nApproval boundaries:\n")
@@ -200,5 +224,5 @@ func Render(c Contract, digest string) string {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return b.String()
 }

@@ -65,8 +65,9 @@ The prompt accepts explicit, discoverable commands:
 /model provider/model   show or switch the model for every later stage
 /tools shell|off|PATH   choose Ask + Ply authority or Ask-only
 /ask · /work            switch directly between Ask and Ask + Ply
+/mode quick|review      choose immediate work or contract negotiation
 /contract               reopen the durable draft or admitted revision
-/contract on|off        enable or bypass contract negotiation
+/contract on|off        compatibility aliases for review/quick
 /contract edit          edit the proposed JSON with $VISUAL/$EDITOR
 /contract import        validate and seal changes from another JSON editor
 /contract accept        admit the reviewed draft, then start Ply
@@ -113,8 +114,12 @@ running from the bench checkout before installing `draft/bin/draft` on
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
 
-Outcome contracts are on by default. `/contract off` is the explicit direct-Ply
-compatibility path; `bench run -contract=false` is its headless equivalent.
+Bench names autonomy rather than making the user reason about an internal
+contract switch. `review` is the default: negotiate and admit a durable outcome
+before work. `quick` starts immediately with the current tool grant and is for
+work where you choose to skip contract review. `/contract on|off` and `-contract=true|false`
+remain compatibility aliases for `review|quick`; new use should prefer
+`/mode` and `-mode`.
 The compiler receives the exact user intent, configured verifier, selected
 Brief skills, a bounded read-only workspace inventory, and piped evidence.
 Skills supply reusable domain procedure and review expectations to both the
@@ -189,10 +194,10 @@ bench contract accept -C . -f .bench/sessions/gallery.jsonl \
 bench contract run -C . -f .bench/sessions/gallery.jsonl
 ```
 
-`bench run` with its default `-contract=true` is the filter-friendly shortcut
+`bench run` with its default `-mode review` is the filter-friendly shortcut
 for drafting: it writes the draft path to stdout, explains the next step on
 stderr, returns 2 (pending admission), and never starts Ply. Use
-`bench run -contract=false` when an immediate, non-negotiated Ply run is
+`bench run -mode quick` when an immediate, non-negotiated Ply run is
 actually intended.
 
 | Stage | Existing program or boundary |
@@ -339,10 +344,10 @@ git diff | bench -m openai-codex/your-model 'review this patch'
 go test ./... 2>&1 | bench run 'fix the smallest root cause' >draft-path 2>contract.log
 build.log | bench ask 'explain the first useful failure' | less
 bench run -t .bench/tools -s go-review -f review.jsonl 'review this tree'
-bench run -contract=false -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
+bench run -mode quick -check 'go test ./...' -turns 20 -timeout 90s -compact 'fix it'
 ```
 
-For `bench ask` and direct `bench run -contract=false`, piped bytes are stdin
+For `bench ask` and direct `bench run -mode quick`, piped bytes are stdin
 evidence and the answer alone is stdout. A negotiated `bench run` instead
 prints the durable draft path and exits 2 before Ply. Goals, model specs, skill names, and paths remain literal
 argv values; Bench never evaluates them as shell syntax.

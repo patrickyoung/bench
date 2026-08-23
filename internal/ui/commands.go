@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/patrickyoung/bench/internal/autonomy"
 )
 
 type shellReturnedMsg struct{ err error }
@@ -43,6 +44,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m.commandModel(args)
 	case "tools":
 		return m.commandTools(args)
+	case "mode":
+		return m.commandAutonomy(args)
 	case "ask":
 		m.composer.SetValue("")
 		m.taskMode = false
@@ -87,34 +90,68 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		m.composer.SetValue("")
+		mode := m.autonomyMode()
+		m.notice = fmt.Sprintf("Autonomy %s · %s", mode, mode.Description())
+		m.syncContent()
+		return m, nil
+	}
+	if len(args) != 1 {
+		m.notice = "usage: /mode [quick|review]"
+		return m, nil
+	}
+	mode, err := autonomy.Parse(args[0])
+	if err != nil {
+		m.notice = err.Error()
+		return m, nil
+	}
+	m.taskOptions.IntentContract = mode.UsesContract()
+	if mode == autonomy.Quick {
+		m.taskOptions.CheckAllCriteria = false
+		m.pendingContract = nil
+		m.pendingDecision = nil
+		m.taskOptions.Force = false
+		m.continueContract = false
+		m.screen = screenAsk
+		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
+	}
+	m.composer.SetValue("")
+	m.notice = fmt.Sprintf("Autonomy %s · %s", mode, mode.Description())
+	m.syncContent()
+	return m, nil
+}
+
 func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 	if len(args) == 0 {
 		m.composer.SetValue("")
 		if !m.taskOptions.IntentContract {
-			m.notice = "Outcome contracts off · intent goes directly to Ply"
+			m.notice = "Autonomy quick · use /mode review to negotiate an outcome contract"
 			m.syncContent()
 			return m, nil
 		}
 		return m.openContract()
 	}
 	if len(args) != 1 {
-		m.notice = "usage: /contract [on|off|accept|edit|import|run|amend|cancel]"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
 	switch strings.ToLower(args[0]) {
 	case "on":
 		m.taskOptions.IntentContract = true
-		m.notice = "Outcome contracts on · the next intent becomes an editable draft; Ply waits for /contract accept"
+		m.notice = "Autonomy review · the next intent becomes an editable draft; Ply waits for /contract accept"
 	case "off":
 		m.taskOptions.IntentContract = false
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
+		m.continueContract = false
 		m.screen = screenAsk
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
-		m.notice = "Outcome contracts off · the next intent will go directly to Ply"
+		m.notice = "Autonomy quick · the next outcome skips contract review and starts Ply with the current tool grant"
 	case "accept", "admit":
 		m.composer.SetValue("")
 		return m.acceptContractDraft()
@@ -131,6 +168,17 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 	case "run":
 		m.composer.SetValue("")
 		return m.runAdmittedContract("")
+	case "audit":
+		m.composer.SetValue("")
+		updated, cmd := m.openContract()
+		opened := updated.(*Model)
+		if opened.screen != screenContract {
+			return opened, cmd
+		}
+		opened.contractAudit = true
+		opened.notice = "Contract audit details shown · press a to return to semantic review"
+		opened.syncContent()
+		return opened, cmd
 	case "amend":
 		m.composer.SetValue("")
 		return m.openContract()
@@ -140,7 +188,7 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 		m.composer.Placeholder = "Describe the outcome you want, or type /help…"
 		m.notice = "Contract retained · /contract reopens it"
 	default:
-		m.notice = "usage: /contract [on|off|accept|edit|import|run|amend|cancel]"
+		m.notice = "usage: /contract [accept|edit|import|run|audit|amend|cancel] · /mode quick|review selects autonomy"
 		m.syncContent()
 		return m, nil
 	}
@@ -364,6 +412,7 @@ func (m *Model) statusReport() string {
 	}
 	return strings.Join([]string{
 		"Mode: " + m.modeDisplay(),
+		"Autonomy: " + string(m.autonomyMode()) + " · " + m.autonomyMode().Description(),
 		"Model: " + m.modelDisplay(),
 		"Tools: " + tools,
 		"Outcome contract: " + contract,
@@ -376,10 +425,7 @@ func (m *Model) statusReport() string {
 }
 
 func (m *Model) taskPolicyDisplay() string {
-	contract := "intent contract off"
-	if m.taskOptions.IntentContract {
-		contract = "intent contract on"
-	}
+	contract := "autonomy " + string(m.autonomyMode())
 	parts := []string{"work runs unchecked", contract}
 	if m.taskOptions.Check != "" {
 		parts[0] = "work check " + strconv.Quote(m.taskOptions.Check)

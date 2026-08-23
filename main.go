@@ -19,6 +19,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
@@ -486,6 +487,7 @@ func (s *stringList) Set(value string) error {
 
 type taskFlags struct {
 	contract    bool
+	mode        string
 	check       string
 	checkAll    bool
 	effort      string
@@ -502,6 +504,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	task.compactions.name = "compactions"
 	task.timeout.name = "timeout"
 	fs.BoolVar(&task.contract, "contract", true, "compile intent into a replayable outcome contract before work")
+	fs.StringVar(&task.mode, "mode", "", "autonomy: quick or review (overrides -contract)")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
@@ -514,7 +517,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 
 func (f taskFlags) options() plyexec.TaskOptions {
 	return plyexec.TaskOptions{
-		IntentContract:   f.contract,
+		IntentContract:   f.mustAutonomy().UsesContract(),
 		Check:            f.check,
 		CheckAllCriteria: f.checkAll,
 		Effort:           f.effort,
@@ -526,15 +529,34 @@ func (f taskFlags) options() plyexec.TaskOptions {
 	}
 }
 
+func (f taskFlags) autonomy() (autonomy.Mode, error) {
+	if strings.TrimSpace(f.mode) != "" {
+		return autonomy.Parse(f.mode)
+	}
+	return autonomy.FromContract(f.contract), nil
+}
+
+func (f taskFlags) mustAutonomy() autonomy.Mode {
+	mode, err := f.autonomy()
+	if err != nil {
+		return autonomy.Review
+	}
+	return mode
+}
+
 func validateCheckAllFlags(f taskFlags) error {
+	mode, err := f.autonomy()
+	if err != nil {
+		return err
+	}
 	if !f.checkAll {
 		return nil
 	}
 	if strings.TrimSpace(f.check) == "" {
 		return errors.New("check-all needs a configured check")
 	}
-	if !f.contract {
-		return errors.New("check-all needs an outcome contract")
+	if !mode.UsesContract() {
+		return errors.New("check-all needs review autonomy")
 	}
 	return nil
 }
@@ -594,7 +616,7 @@ func printUsage(w io.Writer) {
 
   bench [flags] [initial task]   open the interactive workbench
   bench tui [flags] [task]       force the interactive workbench
-  bench run [flags] goal         draft a contract; -contract=false runs Ask + Ply
+  bench run [flags] goal         draft a contract; -mode quick runs Ask + Ply
   bench ask [flags] [message]    Ask only; stdin message/evidence
   bench contract ...             draft, revise, edit, admit, or rerun a contract
   bench version                  print the version
@@ -609,7 +631,8 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
-  -contract           compile intent into a replayable outcome contract (default true)
+  -mode quick|review  choose immediate work or contract negotiation (default review)
+  -contract           compatibility alias for review/quick
   -check command      literal verifier for the next open work outcome
   -check-all          admit that check as judge of every contract criterion
   -effort level       reasoning effort passed literally through Ply to Ask
@@ -635,8 +658,8 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-contract=true|false] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
-		fmt.Fprintln(w, "default: create an editable contract draft and exit 2 before Ply; use -contract=false for immediate work")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "default mode review: create an editable contract draft and exit 2 before Ply; mode quick starts work immediately")
 		return
 	}
 	fmt.Fprintln(w, "usage: bench ask [-m model] [-C dir] [-s skill] [-f session] [message]")

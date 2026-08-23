@@ -20,6 +20,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/briefexec"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/draftexec"
@@ -103,6 +104,7 @@ type Model struct {
 	contractDraft    *contractexec.Draft
 	admittedContract *contractexec.Draft
 	contractStore    contractexec.FileStore
+	contractAudit    bool
 	editingContract  bool
 	continueContract bool
 	activeTaskIntent string
@@ -1207,6 +1209,9 @@ func (m *Model) renderTranscript(width int) string {
 			titleText = "What should we think through?"
 			bodyText = "Ask continues the same replayable session without running commands.\nNo workspace program runs until you return with /work."
 			exampleText = "Try: Explain the tradeoffs in this design before we change it.\nNeed durable work? /work  ·  Need an agent project? /agent"
+		} else if m.autonomyMode() == autonomy.Quick {
+			bodyText = "1  WORK        Start Ply immediately with ordinary programs.\n2  OBSERVE     Show real command output as it happens.\n3  VERIFY      Let executable evidence or your review decide what remains."
+			exampleText = "Autonomy quick · switch with /mode review when you want a negotiated contract.\nTry: Find why the tests fail and fix the smallest root cause."
 		} else if m.toolbox != "" {
 			bodyText = "1  NEGOTIATE   Review, revise, or edit a durable contract draft.\n2  ADMIT       You accept the exact contract before Ply starts.\n3  WORK        Use the " + filepath.Base(m.toolbox) + " toolbox and show real output.\n4  VERIFY      Let evidence decide: complete, review, or revise."
 		}
@@ -1359,6 +1364,7 @@ func (m *Model) renderHelp(width int) string {
 			t.hero.Render("Contract review keyboard"), "",
 			helpRow(t, "type + enter", "revise the proposal without starting Ply", width),
 			helpRow(t, "e", "edit the durable JSON working copy", width),
+			helpRow(t, "a", "toggle exact IDs, digests, and file details", width),
 			helpRow(t, "ctrl+s", "admit the exact reviewed contract and begin work", width),
 			helpRow(t, "esc", "return to Work while retaining the draft", width),
 			helpRow(t, "f1", "close this help", width), "",
@@ -1478,6 +1484,9 @@ func (m *Model) renderHelp(width int) string {
 	} else if m.toolbox != "" {
 		grantHelp = "Ply can name only programs in " + filepath.Base(m.toolbox) + ". Replay the session with:"
 	}
+	if m.taskMode && m.autonomyMode() == autonomy.Quick {
+		sendHelp = "start Ply immediately without contract review"
+	}
 	rows := []string{
 		t.hero.Render("Working with Bench"),
 		t.muted.Render("Outcome → editable proposal → your admission → real work → evidence or review."),
@@ -1488,11 +1497,12 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
 		helpRow(t, "/continue", "retry work under the same admitted contract", width),
+		helpRow(t, "/mode quick|review", "choose immediate work or contract review", width),
 		helpRow(t, "/contract", "reopen the durable draft or admitted revision", width),
 		helpRow(t, "/contract edit|import", "edit JSON here, or seal external edits", width),
 		helpRow(t, "/contract accept", "admit reviewed bytes, then start Ply", width),
 		helpRow(t, "/contract run", "retry the exact admitted revision", width),
-		helpRow(t, "/contract on|off", "negotiate before work, or use direct Ply", width),
+		helpRow(t, "/contract on|off", "compatibility aliases for review/quick", width),
 		"",
 		t.sessionLabel.Render("PARTNER & CAPABILITIES"),
 		helpRow(t, "/model SPEC", "show or switch provider/model", width),
@@ -1649,11 +1659,11 @@ func (m *Model) View() tea.View {
 		composerLabel = t.askLabel.Render(fmt.Sprintf(" %s · %s · %d BRIEF SKILL(S) ", prefix, mode, len(m.activeSkills)))
 	}
 	if m.screen == screenAsk && m.taskMode {
-		policy := " · NO CHECK · /check -- COMMAND "
+		policy := " · " + strings.ToUpper(string(m.autonomyMode())) + " · NO CHECK · /check -- COMMAND "
 		if m.taskOptions.Check != "" {
-			policy = " · CHECK " + strconv.Quote(m.taskOptions.Check) + " "
+			policy = " · " + strings.ToUpper(string(m.autonomyMode())) + " · CHECK " + strconv.Quote(m.taskOptions.Check) + " "
 			if m.taskOptions.CheckAllCriteria {
-				policy = " · CHECK ALL " + strconv.Quote(m.taskOptions.Check) + " "
+				policy = " · " + strings.ToUpper(string(m.autonomyMode())) + " · CHECK ALL " + strconv.Quote(m.taskOptions.Check) + " "
 			}
 		}
 		composerLabel += t.warning.Render(ansi.Truncate(policy, max(12, w-lipgloss.Width(composerLabel)-2), "…"))
@@ -1753,7 +1763,7 @@ func (m *Model) View() tea.View {
 	notice := m.notice
 	if notice == "" {
 		if m.screen == screenContract {
-			notice = "type revise   e edit JSON   ctrl+s accept/run   esc keep for later   f1 help"
+			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
 		} else if m.screen == screenDesignForm {
 			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
 		} else if m.screen == screenDesignReview {
@@ -1831,6 +1841,9 @@ func (m *Model) defaultWorkHint() string {
 	if !m.taskMode {
 		return "enter ask   /work enables tools   /agent promotes durable work   f1 map"
 	}
+	if m.autonomyMode() == autonomy.Quick && m.contractDraft == nil && m.pendingContract == nil {
+		return "autonomy quick   enter starts Ply without contract review   /mode review negotiates first"
+	}
 	if m.contractDraft != nil {
 		return "contract draft retained   /contract review   /contract accept runs"
 	}
@@ -1847,6 +1860,10 @@ func (m *Model) defaultWorkHint() string {
 		return "describe outcome   check is bound into the draft   /check all changes authority"
 	}
 	return "describe an outcome   /check adds evidence   /skills adds procedure   f1 shows the map"
+}
+
+func (m *Model) autonomyMode() autonomy.Mode {
+	return autonomy.FromContract(m.taskOptions.IntentContract)
 }
 
 type theme struct {

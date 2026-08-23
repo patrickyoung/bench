@@ -64,7 +64,10 @@ func runContractDraft(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	fs.Var(&skills, "s", "brief skill; repeat for more")
 	fs.Var(&toolbox, "t", "ply toolbox directory bound to later work")
 	fs.BoolVar(&shell, "sh", false, "bind later work to full-shell mode")
-	addTaskFlags(fs, &task)
+	task.contract = true
+	fs.StringVar(&task.check, "check", "", "literal verifier bound to later work")
+	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
+	fs.StringVar(&task.effort, "effort", "", "reasoning effort for the Ask contract compiler")
 	if err := fs.Parse(args); err != nil {
 		return flagCode(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -47,13 +48,18 @@ func (m *Model) updateContractDraftProcess(event contractexec.DraftEvent) (tea.M
 		return m, m.composer.Focus()
 	}
 	draft := *event.Draft
+	previous := m.contractDraft
+	if previous == nil {
+		previous = m.admittedContract
+	}
 	m.contractDraft = &draft
 	m.admittedContract = nil
+	m.contractAudit = false
 	m.screen = screenContract
 	m.composer.SetValue("")
 	m.composer.Placeholder = "Describe a contract change, or use /contract accept…"
 	m.composer.Focus()
-	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, m.contractStore.DraftPath())})
+	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath())})
 	m.notice = fmt.Sprintf("Contract draft r%d saved · review, revise, edit, or explicitly accept", draft.Generation)
 	m.syncContent()
 	return m, m.composer.Focus()
@@ -79,6 +85,17 @@ func (m *Model) updateContractScreen(msg tea.Msg, key string) (tea.Model, tea.Cm
 	case "e":
 		if strings.TrimSpace(m.composer.Value()) == "" {
 			return m.editContract()
+		}
+	case "a":
+		if strings.TrimSpace(m.composer.Value()) == "" {
+			m.contractAudit = !m.contractAudit
+			if m.contractAudit {
+				m.notice = "Contract audit details shown · press a to return to the semantic review"
+			} else {
+				m.notice = "Contract audit details hidden"
+			}
+			m.syncContent()
+			return m, nil
 		}
 	case "ctrl+s", "ctrl+enter":
 		return m.acceptContractDraft()
@@ -189,9 +206,14 @@ func (m *Model) updateManualContract(msg manualContractMsg) (tea.Model, tea.Cmd)
 		return m, m.composer.Focus()
 	}
 	draft := msg.draft
+	previous := m.contractDraft
+	if previous == nil {
+		previous = m.admittedContract
+	}
 	m.contractDraft = &draft
 	m.admittedContract = nil
-	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, m.contractStore.DraftPath())})
+	m.contractAudit = false
+	m.messages = append(m.messages, message{role: roleContractDraft, text: contractDraftCard(draft, previous, m.contractStore.DraftPath())})
 	m.notice = fmt.Sprintf("Manual contract draft r%d validated and sealed", draft.Generation)
 	m.syncContent()
 	return m, m.composer.Focus()
@@ -360,18 +382,20 @@ func (m *Model) renderContract(width int) string {
 	if draft == nil {
 		return t.muted.Render("No contract is loaded.")
 	}
-	contract, _, digest, err := contractexec.Parse(string(draft.Contract))
+	contract, _, _, err := contractexec.Parse(string(draft.Contract))
 	body := ""
 	if err != nil {
 		body = "Invalid contract: " + err.Error()
 	} else {
-		body = safeText(contractexec.Render(contract, digest))
+		body = safeText(contractexec.RenderSummary(contract))
 	}
 	rows := []string{
 		t.hero.Render("Outcome contract") + "  " + t.warning.Render(status),
-		t.faint.Render(ansi.Truncate(safeText(path), max(12, width-4), "…")),
-		t.faint.Render(fmt.Sprintf("outcome %s · generation %d · draft %s", draft.OutcomeID, draft.Generation, shortDigest(draft.DraftSHA256))),
-		"", contractBindings(*draft), "", body,
+		t.faint.Render(fmt.Sprintf("revision %d · press a for audit details", draft.Generation)),
+		"", body, "", contractExecutionPolicy(*draft),
+	}
+	if m.contractAudit {
+		rows = append(rows, "", t.faint.Render(ansi.Truncate(safeText(path), max(12, width-4), "…")), "", contractBindings(*draft))
 	}
 	if m.running {
 		rows = append(rows, "", t.working.Render(spinnerFrame(m.spinner)+"  "+lastUsefulLine(m.activity)))
@@ -379,15 +403,66 @@ func (m *Model) renderContract(width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func contractDraftCard(draft contractexec.Draft, path string) string {
-	contract, _, digest, err := contractexec.Parse(string(draft.Contract))
+func contractDraftCard(draft contractexec.Draft, previous *contractexec.Draft, path string) string {
+	contract, _, _, err := contractexec.Parse(string(draft.Contract))
 	if err != nil {
 		return "CONTRACT DRAFT INVALID\n" + err.Error()
 	}
-	return fmt.Sprintf("DRAFT r%d · NOT ADMITTED\nEditable: %s\nExact draft.json: %s\n\n%s\n\n%s", draft.Generation, safeText(path), draft.DraftSHA256, contractBindings(draft), safeText(contractexec.Render(contract, digest)))
+	change := "Initial proposal"
+	if previous != nil && draft.OutcomeID != "" && previous.OutcomeID == draft.OutcomeID {
+		change = contractSemanticChanges(*previous, draft)
+	}
+	return fmt.Sprintf("DRAFT r%d · NOT ADMITTED\n%s\nEdit: press e in Contract Review\nAudit: press a\n\n%s\n\n%s", draft.Generation, change, safeText(contractexec.RenderSummary(contract)), contractExecutionPolicy(draft))
+}
+
+func contractSemanticChanges(before, after contractexec.Draft) string {
+	a, _, _, aErr := contractexec.Parse(string(before.Contract))
+	b, _, _, bErr := contractexec.Parse(string(after.Contract))
+	if aErr != nil || bErr != nil {
+		return "Replacement proposal"
+	}
+	changed := make([]string, 0, 9)
+	if a.Outcome != b.Outcome {
+		changed = append(changed, "outcome")
+	}
+	for _, field := range []struct {
+		name string
+		a, b []string
+	}{
+		{"deliverables", a.Deliverables, b.Deliverables}, {"guardrails", a.Invariants, b.Invariants},
+		{"approvals", a.Approvals, b.Approvals}, {"assumptions", a.Assumptions, b.Assumptions},
+		{"open decisions", a.OpenQuestions, b.OpenQuestions}, {"limits", a.Limits, b.Limits},
+	} {
+		if !slices.Equal(field.a, field.b) {
+			changed = append(changed, field.name)
+		}
+	}
+	if !slices.Equal(a.Criteria, b.Criteria) {
+		changed = append(changed, "evidence")
+	}
+	if before.Intent != after.Intent || before.Workspace != after.Workspace || before.Toolbox != after.Toolbox || before.Check != after.Check || before.CheckAll != after.CheckAll || !slices.Equal(before.Skills, after.Skills) {
+		changed = append(changed, "execution policy")
+	}
+	if len(changed) == 0 {
+		return "No semantic change"
+	}
+	return "Changed: " + strings.Join(changed, ", ")
 }
 
 func contractBindings(draft contractexec.Draft) string {
+	revision := "not admitted"
+	if draft.RevisionID != "" {
+		revision = draft.RevisionID
+	}
+	admission := "not admitted"
+	if draft.ContractID != "" {
+		admission = draft.ContractID
+	}
+	return safeText(fmt.Sprintf("AUDIT DETAILS\nExact draft: %s\nRecorded draft: %s\nOutcome lineage: %s\nRevision: %s\nAdmission: %s\nCanonical contract: %s\nCheck digest: %s\nCompiler evidence: %s",
+		draft.DraftSHA256, draft.RecordedDraftSHA256, draft.OutcomeID, revision, admission, draft.ContractSHA256, draft.CheckSHA256, draft.CompilerEvidenceSHA256))
+}
+
+func contractExecutionPolicy(draft contractexec.Draft) string {
 	tools := "full shell"
 	if strings.TrimSpace(draft.Toolbox) != "" {
 		tools = "toolbox " + draft.Toolbox
@@ -396,16 +471,20 @@ func contractBindings(draft contractexec.Draft) string {
 	if strings.TrimSpace(draft.Check) != "" {
 		check = draft.Check
 	}
-	authority := "review required; the configured check does not admit criteria"
-	if draft.CheckAll {
-		authority = "operator policy: configured check judges every contract criterion"
+	authority := "no executable verifier; every criterion requires review"
+	if strings.TrimSpace(draft.Check) != "" {
+		authority = "verifier gate only; criteria still require review"
+	}
+	if draft.CheckAll && strings.TrimSpace(draft.Check) != "" {
+		authority = "operator-admitted judge for every criterion"
+	} else if draft.CheckAll {
+		authority = "invalid: check-all has no configured verifier"
 	}
 	skills := "none"
 	if len(draft.Skills) > 0 {
 		skills = strings.Join(draft.Skills, ", ")
 	}
-	return safeText(fmt.Sprintf("ADMISSION BINDINGS\nOriginal intent: %s\nWorkspace: %s\nTool grant: %s\nConfigured check: %s\nCheck authority: %s\nBrief skills: %s\nCompiler evidence: %s",
-		draft.Intent, draft.Workspace, tools, check, authority, skills, draft.CompilerEvidenceSHA256))
+	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nBrief skills: %s", draft.Intent, draft.Workspace, tools, check, authority, skills))
 }
 
 func failureDetail(code int, err error) string {

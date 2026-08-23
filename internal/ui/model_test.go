@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/patrickyoung/bench/internal/askexec"
+	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/contractexec"
 	"github.com/patrickyoung/bench/internal/plyexec"
 	"github.com/patrickyoung/bench/internal/session"
@@ -334,14 +335,99 @@ func TestContractDraftPresentationSanitizesTerminalControls(t *testing.T) {
 		Intent: "create a gallery", Workspace: "/work/gallery", Toolbox: "/tools/safe", Check: "test -s gallery.html",
 		CheckAll: true, Skills: []string{"ascii-cinema"}, CompilerEvidenceSHA256: "sha256:evidence",
 	}
-	card := contractDraftCard(draft, "/tmp/\x1b[31m/draft.json")
+	card := contractDraftCard(draft, nil, "/tmp/\x1b[31m/draft.json")
 	if strings.ContainsRune(card, '\x1b') || strings.ContainsRune(card, '\x00') {
 		t.Fatalf("contract card retained terminal controls: %q", card)
 	}
-	for _, want := range []string{"create a gallery", "/work/gallery", "toolbox /tools/safe", "test -s gallery.html", "judges every contract criterion", "ascii-cinema", "sha256:evidence"} {
+	for _, want := range []string{"Workspace: /work/gallery", "Tools: toolbox /tools/safe", "Check: test -s gallery.html", "operator-admitted judge", "Brief skills: ascii-cinema"} {
 		if !strings.Contains(card, want) {
-			t.Errorf("contract review omitted admission binding %q:\n%s", want, card)
+			t.Errorf("semantic contract card omitted execution policy %q:\n%s", want, card)
 		}
+	}
+	if strings.Contains(card, "sha256:evidence") {
+		t.Fatalf("semantic contract card leaked audit digest:\n%s", card)
+	}
+	audit := contractBindings(draft)
+	for _, want := range []string{"AUDIT DETAILS", "sha256:draft", "outcome", "not admitted", "sha256:evidence"} {
+		if !strings.Contains(audit, want) {
+			t.Errorf("contract audit omitted admission binding %q:\n%s", want, audit)
+		}
+	}
+}
+
+func TestContractReviewDefaultsToSemanticSummaryAndTogglesAudit(t *testing.T) {
+	draft := contractexec.Draft{
+		Generation: 2, OutcomeID: "outcome", DraftSHA256: "sha256:draft", Contract: []byte(testContractJSON),
+		Intent: "create a gallery", Workspace: "/work/gallery", Toolbox: "/tools/safe", Check: "test -s gallery.html",
+		Skills: []string{"ascii-cinema"}, CompilerEvidenceSHA256: "sha256:evidence",
+	}
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.screen = screenContract
+	m.contractDraft = &draft
+	semantic := m.renderContract(100)
+	if !strings.Contains(semantic, "Outcome:") || !strings.Contains(semantic, "Deliverables:") || strings.Contains(semantic, "sha256:evidence") || !strings.Contains(semantic, "/tools/safe") {
+		t.Fatalf("semantic review leaked or omitted fields:\n%s", semantic)
+	}
+	updated, _ := m.Update(key("a"))
+	m = updated.(*Model)
+	audit := m.renderContract(100)
+	for _, want := range []string{"AUDIT DETAILS", "sha256:draft", "sha256:evidence", "/tools/safe", "ascii-cinema"} {
+		if !strings.Contains(audit, want) {
+			t.Errorf("audit review omitted %q:\n%s", want, audit)
+		}
+	}
+}
+
+func TestContractReviewAllowsLetterAInsideRevisionText(t *testing.T) {
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.screen = screenContract
+	m.composer.SetValue("Make ")
+	m.composer.Focus()
+	updated, _ := m.Update(key("a"))
+	m = updated.(*Model)
+	if m.contractAudit || m.composer.Value() != "Make a" {
+		t.Fatalf("audit=%v composer=%q", m.contractAudit, m.composer.Value())
+	}
+}
+
+func TestContractAuditCommandOpensExistingContractAndPreservesMissingNotice(t *testing.T) {
+	draft := contractexec.Draft{Generation: 1, OutcomeID: "outcome", DraftSHA256: "sha256:draft", Contract: []byte(testContractJSON)}
+	m := New(Config{DataDir: t.TempDir(), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.contractDraft = &draft
+	m.screen = screenAsk
+	m.composer.SetValue("/contract audit")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.screen != screenContract || !m.contractAudit || !strings.Contains(m.notice, "audit details shown") {
+		t.Fatalf("screen=%v audit=%v notice=%q", m.screen, m.contractAudit, m.notice)
+	}
+
+	missing := New(Config{DataDir: t.TempDir(), TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	missing.composer.SetValue("/contract audit")
+	updated, _ = missing.Update(key("enter"))
+	missing = updated.(*Model)
+	if missing.screen == screenContract || missing.contractAudit || !strings.Contains(missing.notice, "No durable contract") {
+		t.Fatalf("screen=%v audit=%v notice=%q", missing.screen, missing.contractAudit, missing.notice)
+	}
+}
+
+func TestContractRevisionCardNamesSemanticChanges(t *testing.T) {
+	before := contractexec.Draft{OutcomeID: "same-outcome", Contract: []byte(testContractJSON), Intent: "gallery", Workspace: "/work"}
+	after := before
+	after.Generation = 2
+	after.Contract = []byte(strings.Replace(testContractJSON, "gallery is legible", "gallery is legible at mobile widths", 1))
+	card := contractDraftCard(after, &before, "/tmp/draft.json")
+	if !strings.Contains(card, "Changed: evidence") || strings.Contains(card, "sha256:") {
+		t.Fatalf("revision card did not summarize semantic change:\n%s", card)
+	}
+}
+
+func TestContractCardDoesNotDiffUnrelatedOutcomes(t *testing.T) {
+	before := contractexec.Draft{OutcomeID: "old", Contract: []byte(testContractJSON)}
+	after := contractexec.Draft{OutcomeID: "new", Generation: 1, Contract: []byte(strings.Replace(testContractJSON, "A complete gallery exists.", "A new report exists.", 1))}
+	card := contractDraftCard(after, &before, "/tmp/draft.json")
+	if !strings.Contains(card, "Initial proposal") || strings.Contains(card, "Changed:") {
+		t.Fatalf("unrelated outcome was rendered as an amendment:\n%s", card)
 	}
 }
 
@@ -937,14 +1023,39 @@ func TestContractCommandControlsOnlyFutureOutcomeCompilation(t *testing.T) {
 	m.composer.SetValue("/contract off")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if m.taskOptions.IntentContract || !strings.Contains(m.notice, "directly to Ply") {
+	if m.taskOptions.IntentContract || !strings.Contains(m.notice, "starts Ply") {
 		t.Fatalf("contract=%v notice=%q", m.taskOptions.IntentContract, m.notice)
 	}
 	m.composer.SetValue("/contract on")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if !m.taskOptions.IntentContract || !strings.Contains(m.taskPolicyDisplay(), "intent contract on") {
+	if !m.taskOptions.IntentContract || !strings.Contains(m.taskPolicyDisplay(), "autonomy review") {
 		t.Fatalf("contract=%v policy=%q", m.taskOptions.IntentContract, m.taskPolicyDisplay())
+	}
+}
+
+func TestAutonomyModeMakesQuickAndReviewExplicit(t *testing.T) {
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
+	m.pendingContract = &plyexec.ContractResult{}
+	m.taskOptions.Force = true
+	m.continueContract = true
+	m.composer.SetValue("/mode quick")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.autonomyMode() != autonomy.Quick || m.taskOptions.IntentContract || m.pendingContract != nil || m.taskOptions.Force || m.continueContract || !strings.Contains(m.notice, "start Ply") {
+		t.Fatalf("mode=%q contract=%v notice=%q", m.autonomyMode(), m.taskOptions.IntentContract, m.notice)
+	}
+	m.composer.SetValue("/mode review")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.autonomyMode() != autonomy.Review || !m.taskOptions.IntentContract || !strings.Contains(m.notice, "durable outcome") {
+		t.Fatalf("mode=%q contract=%v notice=%q", m.autonomyMode(), m.taskOptions.IntentContract, m.notice)
+	}
+	m.composer.SetValue("/mode loop")
+	updated, _ = m.Update(key("enter"))
+	m = updated.(*Model)
+	if m.autonomyMode() != autonomy.Review || !strings.Contains(m.notice, "not supported") {
+		t.Fatalf("mode=%q notice=%q", m.autonomyMode(), m.notice)
 	}
 }
 
@@ -1005,7 +1116,7 @@ func TestResizeKeepsComposerAndTranscriptUsable(t *testing.T) {
 }
 
 func TestDefaultTaskScreensFitEightyByTwentyFour(t *testing.T) {
-	m := New(Config{Workspace: "/work", Session: "/work/.bench/sessions/task.jsonl", Model: "test/model"})
+	m := New(Config{Workspace: "/work", Session: "/work/.bench/sessions/task.jsonl", Model: "test/model", TaskOptions: plyexec.TaskOptions{IntentContract: true}})
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(*Model)
 	assertTerminalBounds(t, m.View().Content, 80, 24)
