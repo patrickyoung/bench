@@ -33,7 +33,7 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "cf00576c491bce4453aea79da1989940d7683a10",
+      "revision": "55f8b927750e642cc62761d0d92ee47546488b22",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",

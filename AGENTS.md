@@ -103,7 +103,12 @@ wrappers, verified Ask replay, and external hash-bound oracles. A harness must
 never admit a generated contract: it may emit an exact script for a person to
 run after inspection, and consequential route traps must receive no admission
 path. Do not add telemetry, a private event store, or import product internals
-to make the experiment easier.
+to make the experiment easier. A live-run action adapter must pass Ply's public
+literal `-action-shell` option on every worker invocation, retain
+`PLY_ACTION_SHELL` for nesting, be snapshotted and hash-bound outside every
+worker workspace, and leave the configured verifier on the host; adapter
+identity is experiment provenance, never contract confinement or completion
+authority.
 Loop-only pursuit, budget, and stop metadata belongs in
 `bench.contract-result/v3`; Review must keep its existing v1/v2 result bodies.
 Interactive `/check -- COMMAND` is a literal per-outcome value: Bench shows

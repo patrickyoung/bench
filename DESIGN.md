@@ -89,7 +89,13 @@ the worker, and relies on external artifact oracles. Contract admission stays
 a literal human action: preparation emits inspectable one-shot scripts for
 safe drafts and no script for consequential traps. Its eight cases establish
 only live process integration and exact-fixture parity, not a general model
-score, telemetry stream, or automated acceptance authority.
+score, telemetry stream, or automated acceptance authority. An optional
+hash-bound `-action-shell` snapshot composes Ply's action-only interpreter with
+the experiment through the literal public option on every worker invocation,
+while `PLY_ACTION_SHELL` remains available to nested Ply and host checks retain
+`/bin/sh`. This allows an operator
+adapter that exposes only the workspace and toolbox to keep the external oracle
+out of the worker, without treating the adapter as contract confinement.
 
 The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its

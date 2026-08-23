@@ -295,7 +295,11 @@ never admits a contract: it writes exact one-shot scripts for a person to run
 only after inspecting the safe-arm drafts; consequential route traps receive
 no acceptance path. See [`eval/auto/live/README.md`](eval/auto/live/README.md).
 This is a process-integration smoke test, not product telemetry or statistical
-evidence that Auto is superior.
+evidence that Auto is superior. Its optional `-action-shell` snapshots an exact
+operator executable and passes Ply's public literal `-action-shell` option on
+every worker invocation (with `PLY_ACTION_SHELL` retained for nesting), leaving
+host verifiers on `/bin/sh`; the adapter's own container policy remains
+external evidence, not Bench confinement authority.
 
 | Stage | Existing program or boundary |
 |---|---|

@@ -58,6 +58,8 @@ func TestLiveHelperProcess(t *testing.T) {
 }
 
 func TestPrepareHumanAdmissionScoreEndToEnd(t *testing.T) {
+	t.Setenv("BENCH_AUTO_LIVE_REQUIRE_ACTION_SHELL", "1")
+	t.Setenv("BENCH_AUTO_LIVE_DROP_ACTION_SHELL", "1")
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -82,9 +84,14 @@ func TestPrepareHumanAdmissionScoreEndToEnd(t *testing.T) {
 		}
 		paths[role] = path
 	}
+	actionShell := filepath.Join(helpers, "action shell")
+	actionShellBytes := []byte("#!/bin/sh\nexec /bin/sh \"$@\"\n")
+	if err := os.WriteFile(actionShell, actionShellBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	out := filepath.Join(t.TempDir(), "experiment")
 	var prepareOut, prepareErr bytes.Buffer
-	code := run([]string{"prepare", "-cases", casesPath, "-expect", digestBytes(casesData), "-bench", paths["bench"], "-ask", paths["ask"], "-ply", paths["ply"], "-model", "fake/model", "-out", out}, &prepareOut, &prepareErr)
+	code := run([]string{"prepare", "-cases", casesPath, "-expect", digestBytes(casesData), "-bench", paths["bench"], "-ask", paths["ask"], "-ply", paths["ply"], "-action-shell", actionShell, "-model", "fake/model", "-out", out}, &prepareOut, &prepareErr)
 	if code != 0 {
 		t.Fatalf("prepare exit=%d stdout=%s stderr=%s", code, prepareOut.String(), prepareErr.String())
 	}
@@ -101,6 +108,14 @@ func TestPrepareHumanAdmissionScoreEndToEnd(t *testing.T) {
 	var manifest runManifest
 	if err := readJSON(filepath.Join(out, "run.json"), &manifest); err != nil {
 		t.Fatal(err)
+	}
+	physicalActionShell, err := filepath.EvalSymlinks(actionShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ActionShellSource != physicalActionShell || manifest.ActionShellPath != filepath.Join(out, "controller", "action-shell") ||
+		manifest.Schema != runSchemaV2 || manifest.ActionShellProtocol != actionShellProtocol || manifest.ActionShellSHA256 != digestBytes(actionShellBytes) {
+		t.Fatalf("action shell binding=%+v", manifest)
 	}
 	accepts := 0
 	for _, a := range manifest.Arms {
@@ -129,6 +144,54 @@ func TestPrepareHumanAdmissionScoreEndToEnd(t *testing.T) {
 			t.Fatalf("score attempt %d exit=%d stdout=%s stderr=%s", attempt, code, scoreOut.String(), scoreErr.String())
 		}
 	}
+	snapshotBytes, err := os.ReadFile(manifest.ActionShellPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest.ActionShellPath, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var snapshotTamperOut, snapshotTamperErr bytes.Buffer
+	if code := run([]string{"score", "-out", out}, &snapshotTamperOut, &snapshotTamperErr); code != 2 || !strings.Contains(snapshotTamperErr.String(), "experiment input changed") {
+		t.Fatalf("mutated action-shell snapshot score exit=%d stdout=%s stderr=%s", code, snapshotTamperOut.String(), snapshotTamperErr.String())
+	}
+	if err := os.WriteFile(manifest.ActionShellPath, snapshotBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(actionShell, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var modeTamperOut, modeTamperErr bytes.Buffer
+	if code := run([]string{"score", "-out", out}, &modeTamperOut, &modeTamperErr); code != 2 || !strings.Contains(modeTamperErr.String(), "not a real controlled object") {
+		t.Fatalf("non-executable action-shell source score exit=%d stdout=%s stderr=%s", code, modeTamperOut.String(), modeTamperErr.String())
+	}
+	if err := os.Chmod(actionShell, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backup := actionShell + ".real"
+	if err := os.Rename(actionShell, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(backup, actionShell); err != nil {
+		t.Fatal(err)
+	}
+	var symlinkTamperOut, symlinkTamperErr bytes.Buffer
+	if code := run([]string{"score", "-out", out}, &symlinkTamperOut, &symlinkTamperErr); code != 2 || !strings.Contains(symlinkTamperErr.String(), "not a real controlled object") {
+		t.Fatalf("symlinked action-shell source score exit=%d stdout=%s stderr=%s", code, symlinkTamperOut.String(), symlinkTamperErr.String())
+	}
+	if err := os.Remove(actionShell); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(backup, actionShell); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(actionShell, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var tamperOut, tamperErr bytes.Buffer
+	if code := run([]string{"score", "-out", out}, &tamperOut, &tamperErr); code != 2 || !strings.Contains(tamperErr.String(), "experiment input changed") {
+		t.Fatalf("mutated action-shell score exit=%d stdout=%s stderr=%s", code, tamperOut.String(), tamperErr.String())
+	}
 }
 
 func TestPrepareRejectsDigestBeforeCreatingOutput(t *testing.T) {
@@ -145,6 +208,88 @@ func TestPrepareRejectsDigestBeforeCreatingOutput(t *testing.T) {
 	}
 	if _, err := os.Lstat(out); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("bad prepare left output: %v", err)
+	}
+}
+
+func TestActionShellSourceMustBeAbsoluteRealExecutableAndExternal(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "results")
+	source := filepath.Join(dir, "adapter")
+	data := []byte("#!/bin/sh\nexec /bin/sh \"$@\"\n")
+	if err := os.WriteFile(source, data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	physicalSource, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPath, gotSHA, err := validateActionShellSource(source, out)
+	if err != nil || gotPath != physicalSource || gotSHA != digestBytes(data) {
+		t.Fatalf("valid source path=%q sha=%q err=%v", gotPath, gotSHA, err)
+	}
+	destination := filepath.Join(out, "controller", "action-shell")
+	if err := snapshotExecutable(source, destination, gotSHA); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := pathDigest(destination); err != nil || got != gotSHA {
+		t.Fatalf("snapshot sha=%q err=%v", got, err)
+	}
+	if _, _, err := validateActionShellSource("relative-adapter", filepath.Join(dir, "other")); err == nil {
+		t.Fatal("relative action shell accepted")
+	}
+	if _, _, err := validateActionShellSource(" ", filepath.Join(dir, "other")); err == nil {
+		t.Fatal("whitespace action shell silently disabled the explicit policy")
+	}
+	symlink := filepath.Join(dir, "adapter-link")
+	if err := os.Symlink(source, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateActionShellSource(symlink, filepath.Join(dir, "other")); err == nil {
+		t.Fatal("symlink action shell accepted")
+	}
+	inside := filepath.Join(out, "inside")
+	if err := os.MkdirAll(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inside, data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateActionShellSource(inside, out); err == nil {
+		t.Fatal("action shell inside writable output accepted")
+	}
+	if err := validateActionShellManifest(filepath.Join(dir, "legacy"), runManifest{Schema: runSchemaV1}); err != nil {
+		t.Fatalf("legacy v1 without action shell rejected: %v", err)
+	}
+	if err := validateActionShellManifest(filepath.Join(dir, "legacy"), runManifest{Schema: runSchemaV1, ActionShellPath: destination}); err == nil {
+		t.Fatal("legacy v1 accepted action-shell fields")
+	}
+	if err := validateActionShellManifest(filepath.Join(dir, "v2"), runManifest{Schema: runSchemaV2}); err == nil {
+		t.Fatal("v2 accepted a missing action-shell binding")
+	}
+}
+
+func TestPrepareRejectsWhitespaceActionShellBeforeCreatingOutput(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	casesPath := filepath.Join(repoRoot, "eval", "auto", "live", "cases.jsonl")
+	casesData, err := os.ReadFile(casesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "experiment")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"prepare", "-cases", casesPath, "-expect", digestBytes(casesData), "-bench", truePath, "-ask", truePath, "-ply", truePath, "-action-shell", " ", "-model", "provider/model", "-out", out}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "must be an absolute executable path") {
+		t.Fatalf("prepare exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Lstat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid action shell left output: %v", err)
 	}
 }
 
@@ -356,6 +501,17 @@ func TestValidateAdmissionUsesSealedReplayNotProcessExit(t *testing.T) {
 				}, &bodySHA)
 				return rewriteReplayNoteBody(t, data, "bench.contract-result/v3", func(body map[string]any) {
 					body["verifier_receipt"].(map[string]any)["body_sha256"] = bodySHA
+				})
+			}},
+			{"worker shell used for verifier", func(data []byte) []byte {
+				var bodySHA string
+				verifierSHA := digestString("/opt/action-shell\x00check")
+				data = rewriteReplayNoteBodyWithDigest(t, data, "ply.verifier/v1", func(body map[string]any) {
+					body["shell"], body["verifier_sha256"] = "/opt/action-shell", verifierSHA
+				}, &bodySHA)
+				return rewriteReplayNoteBody(t, data, "bench.contract-result/v3", func(body map[string]any) {
+					ref := body["verifier_receipt"].(map[string]any)
+					ref["body_sha256"], ref["verifier_sha256"] = bodySHA, verifierSHA
 				})
 			}},
 		} {
@@ -656,7 +812,7 @@ func TestExecutePreservesLiteralProcessBoundary(t *testing.T) {
 }
 
 func TestExperimentEnvironmentRemovesAmbientPolicy(t *testing.T) {
-	got := experimentEnv([]string{"KEEP=yes", "PLY_MAY_JOB=ambient", "ASK_SYSTEM=override", "BENCH_CAGE=/bad"}, map[string]string{"PLY_DIR": "/controlled"})
+	got := experimentEnv([]string{"KEEP=yes", "PLY_MAY_JOB=ambient", "PLY_ACTION_SHELL=/ambient", "ASK_SYSTEM=override", "BENCH_CAGE=/bad"}, map[string]string{"PLY_DIR": "/controlled"})
 	want := []string{"KEEP=yes", "PLY_DIR=/controlled"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("experiment env=%q want %q", got, want)
@@ -682,11 +838,11 @@ func TestExecuteInterruptReturnsCanceled(t *testing.T) {
 func TestAcceptScriptIsExplicitLiteralAndOneShot(t *testing.T) {
 	dir := t.TempDir()
 	fakeBench := filepath.Join(dir, "fake bench")
-	if err := os.WriteFile(fakeBench, []byte("#!/bin/sh\nprintf 'may=%s\\n' \"${PLY_MAY_JOB-unset}\"\nfor arg do printf '%s\\n' \"$arg\"; done\n"), 0o700); err != nil {
+	if err := os.WriteFile(fakeBench, []byte("#!/bin/sh\nprintf 'may=%s\\naction-shell=%s\\n' \"${PLY_MAY_JOB-unset}\" \"${PLY_ACTION_SHELL-unset}\"\nfor arg do printf '%s\\n' \"$arg\"; done\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "accept.sh")
-	if err := writeAcceptScript(path, fakeBench, "/ask with space", "/ply wrapper", "/real ply", filepath.Join(dir, "trace"), filepath.Join(dir, "effects"), filepath.Join(dir, "bench state"), "/workspace with space", "/session with space", "provider/model", "high", "review", digestString("draft"), dir, 2); err != nil {
+	if err := writeAcceptScript(path, fakeBench, "/ask with space", "/ply wrapper", "/real ply", "/action shell", filepath.Join(dir, "trace"), filepath.Join(dir, "effects"), filepath.Join(dir, "bench state"), "/workspace with space", "/session with space", "provider/model", "high", "review", digestString("draft"), dir, 2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "accept.exit")); !errors.Is(err, os.ErrNotExist) {
@@ -712,6 +868,9 @@ func TestAcceptScriptIsExplicitLiteralAndOneShot(t *testing.T) {
 	}
 	if !bytes.Contains(stdout, []byte("may=unset\n")) {
 		t.Fatalf("accept inherited ambient Ply policy:\n%s", stdout)
+	}
+	if !bytes.Contains(stdout, []byte("action-shell=/action shell\n")) {
+		t.Fatalf("accept omitted the snapshotted action shell:\n%s", stdout)
 	}
 	cmd = exec.Command("/bin/sh", path)
 	if err := cmd.Run(); err == nil {
@@ -1047,6 +1206,13 @@ func runLiveHelper(role string, args []string, stdout, stderr *os.File) int {
 		_, _ = stdout.Write(data)
 		return 0
 	case "ply":
+		if os.Getenv("BENCH_AUTO_LIVE_REQUIRE_ACTION_SHELL") != "" {
+			actionShell := os.Getenv("PLY_ACTION_SHELL")
+			if len(args) < 2 || args[0] != "-action-shell" || args[1] != actionShell || actionShell == "" || !filepath.IsAbs(actionShell) {
+				fmt.Fprintln(stderr, "controlled -action-shell was not wired to the Ply invocation")
+				return 1
+			}
+		}
 		if err := helperRepair(helperCaseIDFromWorkspace()); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -1217,7 +1383,17 @@ func helperCaseIDFromWorkspace() string {
 
 func helperRunPly(workspace string, stderr *os.File) int {
 	cmd := exec.Command(os.Getenv("BENCH_PLY"))
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = workspace, os.Environ(), os.Stdout, stderr
+	env := os.Environ()
+	if os.Getenv("BENCH_AUTO_LIVE_DROP_ACTION_SHELL") != "" {
+		filtered := env[:0]
+		for _, entry := range env {
+			if !strings.HasPrefix(entry, "PLY_ACTION_SHELL=") {
+				filtered = append(filtered, entry)
+			}
+		}
+		env = filtered
+	}
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = workspace, env, os.Stdout, stderr
 	if err := cmd.Run(); err != nil {
 		return 1
 	}

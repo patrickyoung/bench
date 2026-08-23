@@ -26,10 +26,12 @@ import (
 )
 
 const (
-	caseSchema   = "bench.auto-live/case/v1"
-	runSchema    = "bench.auto-live/run/v1"
-	resultSchema = "bench.auto-live/result/v1"
-	maxLine      = 1 << 20
+	caseSchema          = "bench.auto-live/case/v1"
+	runSchemaV1         = "bench.auto-live/run/v1"
+	runSchemaV2         = "bench.auto-live/run/v2"
+	resultSchema        = "bench.auto-live/result/v1"
+	actionShellProtocol = "ply.action-shell/v1"
+	maxLine             = 1 << 20
 )
 
 var experimentUnset = map[string]bool{
@@ -37,7 +39,7 @@ var experimentUnset = map[string]bool{
 	"BENCH_CAGE": true, "BENCH_MAY": true, "BENCH_TOOLS": true,
 	"CAGE": true, "MAY": true,
 	"PLY_CONTRACT_ID": true, "PLY_DEPTH": true, "PLY_DIR": true,
-	"PLY_EFFORT": true, "PLY_MAY_JOB": true, "PLY_SHELL": true, "PLY_TOOLS": true,
+	"PLY_ACTION_SHELL": true, "PLY_EFFORT": true, "PLY_MAY_JOB": true, "PLY_SHELL": true, "PLY_TOOLS": true,
 }
 
 type caseSpec struct {
@@ -84,26 +86,31 @@ type arm struct {
 }
 
 type runManifest struct {
-	Schema         string        `json:"schema"`
-	Created        string        `json:"created"`
-	CasesPath      string        `json:"cases_path"`
-	CasesSHA256    string        `json:"cases_sha256"`
-	ToolboxPath    string        `json:"toolbox_path"`
-	ToolboxSHA256  string        `json:"toolbox_sha256"`
-	OraclePath     string        `json:"oracle_path"`
-	OracleSHA256   string        `json:"oracle_sha256"`
-	ExpectedPath   string        `json:"expected_path"`
-	ExpectedSHA256 string        `json:"expected_sha256"`
-	BenchPath      string        `json:"bench_path"`
-	BenchSHA256    string        `json:"bench_sha256"`
-	AskPath        string        `json:"ask_path"`
-	AskSHA256      string        `json:"ask_sha256"`
-	PlyPath        string        `json:"ply_path"`
-	PlySHA256      string        `json:"ply_sha256"`
-	Model          string        `json:"model"`
-	Effort         string        `json:"effort"`
-	Fixtures       []inputDigest `json:"fixtures"`
-	Arms           []arm         `json:"arms"`
+	Schema                  string        `json:"schema"`
+	Created                 string        `json:"created"`
+	CasesPath               string        `json:"cases_path"`
+	CasesSHA256             string        `json:"cases_sha256"`
+	ToolboxPath             string        `json:"toolbox_path"`
+	ToolboxSHA256           string        `json:"toolbox_sha256"`
+	OraclePath              string        `json:"oracle_path"`
+	OracleSHA256            string        `json:"oracle_sha256"`
+	ExpectedPath            string        `json:"expected_path"`
+	ExpectedSHA256          string        `json:"expected_sha256"`
+	BenchPath               string        `json:"bench_path"`
+	BenchSHA256             string        `json:"bench_sha256"`
+	AskPath                 string        `json:"ask_path"`
+	AskSHA256               string        `json:"ask_sha256"`
+	PlyPath                 string        `json:"ply_path"`
+	PlySHA256               string        `json:"ply_sha256"`
+	ActionShellSource       string        `json:"action_shell_source,omitempty"`
+	ActionShellSourceSHA256 string        `json:"action_shell_source_sha256,omitempty"`
+	ActionShellPath         string        `json:"action_shell_path,omitempty"`
+	ActionShellSHA256       string        `json:"action_shell_sha256,omitempty"`
+	ActionShellProtocol     string        `json:"action_shell_protocol,omitempty"`
+	Model                   string        `json:"model"`
+	Effort                  string        `json:"effort"`
+	Fixtures                []inputDigest `json:"fixtures"`
+	Arms                    []arm         `json:"arms"`
 }
 
 type inputDigest struct {
@@ -159,17 +166,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: bench-auto-live prepare -bench PATH -ask PATH -ply PATH -model MODEL -out NEWDIR -expect sha256:CASES")
+	fmt.Fprintln(w, "usage: bench-auto-live prepare -bench PATH -ask PATH -ply PATH [-action-shell ABS] -model MODEL -out NEWDIR -expect sha256:CASES")
 	fmt.Fprintln(w, "       bench-auto-live score -out DIR")
 }
 
 func prepare(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("bench-auto-live prepare", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var bench, ask, ply, model, effort, out, casesPath, expect string
+	var bench, ask, ply, actionShellSource, model, effort, out, casesPath, expect string
 	fs.StringVar(&bench, "bench", "bench", "Bench executable")
 	fs.StringVar(&ask, "ask", "ask", "Ask executable")
 	fs.StringVar(&ply, "ply", "ply", "Ply executable")
+	fs.StringVar(&actionShellSource, "action-shell", "", "absolute model-action interpreter to snapshot")
 	fs.StringVar(&model, "model", "", "provider/model")
 	fs.StringVar(&effort, "effort", "", "reasoning effort")
 	fs.StringVar(&out, "out", "", "new result directory")
@@ -222,8 +230,12 @@ func prepare(args []string, stdout, stderr io.Writer) int {
 	} else if overlap {
 		return broken(stderr, errors.New("result directory must be outside the live corpus tree"))
 	}
+	actionShellSource, actionShellSourceSHA, err := validateActionShellSource(actionShellSource, out)
+	if err != nil {
+		return broken(stderr, err)
+	}
 	manifest := runManifest{
-		Schema: runSchema, Created: time.Now().UTC().Format(time.RFC3339Nano), CasesPath: casesPath, CasesSHA256: digestBytes(caseBytes),
+		Schema: runSchemaV1, Created: time.Now().UTC().Format(time.RFC3339Nano), CasesPath: casesPath, CasesSHA256: digestBytes(caseBytes),
 		ToolboxPath: toolbox, OraclePath: oracle, ExpectedPath: expected, BenchPath: bench, AskPath: ask, PlyPath: ply, Model: model, Effort: effort,
 	}
 	for path, dst := range map[string]*string{toolbox: &manifest.ToolboxSHA256, oracle: &manifest.OracleSHA256, expected: &manifest.ExpectedSHA256, bench: &manifest.BenchSHA256, ask: &manifest.AskSHA256, ply: &manifest.PlySHA256} {
@@ -244,6 +256,20 @@ func prepare(args []string, stdout, stderr io.Writer) int {
 	if err := mkdirNew(out); err != nil {
 		return broken(stderr, err)
 	}
+	actionShell := ""
+	if actionShellSource != "" {
+		manifest.Schema = runSchemaV2
+		actionShell = filepath.Join(out, "controller", "action-shell")
+		if err := snapshotExecutable(actionShellSource, actionShell, actionShellSourceSHA); err != nil {
+			return broken(stderr, err)
+		}
+		manifest.ActionShellSource = actionShellSource
+		manifest.ActionShellSourceSHA256 = actionShellSourceSHA
+		manifest.ActionShellPath = actionShell
+		manifest.ActionShellSHA256 = actionShellSourceSHA
+		manifest.ActionShellProtocol = actionShellProtocol
+		fmt.Fprintf(stderr, "bench-auto-live: Ply action interpreter %s · %s\n", actionShell, actionShellSourceSHA)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	order := 0
@@ -258,7 +284,7 @@ func prepare(args []string, stdout, stderr io.Writer) int {
 			}
 			order++
 			fmt.Fprintf(stderr, "bench-auto-live: prepare %s/%s\n", c.ID, name)
-			a, prepErr := prepareArm(ctx, out, root, toolbox, oracle, bench, ask, ply, model, effort, c, name, order)
+			a, prepErr := prepareArm(ctx, out, root, toolbox, oracle, bench, ask, ply, actionShell, model, effort, c, name, order)
 			if prepErr != nil {
 				if errors.Is(prepErr, context.Canceled) {
 					return 130
@@ -282,7 +308,7 @@ func prepare(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func prepareArm(ctx context.Context, out, root, toolbox, oracle, bench, ask, ply, model, effort string, c caseSpec, name string, order int) (arm, error) {
+func prepareArm(ctx context.Context, out, root, toolbox, oracle, bench, ask, ply, actionShell, model, effort string, c caseSpec, name string, order int) (arm, error) {
 	base := filepath.Join(out, c.ID, strings.ToUpper(name))
 	workspace, control := filepath.Join(base, "workspace"), filepath.Join(base, "control")
 	if err := os.MkdirAll(control, 0o700); err != nil {
@@ -316,7 +342,13 @@ func prepareArm(ctx context.Context, out, root, toolbox, oracle, bench, ask, ply
 		return arm{}, err
 	}
 	wrapper := filepath.Join(control, "ply-trace")
-	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nset -eu\ntrace=$BENCH_LIVE_PLY_TRACE\nreal=$BENCH_LIVE_REAL_PLY\nunset BENCH_LIVE_PLY_TRACE BENCH_LIVE_REAL_PLY\nprintf 'ply\\n' >> \"$trace\"\nexec \"$real\" \"$@\"\n"), 0o700); err != nil {
+	wrapperBody := "#!/bin/sh\nset -eu\ntrace=$BENCH_LIVE_PLY_TRACE\nreal=$BENCH_LIVE_REAL_PLY\nunset BENCH_LIVE_PLY_TRACE BENCH_LIVE_REAL_PLY\nprintf 'ply\\n' >> \"$trace\"\n"
+	if actionShell != "" {
+		wrapperBody += "bound=" + shellQuote(actionShell) + "\nexport PLY_ACTION_SHELL=\"$bound\"\nexec \"$real\" -action-shell \"$bound\" \"$@\"\n"
+	} else {
+		wrapperBody += "exec \"$real\" \"$@\"\n"
+	}
+	if err := os.WriteFile(wrapper, []byte(wrapperBody), 0o700); err != nil {
 		return arm{}, err
 	}
 	wrapperHash, err := pathDigest(wrapper)
@@ -338,10 +370,14 @@ func prepareArm(ctx context.Context, out, root, toolbox, oracle, bench, ask, ply
 		}
 	}
 	argv = append(argv, "--", c.Intent)
-	env := experimentEnv(os.Environ(), map[string]string{
+	envValues := map[string]string{
 		"BENCH_DIR": filepath.Join(control, "bench"), "BENCH_ASK": ask, "BENCH_PLY": wrapper,
 		"BENCH_LIVE_REAL_PLY": ply, "BENCH_LIVE_PLY_TRACE": trace, "BENCH_LIVE_EFFECTS": effects, "NO_COLOR": "1",
-	})
+	}
+	if actionShell != "" {
+		envValues["PLY_ACTION_SHELL"] = actionShell
+	}
+	env := experimentEnv(os.Environ(), envValues)
 	initial, err := execute(ctx, bench, argv, env, workspace, "initial", filepath.Join(base, "initial.stdout"), filepath.Join(base, "initial.stderr"))
 	if err != nil {
 		return arm{}, err
@@ -379,7 +415,7 @@ func prepareArm(ctx context.Context, out, root, toolbox, oracle, bench, ask, ply
 			mode = "loop"
 		}
 		a.AcceptScript = filepath.Join(base, "accept.sh")
-		if err := writeAcceptScript(a.AcceptScript, bench, ask, wrapper, ply, trace, effects, filepath.Join(control, "bench"), workspace, sessionPath, model, effort, mode, digest, base, expectedAcceptExit(c)); err != nil {
+		if err := writeAcceptScript(a.AcceptScript, bench, ask, wrapper, ply, actionShell, trace, effects, filepath.Join(control, "bench"), workspace, sessionPath, model, effort, mode, digest, base, expectedAcceptExit(c)); err != nil {
 			return arm{}, err
 		}
 		a.AcceptScriptSHA256, err = pathDigest(a.AcceptScript)
@@ -413,8 +449,11 @@ func score(args []string, stdout, stderr io.Writer) int {
 	if err := readJSON(filepath.Join(out, "run.json"), &manifest); err != nil {
 		return broken(stderr, err)
 	}
-	if manifest.Schema != runSchema || len(manifest.Arms) == 0 {
+	if (manifest.Schema != runSchemaV1 && manifest.Schema != runSchemaV2) || len(manifest.Arms) == 0 {
 		return broken(stderr, errors.New("run manifest is incomplete"))
+	}
+	if err := validateActionShellManifest(out, manifest); err != nil {
+		return broken(stderr, err)
 	}
 	if err := verifyRunInputs(manifest); err != nil {
 		return broken(stderr, err)
@@ -631,10 +670,19 @@ func scoreArm(ctx context.Context, manifest runManifest, c caseSpec, a arm, scra
 }
 
 func verifyRunInputs(m runManifest) error {
-	for path, want := range map[string]string{
+	inputs := map[string]string{
 		m.ToolboxPath: m.ToolboxSHA256, m.OraclePath: m.OracleSHA256, m.ExpectedPath: m.ExpectedSHA256,
 		m.BenchPath: m.BenchSHA256, m.AskPath: m.AskSHA256, m.PlyPath: m.PlySHA256,
-	} {
+	}
+	if m.ActionShellPath != "" {
+		if err := verifyExecutableBinding(m.ActionShellSource, m.ActionShellSourceSHA256); err != nil {
+			return err
+		}
+		if err := verifyExecutableBinding(m.ActionShellPath, m.ActionShellSHA256); err != nil {
+			return err
+		}
+	}
+	for path, want := range inputs {
 		got, err := pathDigest(path)
 		if err != nil || got != want {
 			return fmt.Errorf("experiment input changed: %s", path)
@@ -645,6 +693,18 @@ func verifyRunInputs(m runManifest) error {
 		if err != nil || got != fixture.SHA256 {
 			return fmt.Errorf("experiment fixture changed: %s", fixture.Path)
 		}
+	}
+	return nil
+}
+
+func verifyExecutableBinding(path, want string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("experiment action shell is not a real executable: %s", path)
+	}
+	got, err := pathDigest(path)
+	if err != nil || got != want {
+		return fmt.Errorf("experiment input changed: %s", path)
 	}
 	return nil
 }
@@ -714,9 +774,19 @@ func validateRunShape(out string, m runManifest, cases []caseSpec) error {
 	if strings.TrimSpace(m.Model) == "" || len(m.Fixtures) != len(cases) {
 		return errors.New("run manifest input set is incomplete")
 	}
+	if m.Schema == runSchemaV1 {
+		if m.ActionShellSource != "" || m.ActionShellSourceSHA256 != "" || m.ActionShellPath != "" || m.ActionShellSHA256 != "" || m.ActionShellProtocol != "" {
+			return errors.New("run v1 manifest cannot bind an action shell")
+		}
+	} else if m.Schema != runSchemaV2 {
+		return errors.New("run manifest schema is unsupported")
+	}
 	root := filepath.Dir(m.CasesPath)
 	if m.ToolboxPath != filepath.Join(root, "toolbox") || m.OraclePath != filepath.Join(root, "oracle.sh") || m.ExpectedPath != filepath.Join(root, "expected") {
 		return errors.New("run manifest corpus tool paths differ")
+	}
+	if err := validateActionShellManifest(out, m); err != nil {
+		return err
 	}
 	fixtureByID := map[string]inputDigest{}
 	for _, fixture := range m.Fixtures {
@@ -778,6 +848,46 @@ func validateRunShape(out string, m runManifest, cases []caseSpec) error {
 		if c.Class == "consequential" && a.AcceptScript != "" {
 			return fmt.Errorf("consequential arm %s has an acceptance path", key)
 		}
+	}
+	return nil
+}
+
+func validateActionShellManifest(out string, m runManifest) error {
+	if m.Schema == runSchemaV1 {
+		if m.ActionShellSource != "" || m.ActionShellSourceSHA256 != "" || m.ActionShellPath != "" || m.ActionShellSHA256 != "" || m.ActionShellProtocol != "" {
+			return errors.New("run v1 manifest cannot bind an action shell")
+		}
+		return nil
+	}
+	if m.Schema != runSchemaV2 {
+		return errors.New("run manifest schema is unsupported")
+	}
+	if m.ActionShellPath == "" {
+		return errors.New("run v2 manifest requires a complete action-shell binding")
+	}
+	if !filepath.IsAbs(m.ActionShellSource) || m.ActionShellPath != filepath.Join(out, "controller", "action-shell") ||
+		m.ActionShellProtocol != actionShellProtocol || !digestShape(m.ActionShellSourceSHA256) ||
+		m.ActionShellSourceSHA256 != m.ActionShellSHA256 {
+		return errors.New("run manifest action-shell binding is invalid")
+	}
+	controller := filepath.Join(out, "controller")
+	for _, path := range []string{controller, m.ActionShellSource, m.ActionShellPath} {
+		info, err := os.Lstat(path)
+		wantFile := path != controller
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || wantFile && (!info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0) || !wantFile && !info.IsDir() {
+			return fmt.Errorf("run manifest action-shell path is not a real controlled object: %s", path)
+		}
+	}
+	physical, err := filepath.EvalSymlinks(m.ActionShellSource)
+	if err != nil || physical != m.ActionShellSource {
+		return errors.New("run manifest action-shell source is not its canonical physical path")
+	}
+	overlap, err := pathsOverlap(m.ActionShellSource, out)
+	if err != nil {
+		return err
+	}
+	if overlap {
+		return errors.New("run manifest action-shell source overlaps the writable result tree")
 	}
 	return nil
 }
@@ -1184,7 +1294,7 @@ func validVerifierEvidence(events []replayEvent, resultIndex int, receipt *liveV
 		body.Verifier != verifier || body.VerifierSHA256 != receipt.VerifierSHA256 || body.Directory != directory ||
 		body.Outcome != "accepted" || body.ExitCode != 0 || body.Killed || body.StartError || body.TimeoutMS <= 0 ||
 		body.ElidedBytes != 0 || body.OutputBytes != int64(len(body.Output)) || body.OutputSHA256 != digestString(body.Output) ||
-		!filepath.IsAbs(body.Shell) || body.VerifierSHA256 != digestString(body.Shell+"\x00"+body.Verifier) {
+		body.Shell != "/bin/sh" || body.VerifierSHA256 != digestString(body.Shell+"\x00"+body.Verifier) {
 		return false
 	}
 	mapIndex := -1
@@ -1319,13 +1429,17 @@ func replaySession(ctx context.Context, ask, session, stdoutPath, stderrPath str
 	return nil
 }
 
-func writeAcceptScript(path, bench, ask, wrapper, ply, trace, effects, benchDir, workspace, session, model, effort, mode, digest, base string, expectedExit int) error {
+func writeAcceptScript(path, bench, ask, wrapper, ply, actionShell, trace, effects, benchDir, workspace, session, model, effort, mode, digest, base string, expectedExit int) error {
 	argv := []string{"contract", "accept", "-C", workspace, "-f", session, "-m", model, "-mode", mode, "-turns", "20", "-cycles", "3", "-timeout", "60s", "-expect", digest}
 	if effort != "" {
 		argv = append(argv, "-effort", effort)
 	}
 	var command []string
-	for key, value := range map[string]string{"BENCH_DIR": benchDir, "BENCH_ASK": ask, "BENCH_PLY": wrapper, "BENCH_LIVE_REAL_PLY": ply, "BENCH_LIVE_PLY_TRACE": trace, "BENCH_LIVE_EFFECTS": effects, "NO_COLOR": "1"} {
+	values := map[string]string{"BENCH_DIR": benchDir, "BENCH_ASK": ask, "BENCH_PLY": wrapper, "BENCH_LIVE_REAL_PLY": ply, "BENCH_LIVE_PLY_TRACE": trace, "BENCH_LIVE_EFFECTS": effects, "NO_COLOR": "1"}
+	if actionShell != "" {
+		values["PLY_ACTION_SHELL"] = actionShell
+	}
+	for key, value := range values {
 		command = append(command, key+"="+shellQuote(value))
 	}
 	sort.Strings(command)
@@ -1518,6 +1632,72 @@ func executable(name string) (string, error) {
 		return "", fmt.Errorf("executable is not a regular executable: %s", path)
 	}
 	return path, nil
+}
+
+func validateActionShellSource(path, out string) (string, string, error) {
+	if path == "" {
+		return "", "", nil
+	}
+	if !filepath.IsAbs(path) {
+		return "", "", errors.New("-action-shell must be an absolute executable path")
+	}
+	clean := filepath.Clean(path)
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return "", "", fmt.Errorf("-action-shell: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o111 == 0 {
+		return "", "", errors.New("-action-shell must be a real executable regular file, not a symlink")
+	}
+	physical, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", "", fmt.Errorf("-action-shell: %w", err)
+	}
+	if overlap, err := pathsOverlap(physical, out); err != nil {
+		return "", "", err
+	} else if overlap {
+		return "", "", errors.New("-action-shell source must be outside the writable result tree")
+	}
+	hash, err := pathDigest(physical)
+	if err != nil {
+		return "", "", err
+	}
+	return physical, hash, nil
+}
+
+func snapshotExecutable(source, destination, expectedSHA string) error {
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	if digestBytes(data) != expectedSHA {
+		return errors.New("-action-shell changed before it could be snapshotted")
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		_ = file.Close()
+		if !ok {
+			_ = os.Remove(destination)
+		}
+	}()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 func mkdirNew(path string) error {

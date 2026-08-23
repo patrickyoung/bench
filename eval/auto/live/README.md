@@ -27,6 +27,21 @@ defense in depth for a cooperative smoke test, not a sandbox or hostile-worker
 evidence boundary: ordinary Quick/Review actions still run with the account's
 ambient same-user authority and could address paths outside the workspace.
 
+For a containerized run, pass an absolute operator-owned adapter with
+`-action-shell`. The harness rejects symlinks and relative paths, snapshots its
+exact bytes into the mode-0700 result controller directory, sets
+`PLY_ACTION_SHELL` for nesting, and has the trace wrapper pass the literal
+`-action-shell PATH` option on every initial and admitted Ply invocation. A Ply
+without that public option therefore fails instead of falling back to the host
+shell. The scorer rehashes both source and snapshot. Model actions use that
+interpreter; configured
+Ply checks remain host-side on `/bin/sh`. This split allows an operator adapter
+that exposes only the workspace and toolbox to keep the immutable oracle and
+expected trees out of the worker. The adapter is trusted operator code: its
+digest proves identity, not confinement. Docker, its pinned image, mounts,
+environment, signals, cleanup, and resource limits remain the adapter's
+responsibility; this is not Bench Cage or contract `action_confinement`.
+
 The harness never accepts a generated contract. `prepare` writes ordinary,
 literal `accept.sh` scripts for safe draft arms. A human must inspect the exact
 `draft.json` and its digest in `NEXT.tsv`, then execute each corresponding
@@ -43,6 +58,7 @@ go run ./cmd/bench-auto-live prepare \
   -bench /absolute/path/to/bench \
   -ask /absolute/path/to/ask \
   -ply /absolute/path/to/ply \
+  -action-shell /absolute/path/to/container-action-shell \
   -model PROVIDER/MODEL \
   -effort high \
   -cases eval/auto/live/cases.jsonl \
@@ -66,7 +82,8 @@ go run ./cmd/bench-auto-live score -out /absolute/result-directory
 ```
 
 `score` rehashes the case manifest, fixtures, toolbox, oracle, executables, and
-Ply tracing wrapper; verifies every Ask session with `ask replay -check -json`;
+the snapshotted action interpreter and Ply tracing wrapper; verifies every Ask
+session with `ask replay -check -json`;
 runs the external artifact oracle; and writes `results.jsonl` plus
 `summary.json`.
 
