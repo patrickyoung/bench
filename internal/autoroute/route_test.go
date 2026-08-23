@@ -34,6 +34,7 @@ func TestParseRejectsMissingNullAndOversizedRequiredFields(t *testing.T) {
 		`{"version":1,"route":"quick","reason":"routine-local","risk_tags":null}`,
 		`{"version":1,"route":"review","reason":null,"risk_tags":[]}`,
 		`{"version":null,"route":"review","reason":"open-decision","risk_tags":[]}`,
+		`{"version":1,"route":"review","reason":"consequential-effect","risk_tags":["publish","publish"]}`,
 		`{"version":1,"route":"review","reason":"consequential-effect","risk_tags":["account_change","cost","credential","data_egress","destructive","external_communication","financial","network","outside_workspace","physical_action","production","publish","system_change"]}`,
 	} {
 		if got, err := Parse([]byte(body), req); err == nil {
@@ -88,7 +89,7 @@ func TestRouterUsesOneStructuredAskTurnAndHidesClassifierJSON(t *testing.T) {
 	if ask.request.Schema != Schema || ask.request.System != System || ask.request.Input != "draft evidence\n" || !strings.Contains(ask.request.Message, "PIPED EVIDENCE") {
 		t.Fatalf("request=%#v", ask.request)
 	}
-	if ask.record.Kind != "bench.route/v1" || !strings.Contains(ask.record.JSON, `"authority":"explicit-mode-auto"`) || !strings.Contains(ask.record.JSON, `"selected":"review"`) || !strings.Contains(ask.record.JSON, `"input_present":true`) || !strings.Contains(ask.record.JSON, `"tool_grant":"toolbox"`) {
+	if ask.record.Kind != "bench.route/v1" || !strings.Contains(ask.record.JSON, `"router":"`+RouterID+`"`) || !strings.Contains(ask.record.JSON, `"authority":"explicit-mode-auto"`) || !strings.Contains(ask.record.JSON, `"selected":"review"`) || !strings.Contains(ask.record.JSON, `"input_present":true`) || !strings.Contains(ask.record.JSON, `"tool_grant":"toolbox"`) {
 		t.Fatalf("record=%#v", ask.record)
 	}
 }

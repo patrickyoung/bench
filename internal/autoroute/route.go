@@ -21,7 +21,10 @@ import (
 	"github.com/patrickyoung/bench/internal/plyexec"
 )
 
-const Version = 1
+const (
+	Version  = 1
+	RouterID = "ask-structured/v2"
+)
 
 const Schema = `{
   "$schema":"https://json-schema.org/draft/2020-12/schema",
@@ -32,7 +35,7 @@ const Schema = `{
     "version":{"type":"integer","const":1},
     "route":{"type":"string","enum":["quick","review","loop"]},
     "reason":{"type":"string","enum":["routine-local","consequential-effect","open-decision","checked-pursuit","broad-authority"]},
-    "risk_tags":{"type":"array","uniqueItems":true,"maxItems":12,"items":{"type":"string","enum":["destructive","external_communication","physical_action","publish","production","credential","data_egress","system_change","financial","network","outside_workspace","account_change","cost"]}}
+    "risk_tags":{"type":"array","maxItems":12,"items":{"type":"string","enum":["destructive","external_communication","physical_action","publish","production","credential","data_egress","system_change","financial","network","outside_workspace","account_change","cost"]}}
   }
 }`
 
@@ -219,7 +222,7 @@ func routeRecord(req Request, decision Decision) ([]byte, error) {
 		grant = "toolbox"
 	}
 	return json.Marshal(record{
-		Version: 1, Router: "ask-structured/v1",
+		Version: 1, Router: RouterID,
 		IntentSHA256: digest(req.Task.Goal), InputSHA256: digest(req.Task.Input), InputPresent: req.Task.Input != "",
 		SystemSHA256: digest(System), SchemaSHA256: digest(Schema), PromptSHA256: digest(PromptTemplate), ProposalSHA256: decision.ProposalSHA256,
 		Suggested: decision.Suggested, Selected: decision.Effective, Reason: decision.Reason,

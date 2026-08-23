@@ -31,6 +31,7 @@ const (
 	runSchemaV2         = "bench.auto-live/run/v2"
 	resultSchema        = "bench.auto-live/result/v1"
 	actionShellProtocol = "ply.action-shell/v1"
+	autoRouterID        = "ask-structured/v2"
 	maxLine             = 1 << 20
 )
 
@@ -1037,7 +1038,7 @@ func validateRoute(path, armName string, c caseSpec, toolbox, check string) (str
 		if err := decodeStrict(note.Body, &body); err != nil {
 			return "", "", "", err
 		}
-		if body.Version != 1 || body.Router != "ask-structured/v1" || body.Authority != "explicit-mode-auto" ||
+		if body.Version != 1 || body.Router != autoRouterID || body.Authority != "explicit-mode-auto" ||
 			body.IntentSHA256 != digestString(c.Intent) || body.InputSHA256 != digestString("") || body.InputPresent ||
 			body.ToolGrant != "toolbox" || body.ToolboxSHA256 != digestString(toolbox) || body.CheckSHA256 != digestString(check) ||
 			body.CheckPresent != (check != "") || body.CheckAll != c.CheckAll || body.ApprovalPolicy != "off" || body.Confinement != "off" ||

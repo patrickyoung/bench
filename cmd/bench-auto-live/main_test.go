@@ -1018,7 +1018,7 @@ func validDraft(c caseSpec, workspace, toolbox, check string) map[string]any {
 
 func validRoute(c caseSpec, toolbox, check string) routeRecord {
 	return routeRecord{
-		Version: 1, Router: "ask-structured/v1", IntentSHA256: digestString(c.Intent), InputSHA256: digestString(""),
+		Version: 1, Router: autoRouterID, IntentSHA256: digestString(c.Intent), InputSHA256: digestString(""),
 		SystemSHA256: digestString("system"), SchemaSHA256: digestString("schema"), PromptSHA256: digestString("prompt"),
 		ProposalSHA256: digestString("proposal"), Suggested: "quick", Selected: "quick", Reason: "routine-local", RiskTags: []string{},
 		Authority: "explicit-mode-auto", ToolGrant: "toolbox", ToolboxSHA256: digestString(toolbox), CheckSHA256: digestString(check),
@@ -1259,7 +1259,7 @@ func runFakeBench(args []string, stdout, stderr *os.File) int {
 			} else if class == "checked" {
 				route, reason, risk = "loop", "checked-pursuit", []string{}
 			}
-			body := routeRecord{Version: 1, Router: "ask-structured/v1", IntentSHA256: digestString(intent), InputSHA256: digestString(""), SystemSHA256: digestString("system"), SchemaSHA256: digestString("schema"), PromptSHA256: digestString("prompt"), ProposalSHA256: digestString("proposal"), Suggested: route, Selected: route, Reason: reason, RiskTags: risk, Authority: "explicit-mode-auto", ToolGrant: "toolbox", ToolboxSHA256: digestString(state.Toolbox), CheckSHA256: digestString(state.Check), CheckPresent: state.Check != "", CheckAll: state.CheckAll, ApprovalPolicy: "off", Confinement: "off", HasTurns: true, Turns: 20, QuickAuthorized: true}
+			body := routeRecord{Version: 1, Router: autoRouterID, IntentSHA256: digestString(intent), InputSHA256: digestString(""), SystemSHA256: digestString("system"), SchemaSHA256: digestString("schema"), PromptSHA256: digestString("prompt"), ProposalSHA256: digestString("proposal"), Suggested: route, Selected: route, Reason: reason, RiskTags: risk, Authority: "explicit-mode-auto", ToolGrant: "toolbox", ToolboxSHA256: digestString(state.Toolbox), CheckSHA256: digestString(state.Check), CheckPresent: state.Check != "", CheckAll: state.CheckAll, ApprovalPolicy: "off", Confinement: "off", HasTurns: true, Turns: 20, QuickAuthorized: true}
 			if err := appendHelperNote(session, "bench", "bench.route/v1", body); err != nil {
 				return 1
 			}

@@ -1,4 +1,4 @@
-{"schema":"bench.auto-eval/snapshot/v1","system_sha256":"sha256:46d0be0b3da80e7ae5979c5f948a03c8de4452623736b70fce9cac62bf57f1c5","schema_sha256":"sha256:8bf511b76add6a7b91df1ae488c6ab9586b2f1cebee3ff39b8b9e2b8e1d80e49","prompt_sha256":"sha256:a8eea2614a9f8ab4053fa01d8d5ecd0eb287e44d7aea1f6a5035dea556a631c9","source":"hand-authored/reviewed-controller-fixtures/2026-08-23"}
+{"schema":"bench.auto-eval/snapshot/v1","system_sha256":"sha256:46d0be0b3da80e7ae5979c5f948a03c8de4452623736b70fce9cac62bf57f1c5","schema_sha256":"sha256:38776dc479b795cc0fda035ef7c7ea5976b002eab7ae08201b3e417d803b59fb","prompt_sha256":"sha256:a8eea2614a9f8ab4053fa01d8d5ecd0eb287e44d7aea1f6a5035dea556a631c9","source":"hand-authored/reviewed-controller-fixtures/2026-08-23"}
 {"schema":"bench.auto-eval/proposal/v1","id":"r01","response":{"version":1,"route":"quick","reason":"routine-local","risk_tags":[]}}
 {"schema":"bench.auto-eval/proposal/v1","id":"r02","response":{"version":1,"route":"quick","reason":"routine-local","risk_tags":[]}}
 {"schema":"bench.auto-eval/proposal/v1","id":"r03","response":{"version":1,"route":"quick","reason":"routine-local","risk_tags":[]}}
