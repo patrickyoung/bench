@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -261,6 +262,7 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	task := m.taskForContract(loaded, m.taskOptions)
+	m.taskOptions.Force = false
 	if err := plyexec.Validate(task); err != nil {
 		m.notice = "Contract cannot start · " + err.Error()
 		return m, nil
@@ -272,6 +274,7 @@ func (m *Model) acceptContractDraft() (tea.Model, tea.Cmd) {
 	task.Steering = m.steeringPath
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
+	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
 	m.contractDraft = &loaded
 	m.running = true
 	m.job = jobPlyTask
@@ -303,6 +306,7 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	task := m.taskForContract(loaded, m.taskOptions)
+	m.taskOptions.Force = false
 	if err := plyexec.Validate(task); err != nil {
 		m.notice = "Contract cannot start · " + err.Error()
 		return m, nil
@@ -314,6 +318,7 @@ func (m *Model) runAdmittedContract(guidance string) (tea.Model, tea.Cmd) {
 	task.Steering = m.steeringPath
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
+	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
 	m.admittedContract = &loaded
 	m.contractDraft = nil
 	m.screen = screenAsk
@@ -340,6 +345,7 @@ func (m *Model) taskForContract(draft contractexec.Draft, options plyexec.TaskOp
 	options.IntentContract = true
 	options.Check = draft.Check
 	options.CheckAllCriteria = draft.CheckAll
+	options.ApprovalPolicy = draft.ApprovalPolicy
 	return plyexec.TaskRequest{
 		Dir: m.workspace, Goal: draft.Intent, Session: m.session, SubagentsDir: m.subagentsPath(),
 		Skills: append([]string(nil), draft.Skills...), Toolbox: draft.Toolbox, Model: m.modelName, Options: options,
@@ -365,6 +371,7 @@ func (m *Model) openContract() (tea.Model, tea.Cmd) {
 		}
 		m.taskOptions.Check = loaded.Check
 		m.taskOptions.CheckAllCriteria = loaded.CheckAll
+		m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
 	}
 	m.screen = screenContract
 	m.composer.SetValue("")
@@ -387,6 +394,7 @@ func (m *Model) restoreContractState() {
 		m.admittedContract = nil
 		m.taskOptions.Check = loaded.Check
 		m.taskOptions.CheckAllCriteria = loaded.CheckAll
+		m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
 		m.screen = screenContract
 		m.notice = "Session verified · unadmitted contract draft restored · Ply has not started"
 		return
@@ -395,7 +403,29 @@ func (m *Model) restoreContractState() {
 	m.contractDraft = nil
 	m.taskOptions.Check = loaded.Check
 	m.taskOptions.CheckAllCriteria = loaded.CheckAll
+	m.taskOptions.ApprovalPolicy = loaded.ApprovalPolicy
 	m.notice = "Local admitted revision restored · its sealed admission is reverified before any retry"
+	if loaded.ApprovalPolicy == plyexec.ApprovalEveryAction && m.approvalResults != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result, found, resultErr := m.approvalResults.LatestApprovalResult(ctx, m.session, loaded.ContractID, m.workspace, m.mayPath)
+		if resultErr != nil {
+			m.pendingApproval = nil
+			m.notice = "Session verified, but the latest approval result could not be restored · " + resultErr.Error()
+			return
+		}
+		if found && result.Status == "awaiting_approval" && result.ApprovalReceipt != nil {
+			m.pendingApproval = &result
+			m.retryContract = false
+			m.notice = "Approval required · restored exact May action " + result.ApprovalReceipt.Digest + " · it was not executed"
+			return
+		}
+		if found && result.Status == "approval_declined" {
+			m.pendingApproval = nil
+			m.retryContract = true
+			m.notice = "Approval decline restored · the action was not executed · /continue can pursue another approach"
+		}
+	}
 }
 
 func (m *Model) renderContract(width int) string {
@@ -469,7 +499,7 @@ func contractSemanticChanges(before, after contractexec.Draft) string {
 	if !slices.Equal(a.Criteria, b.Criteria) {
 		changed = append(changed, "evidence")
 	}
-	if before.Intent != after.Intent || before.Workspace != after.Workspace || before.Toolbox != after.Toolbox || before.Check != after.Check || before.CheckAll != after.CheckAll || !slices.Equal(before.Skills, after.Skills) {
+	if before.Intent != after.Intent || before.Workspace != after.Workspace || before.Toolbox != after.Toolbox || before.Check != after.Check || before.CheckAll != after.CheckAll || before.ApprovalPolicy != after.ApprovalPolicy || !slices.Equal(before.Skills, after.Skills) {
 		changed = append(changed, "execution policy")
 	}
 	if len(changed) == 0 {
@@ -513,13 +543,17 @@ func contractExecutionPolicy(draft contractexec.Draft, policies ...plyexec.TaskO
 	if len(draft.Skills) > 0 {
 		skills = strings.Join(draft.Skills, ", ")
 	}
+	approval := "off"
+	if draft.ApprovalPolicy == plyexec.ApprovalEveryAction {
+		approval = "every action · exact May decision immediately before execution"
+	}
 	pursuit := "review · one Ply invocation after admission"
 	if len(policies) > 0 && policies[0].Loop {
 		cycles := plyexec.LoopCycleBudget(policies[0])
 		turns := plyexec.LoopTurnBudget(policies[0])
 		pursuit = fmt.Sprintf("loop · this invocation · cycles=%s · turns=%s", cycles, turns)
 	}
-	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nBrief skills: %s\nPursuit: %s", draft.Intent, draft.Workspace, tools, check, authority, skills, pursuit))
+	return safeText(fmt.Sprintf("EXECUTION POLICY\nOriginal request: %s\nWorkspace: %s\nTools: %s\nCheck: %s\nCheck authority: %s\nAction approval: %s\nBrief skills: %s\nPursuit: %s", draft.Intent, draft.Workspace, tools, check, authority, approval, skills, pursuit))
 }
 
 func failureDetail(code int, err error) string {

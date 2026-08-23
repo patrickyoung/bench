@@ -487,6 +487,19 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 	if err != nil || strings.TrimSpace(string(output)) != "bench "+m.Version {
 		return fmt.Errorf("installed Bench smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	mayVersion := ""
+	for _, component := range m.Components {
+		if component.Name == "may" {
+			mayVersion = component.Version
+			break
+		}
+	}
+	cmd = exec.Command(filepath.Join(prefix, "bin", "may"), "version")
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
+	output, err = cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(output)) != "may "+mayVersion {
+		return fmt.Errorf("installed May smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
 	blockedPrefix := filepath.Join(temp, "blocked-prefix")
 	blockedBench := filepath.Join(blockedPrefix, "bin", "bench")
 	if err := os.MkdirAll(filepath.Dir(blockedBench), 0o755); err != nil {
@@ -503,6 +516,23 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 	data, err := os.ReadFile(blockedBench)
 	if err != nil || string(data) != "owned by someone else\n" {
 		return fmt.Errorf("installer changed unrelated command: %w", err)
+	}
+	blockedMayPrefix := filepath.Join(temp, "blocked-may-prefix")
+	blockedMay := filepath.Join(blockedMayPrefix, "bin", "may")
+	if err := os.MkdirAll(filepath.Dir(blockedMay), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(blockedMay, []byte("another may\n"), 0o755); err != nil {
+		return err
+	}
+	blocked = exec.Command(installer, blockedMayPrefix)
+	blocked.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
+	if output, err := blocked.CombinedOutput(); err == nil || !strings.Contains(string(output), "refusing to replace non-symlink "+blockedMay) {
+		return fmt.Errorf("installer May overwrite refusal smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	data, err = os.ReadFile(blockedMay)
+	if err != nil || string(data) != "another may\n" {
+		return fmt.Errorf("installer changed unrelated May command: %w", err)
 	}
 	return nil
 }
@@ -779,7 +809,7 @@ case $prefix in /*) ;; *) prefix=$PWD/$prefix ;; esac
 lib=$prefix/lib/bench-suite
 dest=$lib/$version
 bindir=$prefix/bin
-tools='bench ask brief ply hone draft'
+tools='bench ask brief ply hone draft may'
 
 verify() {
 	dir=$1

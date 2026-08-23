@@ -121,6 +121,16 @@ func (m *Model) commandContinue(args []string) (tea.Model, tea.Cmd) {
 		m.syncContent()
 		return m, nil
 	}
+	if m.pendingApproval != nil {
+		m.pendingApproval = nil
+		m.retryContract = false
+		m.taskOptions.Force = true
+		m.continueContract = m.admittedContract != nil
+		m.composer.SetValue("")
+		m.notice = "Approval wait released · describe a different approach; the admitted boundary and May policy stay unchanged"
+		m.syncContent()
+		return m, nil
+	}
 	if m.pendingContract == nil && !m.retryContract {
 		m.composer.SetValue("")
 		m.notice = "Nothing is awaiting revision"
@@ -132,7 +142,7 @@ func (m *Model) commandContinue(args []string) (tea.Model, tea.Cmd) {
 		m.taskOptions.Force = true
 		m.continueContract = m.admittedContract != nil
 		m.composer.SetValue("")
-		m.notice = "Loop retry armed · describe implementation guidance; the admitted contract and verifier stay unchanged"
+		m.notice = "Retry armed · describe implementation guidance; the admitted contract, approval policy, and verifier stay unchanged"
 		m.syncContent()
 		return m, nil
 	}

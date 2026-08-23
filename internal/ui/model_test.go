@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -90,6 +91,18 @@ func armContractResultPresentation(m *Model) {
 type fakeRecorder struct {
 	req askexec.RecordRequest
 	err error
+}
+
+type fakeApprovalResults struct {
+	result plyexec.ContractResult
+	found  bool
+	err    error
+	calls  int
+}
+
+func (f *fakeApprovalResults) LatestApprovalResult(_ context.Context, _, _, _, _ string) (plyexec.ContractResult, bool, error) {
+	f.calls++
+	return f.result, f.found, f.err
 }
 
 func (f *fakeRecorder) Record(_ context.Context, req askexec.RecordRequest) error {
@@ -185,13 +198,14 @@ func TestContractOffAllowsDirectWorkWhileRetainingDraft(t *testing.T) {
 	task := &fakeTask{events: make(chan plyexec.Event)}
 	m := New(Config{Task: task, TaskOptions: plyexec.TaskOptions{IntentContract: true}})
 	m.contractDraft = &contractexec.Draft{OutcomeID: "retained"}
+	m.pendingApproval = &plyexec.ContractResult{Status: "awaiting_approval"}
 	m.composer.SetValue("/contract off")
 	updated, _ := m.Update(key("enter"))
 	m = updated.(*Model)
 	m.composer.SetValue("run directly")
 	updated, _ = m.Update(key("enter"))
 	m = updated.(*Model)
-	if task.calls != 1 || task.req.Options.IntentContract || m.contractDraft == nil {
+	if task.calls != 1 || task.req.Options.IntentContract || m.contractDraft == nil || m.pendingApproval != nil {
 		t.Fatalf("calls=%d options=%#v draft=%#v", task.calls, task.req.Options, m.contractDraft)
 	}
 }
@@ -349,6 +363,48 @@ func TestRestoredAdmittedContractBindsItsCheckBeforeLoopRun(t *testing.T) {
 	defer m.cleanupLoopSteering()
 	if len(contracts.runReqs) != 1 || contracts.runReqs[0].Task.Options.Check != "go test ./..." || contracts.runReqs[0].Task.Steering == "" || m.taskOptions.Check != "go test ./..." {
 		t.Fatalf("runs=%#v ui options=%#v notice=%q", contracts.runReqs, m.taskOptions, m.notice)
+	}
+}
+
+func TestRestoreRehydratesDurablePendingApprovalWithoutRunning(t *testing.T) {
+	dir := t.TempDir()
+	digest := strings.Repeat("a", 64)
+	results := &fakeApprovalResults{found: true, result: plyexec.ContractResult{
+		ContractID: "sha256:admission", Status: "awaiting_approval", WorkerExitCode: 75,
+		ApprovalPolicy: plyexec.ApprovalEveryAction, StopReason: "approval_required",
+		ApprovalReceipt: &plyexec.ApprovalReceiptRef{Digest: digest, Verdict: "parked", MayPath: "/suite/bin/may"},
+	}}
+	contracts := &fakeNegotiator{plyEvents: make(chan plyexec.Event)}
+	m := New(Config{
+		Task: &fakeTask{}, Contracts: contracts, ApprovalResults: results,
+		Session: filepath.Join(dir, "session.jsonl"), DataDir: dir, Workspace: dir, MayPath: "/suite/bin/may",
+		TaskOptions: plyexec.TaskOptions{IntentContract: true},
+	})
+	draft, err := m.contractStore.SaveDraft(contractexec.Draft{
+		Schema: 2, OutcomeID: "outcome", Generation: 1, Intent: "publish it", Workspace: dir,
+		Contract: []byte(testContractJSON), CompilerEvidenceSHA256: "sha256:evidence",
+		CheckSHA256: "sha256:empty", ApprovalPolicy: plyexec.ApprovalEveryAction, Skills: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.MarkDraftRecorded(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err = m.contractStore.PublishRevision(draft, draft.DraftSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.contractStore.MarkAdmitted(draft); err != nil {
+		t.Fatal(err)
+	}
+	m.restoreContractState()
+	if results.calls != 1 || m.pendingApproval == nil || m.pendingApproval.ApprovalReceipt.Digest != digest || len(contracts.runReqs) != 0 || m.running {
+		t.Fatalf("calls=%d pending=%#v runs=%#v running=%v notice=%q", results.calls, m.pendingApproval, contracts.runReqs, m.running, m.notice)
+	}
+	if !strings.Contains(m.notice, "not executed") {
+		t.Fatalf("notice=%q", m.notice)
 	}
 }
 
@@ -528,6 +584,134 @@ func TestContractReviewDefaultsToSemanticSummaryAndTogglesAudit(t *testing.T) {
 		if !strings.Contains(audit, want) {
 			t.Errorf("audit review omitted %q:\n%s", want, audit)
 		}
+	}
+}
+
+func TestEveryActionApprovalIsOperatorSelectedAndVisibleBeforeAdmission(t *testing.T) {
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: false}})
+	updated, _ := m.commandApproval([]string{plyexec.ApprovalEveryAction})
+	m = updated.(*Model)
+	if m.taskOptions.ApprovalPolicy == plyexec.ApprovalEveryAction || !strings.Contains(m.notice, "needs Review or Loop") {
+		t.Fatalf("quick policy=%q notice=%q", m.taskOptions.ApprovalPolicy, m.notice)
+	}
+	m.taskOptions.IntentContract = true
+	updated, _ = m.commandApproval([]string{plyexec.ApprovalEveryAction})
+	m = updated.(*Model)
+	if m.taskOptions.ApprovalPolicy != plyexec.ApprovalEveryAction {
+		t.Fatalf("policy=%q notice=%q", m.taskOptions.ApprovalPolicy, m.notice)
+	}
+	draft := contractexec.Draft{
+		Generation: 1, OutcomeID: "outcome", Contract: []byte(testContractJSON), Intent: "publish it", Workspace: "/work",
+		ApprovalPolicy: plyexec.ApprovalEveryAction,
+	}
+	card := contractDraftCard(draft, nil, "/tmp/draft.json")
+	if !strings.Contains(card, "Action approval: every action") || !strings.Contains(card, "exact May decision immediately before execution") {
+		t.Fatalf("contract card omitted exact action policy:\n%s", card)
+	}
+	task := m.taskForContract(draft, plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalOff})
+	if task.Options.ApprovalPolicy != plyexec.ApprovalEveryAction {
+		t.Fatalf("runtime weakened durable policy: %#v", task.Options)
+	}
+}
+
+func TestStatusDistinguishesAdmittedApprovalFromNextAmendmentRequest(t *testing.T) {
+	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction}})
+	m.admittedContract = &contractexec.Draft{ApprovalPolicy: plyexec.ApprovalOff}
+	report := m.statusReport()
+	if !strings.Contains(report, "Action approval: Bound: Off") || !strings.Contains(report, "requested for next amendment: Every action") || strings.Contains(m.taskPolicyDisplay(), "May before every action") {
+		t.Fatalf("off admission was mislabeled:\n%s\n%s", report, m.taskPolicyDisplay())
+	}
+	updated, _ := m.commandApproval(nil)
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "bound off") || !strings.Contains(m.notice, "next amendment every-action") {
+		t.Fatalf("approval query mislabeled off admission: %q", m.notice)
+	}
+	m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
+	m.admittedContract.ApprovalPolicy = plyexec.ApprovalEveryAction
+	report = m.statusReport()
+	if !strings.Contains(report, "Action approval: Bound: Every action") || !strings.Contains(report, "requested for next amendment: Off") || !strings.Contains(m.taskPolicyDisplay(), "May before every action") {
+		t.Fatalf("gated admission was mislabeled:\n%s\n%s", report, m.taskPolicyDisplay())
+	}
+	updated, _ = m.commandApproval(nil)
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "bound every-action") || !strings.Contains(m.notice, "next amendment off") {
+		t.Fatalf("approval query mislabeled gated admission: %q", m.notice)
+	}
+}
+
+func TestAwaitingApprovalIsSeparateFromOutcomeAcceptanceAndHandsOffToMay(t *testing.T) {
+	m := New(Config{MayPath: "/suite/bin/may", TaskOptions: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction}})
+	armContractResultPresentation(m)
+	result := &plyexec.ContractResult{
+		Status: "awaiting_approval", ApprovalPolicy: plyexec.ApprovalEveryAction,
+		ApprovalReceipt: &plyexec.ApprovalReceiptRef{Digest: strings.Repeat("a", 64), Action: `{"script":"publish"}` + "\n"},
+	}
+	updated, _ := m.Update(plyProcessEvent{Done: true, ExitCode: 75, ContractResult: result})
+	m = updated.(*Model)
+	if m.pendingApproval == nil || m.pendingContract != nil || !strings.Contains(contractResultCard(*result), "not executed") || !strings.Contains(m.defaultWorkHint(), "decide with May") {
+		t.Fatalf("pending=%#v review=%#v notice=%q card=%q", m.pendingApproval, m.pendingContract, m.notice, contractResultCard(*result))
+	}
+	updated, cmd := m.Update(key("a"))
+	m = updated.(*Model)
+	if cmd == nil || !strings.Contains(m.notice, "Bench cannot approve") {
+		t.Fatalf("cmd=%v notice=%q", cmd, m.notice)
+	}
+	updated, _ = m.commandAccept(nil)
+	m = updated.(*Model)
+	if !strings.Contains(m.notice, "Nothing is awaiting acceptance") {
+		t.Fatalf("/accept crossed action authority: %q", m.notice)
+	}
+}
+
+func TestApprovalDecisionPreservesPendingOnMayExitThree(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	m := New(Config{})
+	m.pendingApproval = &plyexec.ContractResult{Status: "awaiting_approval", ApprovalReceipt: &plyexec.ApprovalReceiptRef{Digest: digest}}
+	err := exec.Command("sh", "-c", "exit 3").Run()
+	updated, _ := m.updateApprovalDecision(approvalReturnedMsg{digest: digest, err: err})
+	m = updated.(*Model)
+	if m.pendingApproval == nil || !strings.Contains(m.notice, "state is retained") {
+		t.Fatalf("pending=%#v notice=%q", m.pendingApproval, m.notice)
+	}
+}
+
+func TestPendingApprovalCannotAppendAskTurnsBeforeDurableResolution(t *testing.T) {
+	m := New(Config{})
+	m.pendingApproval = &plyexec.ContractResult{Status: "awaiting_approval", ApprovalReceipt: &plyexec.ApprovalReceiptRef{Digest: strings.Repeat("a", 64)}}
+	m.composer.SetValue("/ask")
+	updated, _ := m.Update(key("enter"))
+	m = updated.(*Model)
+	if !m.taskMode || !strings.Contains(m.notice, "Approval pending") {
+		t.Fatalf("ask mode crossed pending result: task=%v notice=%q", m.taskMode, m.notice)
+	}
+	updated, _ = m.commandTools([]string{"off"})
+	m = updated.(*Model)
+	if !m.taskMode || m.pendingApproval == nil || !strings.Contains(m.notice, "Approval pending") {
+		t.Fatalf("tools off crossed pending result: task=%v pending=%#v notice=%q", m.taskMode, m.pendingApproval, m.notice)
+	}
+}
+
+func TestApprovalDecisionRefusesChangedMayExecutable(t *testing.T) {
+	dir := t.TempDir()
+	may := filepath.Join(dir, "may with spaces")
+	if err := os.WriteFile(may, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := plyexec.ExecutableSHA256(may)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{})
+	m.pendingApproval = &plyexec.ContractResult{Status: "awaiting_approval", ApprovalReceipt: &plyexec.ApprovalReceiptRef{
+		Digest: strings.Repeat("a", 64), MayPath: may, MaySHA256: digest,
+	}}
+	if err := os.WriteFile(may, []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	updated, cmd := m.decidePendingApproval()
+	m = updated.(*Model)
+	if cmd != nil || m.pendingApproval == nil || !strings.Contains(m.notice, "changed since") {
+		t.Fatalf("cmd=%v pending=%#v notice=%q", cmd, m.pendingApproval, m.notice)
 	}
 }
 
@@ -860,7 +1044,7 @@ func TestContractOpenQuestionPausesBeforeWork(t *testing.T) {
 		t.Fatalf("notice=%q", m.notice)
 	}
 	decision := m.renderTranscript(76)
-	for _, want := range []string{"DECISION NEEDED", "paused before workspace tools ran", "Which printer?", "Approval required: Send an external print job", "reply normally"} {
+	for _, want := range []string{"DECISION NEEDED", "paused before workspace tools ran", "Which printer?", "Permission decision;", "gate is configured", "reply normally"} {
 		if !strings.Contains(decision, want) {
 			t.Errorf("decision transcript missing %q:\n%s", want, decision)
 		}
@@ -1190,12 +1374,13 @@ func TestContractCommandControlsOnlyFutureOutcomeCompilation(t *testing.T) {
 func TestAutonomyModeMakesQuickAndReviewExplicit(t *testing.T) {
 	m := New(Config{TaskOptions: plyexec.TaskOptions{IntentContract: true}})
 	m.pendingContract = &plyexec.ContractResult{}
+	m.pendingApproval = &plyexec.ContractResult{Status: "awaiting_approval"}
 	m.taskOptions.Force = true
 	m.continueContract = true
 	m.composer.SetValue("/mode quick")
 	updated, _ := m.Update(key("enter"))
 	m = updated.(*Model)
-	if m.autonomyMode() != autonomy.Quick || m.taskOptions.IntentContract || m.pendingContract != nil || m.taskOptions.Force || m.continueContract || !strings.Contains(m.notice, "start Ply") {
+	if m.autonomyMode() != autonomy.Quick || m.taskOptions.IntentContract || m.pendingContract != nil || m.pendingApproval != nil || m.taskOptions.Force || m.continueContract || !strings.Contains(m.notice, "start Ply") {
 		t.Fatalf("mode=%q contract=%v notice=%q", m.autonomyMode(), m.taskOptions.IntentContract, m.notice)
 	}
 	m.composer.SetValue("/mode review")

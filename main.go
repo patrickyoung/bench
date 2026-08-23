@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	version      = "0.6.3"
+	version      = "0.6.4"
 	maxPipeInput = 16 << 20
 )
 
@@ -135,13 +135,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	paths := filterPaths()
 	askRunner := askexec.Runner{Path: paths.ask, BriefPath: paths.brief}
-	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
-	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner}
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may}
+	taskRunner := contractexec.Runner{Ask: askRunner, Ply: plyRunner, MayPath: paths.may}
 	m := ui.New(ui.Config{
-		Runner:    askRunner,
-		Recorder:  askRunner,
-		Task:      taskRunner,
-		Contracts: taskRunner,
+		Runner:          askRunner,
+		ApprovalResults: askRunner,
+		Recorder:        askRunner,
+		Task:            taskRunner,
+		Contracts:       taskRunner,
 		Draft: draftexec.Runner{
 			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
 			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
@@ -162,6 +163,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Toolbox:       o.toolbox.value,
 		ActiveSkills:  append([]string(nil), o.skills...),
 		TaskOptions:   o.task.options(),
+		MayPath:       paths.may,
 	})
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		return report(stderr, err)
@@ -247,8 +249,8 @@ func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.
 		})
 		return streamEvents(ctx, events, stdout, stderr)
 	}
-	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
-	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may}
+	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner, MayPath: paths.may}
 	request := plyexec.TaskRequest{
 		Dir: work, Goal: message, Input: input, Session: file, SubagentsDir: session.SubagentsDir(benchDir(work), file), Skills: skills,
 		Toolbox: toolbox.value, Model: strings.TrimSpace(model), Options: task.options(),
@@ -398,13 +400,13 @@ func benchDir(workspace string) string {
 	return filepath.Join(workspace, ".bench")
 }
 
-type paths struct{ ask, ply, brief, draft, hone string }
+type paths struct{ ask, ply, brief, draft, hone, may string }
 
 func filterPaths() paths {
 	return paths{
 		ask: toolPath("BENCH_ASK", "ask"), ply: toolPath("BENCH_PLY", "ply"),
 		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
-		hone: toolPath("BENCH_HONE", "hone"),
+		hone: toolPath("BENCH_HONE", "hone"), may: toolPath("BENCH_MAY", "may"),
 	}
 }
 
@@ -493,6 +495,7 @@ type taskFlags struct {
 	mode        string
 	check       string
 	checkAll    bool
+	approval    string
 	effort      string
 	cycles      trackedInt
 	turns       trackedInt
@@ -510,6 +513,7 @@ func addTaskFlags(fs *flag.FlagSet, task *taskFlags) {
 	fs.StringVar(&task.mode, "mode", "", "autonomy: quick, review, or loop (overrides -contract)")
 	fs.StringVar(&task.check, "check", "", "literal verifier for the next outcome")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
+	fs.StringVar(&task.approval, "approval", plyexec.ApprovalOff, "execution approval: off or every-action")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort passed literally through Ply to Ask")
 	fs.Var(&task.cycles, "cycles", "rejected candidates before Ply stops (0 = unbounded)")
 	fs.Var(&task.turns, "turns", "model turns before Ply stops (0 = unbounded)")
@@ -524,6 +528,7 @@ func (f taskFlags) options() plyexec.TaskOptions {
 		Loop:             f.mustAutonomy() == autonomy.Loop,
 		Check:            f.check,
 		CheckAllCriteria: f.checkAll,
+		ApprovalPolicy:   f.approval,
 		Effort:           f.effort,
 		Cycles:           f.cycles.value, HasCycles: f.cycles.set,
 		Turns: f.turns.value, HasTurns: f.turns.set,
@@ -552,6 +557,16 @@ func validateTaskPolicy(f taskFlags) error {
 	mode, err := f.autonomy()
 	if err != nil {
 		return err
+	}
+	policy := strings.TrimSpace(f.approval)
+	if policy == "" {
+		policy = plyexec.ApprovalOff
+	}
+	if policy != plyexec.ApprovalOff && policy != plyexec.ApprovalEveryAction {
+		return fmt.Errorf("approval must be %s or %s", plyexec.ApprovalOff, plyexec.ApprovalEveryAction)
+	}
+	if policy == plyexec.ApprovalEveryAction && mode == autonomy.Quick {
+		return errors.New("every-action approval needs review or loop autonomy")
 	}
 	if !f.checkAll {
 		if mode == autonomy.Loop && strings.TrimSpace(f.check) == "" {
@@ -648,6 +663,7 @@ Interactive flags:
   -contract           compatibility alias for review/quick
   -check command      literal verifier for the next open work outcome
   -check-all          admit that check as judge of every contract criterion
+  -approval MODE      off, or every-action through exact May decisions
   -effort level       reasoning effort passed literally through Ply to Ask
   -cycles n           rejected candidates before Ply stops (0 = unbounded)
   -turns n            model turns before Ply stops (0 = unbounded)
@@ -663,7 +679,7 @@ Ask naturally for up to three independent read-heavy subagent jobs. Bench
 keeps their Ply sessions and evidence under $BENCH_DIR/subagents for inspection.
 
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
-BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · NO_COLOR
+BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · NO_COLOR
 
 When stdin or stdout is not a terminal, plain bench behaves like bench run:
   git diff | bench -m provider/model 'review this patch'`)
@@ -671,7 +687,7 @@ When stdin or stdout is not a terminal, plain bench behaves like bench run:
 
 func printHeadlessUsage(w io.Writer, mode string) {
 	if mode == "run" {
-		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
+		fmt.Fprintln(w, "usage: bench run [-m model] [-effort level] [-C dir] [-t tools | -sh] [-s skill] [-f session] [-mode quick|review|loop] [-check command [-check-all]] [-approval off|every-action] [-cycles n] [-turns n] [-timeout duration] [-compact [-compactions n]] goal")
 		fmt.Fprintln(w, "review drafts and exits 2; quick starts immediately; loop drafts a checked contract, then accept/run -mode loop pursues it")
 		return
 	}

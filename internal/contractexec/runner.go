@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +20,8 @@ type Runner struct {
 		askexec.Client
 		askexec.AdmissionReader
 	}
-	Ply plyexec.Worker
+	Ply     plyexec.Worker
+	MayPath string
 }
 
 func (r Runner) Work(ctx context.Context, req plyexec.TaskRequest) <-chan plyexec.Event {
@@ -131,6 +133,9 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	emit(ctx, events, plyexec.Event{Contract: renderWithSkills(contract, digest, req.Skills), ContractDigest: digest})
 	if len(contract.OpenQuestions) > 0 || len(contract.Approvals) > 0 {
 		result := pendingResult(contract, "sha256:"+digest, req.Options.Check != "", "needs_decision")
+		if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction {
+			result.ApprovalPolicy = plyexec.ApprovalEveryAction
+		}
 		result = withPursuit(result, req.Options)
 		setStopReason(&result, req.Options, "needs_decision")
 		if err := r.recordResult(ctx, req.Session, result); err != nil {
@@ -152,6 +157,28 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	work := req
 	work.Options.ContractID = "sha256:" + digest
 	work.Goal = workGoal(req.Goal, canonical, digest, req.Options.Check, req.Options.CheckAllCriteria)
+	mayPath := ""
+	maySHA256 := ""
+	receiptDirectory := req.Dir
+	if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction {
+		var err error
+		receiptDirectory, err = canonicalApprovalDirectory(req.Dir)
+		if err != nil {
+			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
+			return
+		}
+	}
+	if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction {
+		var err error
+		mayPath, err = plyexec.ResolveMayPath(r.MayPath)
+		if err == nil {
+			maySHA256, err = plyexec.ExecutableSHA256(mayPath)
+		}
+		if err != nil {
+			emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
+			return
+		}
+	}
 	var terminal *plyexec.Event
 	var heldStdout []plyexec.Event
 	for event := range r.Ply.Work(ctx, work) {
@@ -182,12 +209,32 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 	}
 	var receipt *plyexec.VerifierReceiptRef
 	var receiptErr error
+	var approvalReceipt *plyexec.ApprovalReceiptRef
+	var approvalErr error
+	if req.Options.ApprovalPolicy == plyexec.ApprovalEveryAction && !errors.Is(terminal.Err, context.Canceled) && (terminal.ExitCode == 75 || terminal.ExitCode == 3) {
+		reader, ok := r.Ask.(askexec.ApprovalReader)
+		if !ok {
+			approvalErr = errors.New("Ask adapter cannot read approval receipts")
+		} else {
+			got, err := reader.TerminalApproval(ctx, req.Session, contractID, plyexec.MayJob(contractID), receiptDirectory, mayPath, maySHA256)
+			if err != nil {
+				approvalErr = err
+			} else if map[int]string{75: "parked", 3: "declined"}[terminal.ExitCode] != got.Verdict {
+				approvalErr = errors.New("approval receipt verdict does not match Ply exit status")
+			} else {
+				approvalReceipt = &plyexec.ApprovalReceiptRef{
+					Seq: got.Seq, BodySHA256: got.BodySHA256, SealSHA256: got.SealSHA256,
+					Job: got.Job, Digest: got.Digest, Verdict: got.Verdict, Action: got.Action, ActionSHA256: got.ActionSHA256, MayPath: mayPath, MaySHA256: got.MaySHA256,
+				}
+			}
+		}
+	}
 	if req.Options.CheckAllCriteria && terminal.Err == nil && terminal.ExitCode == 0 {
 		reader, ok := r.Ask.(askexec.VerifierReader)
 		if !ok {
 			receiptErr = errors.New("Ask adapter cannot read verifier receipts")
 		} else {
-			got, err := reader.AcceptedVerifier(ctx, req.Session, judgeMapSHA, contractID, req.Options.Check, verifierCandidateSHA(candidate.String()), req.Dir)
+			got, err := reader.AcceptedVerifier(ctx, req.Session, judgeMapSHA, contractID, req.Options.Check, verifierCandidateSHA(candidate.String()), receiptDirectory)
 			if err != nil {
 				receiptErr = err
 			} else {
@@ -199,9 +246,15 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		}
 	}
 	result := aggregate(contract, "sha256:"+digest, req.Options.Check != "", admitted, judgeMapSHA, receipt, req.Options, *terminal)
+	result.ApprovalReceipt = approvalReceipt
 	if receiptErr != nil {
 		result.Status = "failed"
 		setStopReason(&result, req.Options, "verifier_receipt_unverified")
+	}
+	if approvalErr != nil {
+		result.Status = "failed"
+		result.ApprovalReceipt = nil
+		result.StopReason = "approval_receipt_unverified"
 	}
 	// The original request session is controller-owned input and already holds
 	// the compiled contract. Ply's session-out path is worker-visible control
@@ -210,7 +263,7 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		emitFinal(ctx, events, plyexec.Event{Done: true, ExitCode: 1, Err: err, Session: req.Session})
 		return
 	}
-	if receiptErr == nil {
+	if receiptErr == nil && approvalErr == nil && result.Status != "awaiting_approval" && result.Status != "approval_declined" {
 		for _, event := range heldStdout {
 			emit(ctx, events, event)
 		}
@@ -232,12 +285,26 @@ func (r Runner) runAccepted(ctx context.Context, req plyexec.TaskRequest, contra
 		terminal.Stream = plyexec.Stderr
 		terminal.Text = resultSummary(result)
 	case "failed":
-		if receiptErr != nil {
+		if receiptErr != nil || approvalErr != nil {
 			terminal.ExitCode = 1
-			terminal.Err = fmt.Errorf("verify accepted Ply receipt: %w", receiptErr)
+			if approvalErr != nil {
+				terminal.Err = fmt.Errorf("verify Ply approval receipt: %w", approvalErr)
+			} else {
+				terminal.Err = fmt.Errorf("verify accepted Ply receipt: %w", receiptErr)
+			}
 			terminal.Stream = plyexec.Stderr
 			terminal.Text = ""
 		}
+	case "awaiting_approval":
+		terminal.ExitCode = 75
+		terminal.Err = nil
+		terminal.Stream = plyexec.Stderr
+		terminal.Text = fmt.Sprintf("Approval required · action %s was not executed\nMay executable: %q\nDecision argv: decide %s\n", result.ApprovalReceipt.Digest, result.ApprovalReceipt.MayPath, result.ApprovalReceipt.Digest)
+	case "approval_declined":
+		terminal.ExitCode = 3
+		terminal.Err = nil
+		terminal.Stream = plyexec.Stderr
+		terminal.Text = fmt.Sprintf("Approval declined · action %s was not executed\n", result.ApprovalReceipt.Digest)
 	}
 	emitFinal(ctx, events, *terminal)
 }
@@ -265,7 +332,9 @@ func (r Runner) recordResult(ctx context.Context, session string, result plyexec
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	kind := "bench.contract-result/v1"
-	if result.Pursuit != "" {
+	if result.ApprovalPolicy != "" {
+		kind = "bench.contract-result/v4"
+	} else if result.Pursuit != "" {
 		kind = "bench.contract-result/v3"
 	} else if result.JudgeMapSHA256 != "" {
 		kind = "bench.contract-result/v2"
@@ -327,6 +396,9 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 	result.WorkerExitCode = terminal.ExitCode
 	result.JudgeMapSHA256 = judgeMapSHA
 	result.VerifierReceipt = receipt
+	if options.ApprovalPolicy == plyexec.ApprovalEveryAction {
+		result.ApprovalPolicy = plyexec.ApprovalEveryAction
+	}
 	checkAccepted := checkConfigured && terminal.Err == nil && terminal.ExitCode == 0
 	if judgeMapSHA != "" {
 		checkAccepted = checkAccepted && receipt != nil
@@ -352,6 +424,12 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 		result.Outstanding = pending
 	}
 	switch {
+	case options.ApprovalPolicy == plyexec.ApprovalEveryAction && !errors.Is(terminal.Err, context.Canceled) && terminal.ExitCode == 75:
+		result.Status = "awaiting_approval"
+		result.StopReason = "approval_required"
+	case options.ApprovalPolicy == plyexec.ApprovalEveryAction && !errors.Is(terminal.Err, context.Canceled) && terminal.ExitCode == 3:
+		result.Status = "approval_declined"
+		result.StopReason = "approval_declined"
 	case errors.Is(terminal.Err, context.Canceled):
 		result.Status = "interrupted"
 		setStopReason(&result, options, "interrupted")
@@ -369,6 +447,18 @@ func aggregate(contract Contract, contractID string, checkConfigured bool, admit
 		setStopReason(&result, options, "ply_failed")
 	}
 	return result
+}
+
+func canonicalApprovalDirectory(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve approval workspace: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve approval workspace: %w", err)
+	}
+	return resolved, nil
 }
 
 func setStopReason(result *plyexec.ContractResult, options plyexec.TaskOptions, reason string) {
@@ -455,7 +545,15 @@ func compilerMessage(req plyexec.TaskRequest) string {
 			verifier = "The operator explicitly admits this exact verifier as judge of every contract criterion. Still classify evidence honestly for explanation; the operator policy, never your labels, supplies authority:\n" + req.Options.Check
 		}
 	}
-	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nVERIFIER BOUNDARY\n" + verifier
+	approval := approvalCompilerBoundary(req.Options.ApprovalPolicy)
+	return "Compile this user intent into an outcome contract.\n\nUSER INTENT\n" + req.Goal + "\n\nACTION APPROVAL POLICY\n" + approval + "\n\nVERIFIER BOUNDARY\n" + verifier
+}
+
+func approvalCompilerBoundary(policy string) string {
+	if policy == plyexec.ApprovalEveryAction {
+		return "every-action — contract approvals authorize preparation only; every exact model action still requires a separate May decision before execution"
+	}
+	return "off — an explicit answer to a contract approval authorizes the described consequential scope; there is no execution-time May gate"
 }
 
 func workGoal(intent, contract, digest, check string, checkAll bool) string {

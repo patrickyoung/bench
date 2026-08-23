@@ -62,6 +62,16 @@ verified; the direct compatibility seam retains Ply's existing compaction.
 Consequential open questions and ungranted approvals stop before work; the
 next contract request must bind the original intent, exact pending items, and
 the user's answer rather than treating the answer as a replacement goal.
+With approval policy off, those entries are the person's permission for the
+described consequential scope. With every-action, they authorize preparation
+only; exact execution still requires a separate May grant.
+The optional operator-owned `every-action` policy must be visible in and bound
+to the editable draft/admission, is forbidden in Quick, and may be removed only
+by amendment and re-admission. It composes exact `may request` results through
+Ply's pre-execution seam: parked/declined actions execute nothing and stop;
+Bench verifies the sealed `ply.approval/v1` terminal receipt and uses result
+v4. Bench must never interpret model/skill prose as approval or implement its
+own yes path; the TUI yields to literal `may decide DIGEST`.
 Bench must not reconstruct Ply's turn protocol: the pinned Ply consumes one
 action, returns its evidence, and decides when to ask again. `/ask` uses direct
 `ask` for a no-tools turn in that same session. The public `bench contract`

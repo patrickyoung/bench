@@ -20,6 +20,7 @@ type AdmissionExpectation struct {
 	CompilerEvidenceSHA256 string
 	CheckSHA256            string
 	CheckAll               bool
+	ApprovalPolicy         string
 	Workspace              string
 	Toolbox                string
 	Skills                 []string
@@ -44,6 +45,7 @@ type admissionBody struct {
 	EvidenceSHA     string          `json:"compiler_evidence_sha256"`
 	CheckSHA        string          `json:"check_sha256"`
 	CheckAll        bool            `json:"check_all"`
+	ApprovalPolicy  string          `json:"approval_policy,omitempty"`
 	Workspace       string          `json:"workspace"`
 	Toolbox         string          `json:"toolbox,omitempty"`
 	Skills          []string        `json:"skills"`
@@ -80,6 +82,7 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 		return err
 	}
 	index := -1
+	kind := ""
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Type != "note" {
 			continue
@@ -90,12 +93,17 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 		if err := json.Unmarshal(events[i].Data, &probe); err != nil {
 			return fmt.Errorf("decode latest contract admission candidate: %w", err)
 		}
-		if probe.Kind == "bench.contract/v3" {
+		if probe.Kind == "bench.contract/v3" || probe.Kind == "bench.contract/v4" {
 			index = i
+			kind = probe.Kind
 			break
 		}
 	}
-	if index < 0 || !sealedNote(events, index, "bench.contract/v3") {
+	wantKind := "bench.contract/v3"
+	if strings.TrimSpace(want.ApprovalPolicy) == "every-action" {
+		wantKind = "bench.contract/v4"
+	}
+	if index < 0 || kind != wantKind || !sealedNote(events, index, wantKind) {
 		return fmt.Errorf("latest contract admission is absent or not sealed")
 	}
 	var note replayNote
@@ -115,6 +123,7 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 		body.ContractID != want.ContractID || body.ContractSHA != want.ContractSHA256 || body.ContractBodySHA != want.ContractBodySHA256 || body.ContractBodySHA != "sha256:"+hex.EncodeToString(contractDigest[:]) ||
 		body.IntentSHA != want.IntentSHA256 || body.EvidenceSHA != want.CompilerEvidenceSHA256 || body.CheckSHA != want.CheckSHA256 ||
 		body.CheckAll != want.CheckAll || body.Workspace != want.Workspace || body.Toolbox != want.Toolbox || !equalStrings(body.Skills, want.Skills) ||
+		normalizeApproval(body.ApprovalPolicy) != normalizeApproval(want.ApprovalPolicy) ||
 		body.OutcomeID != want.OutcomeID || body.RevisionID != want.RevisionID || body.DraftSHA != want.DraftSHA256 ||
 		body.Generation != want.Generation || body.Parent != want.ParentRevisionID || recomputeAdmissionID(body) != body.ContractID {
 		return fmt.Errorf("latest sealed contract admission does not match the durable revision and policy")
@@ -123,6 +132,29 @@ func selectAdmission(data []byte, want AdmissionExpectation) error {
 }
 
 func recomputeAdmissionID(body admissionBody) string {
+	if normalizeApproval(body.ApprovalPolicy) == "every-action" {
+		value, _ := json.Marshal(struct {
+			Version   int      `json:"version"`
+			Revision  string   `json:"revision_id"`
+			Draft     string   `json:"draft_sha256"`
+			Intent    string   `json:"intent_sha256"`
+			Evidence  string   `json:"compiler_evidence_sha256"`
+			Check     string   `json:"check_sha256"`
+			CheckAll  bool     `json:"check_all"`
+			Approval  string   `json:"approval_policy"`
+			Workspace string   `json:"workspace"`
+			Toolbox   string   `json:"toolbox,omitempty"`
+			Skills    []string `json:"skills"`
+			Method    string   `json:"method"`
+		}{
+			Version: 2, Revision: body.RevisionID, Draft: body.DraftSHA, Intent: body.IntentSHA,
+			Evidence: body.EvidenceSHA, Check: body.CheckSHA, CheckAll: body.CheckAll,
+			Approval: "every-action", Workspace: body.Workspace, Toolbox: body.Toolbox,
+			Skills: append([]string{}, body.Skills...), Method: body.AdmittedBy,
+		})
+		digest := sha256.Sum256(value)
+		return "sha256:" + hex.EncodeToString(digest[:])
+	}
 	value, _ := json.Marshal(struct {
 		Revision  string   `json:"revision_id"`
 		Draft     string   `json:"draft_sha256"`
@@ -141,6 +173,13 @@ func recomputeAdmissionID(body admissionBody) string {
 	})
 	digest := sha256.Sum256(value)
 	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func normalizeApproval(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "off"
+	}
+	return strings.TrimSpace(value)
 }
 
 func equalStrings(a, b []string) bool {

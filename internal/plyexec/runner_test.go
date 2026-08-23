@@ -291,6 +291,41 @@ func TestWorkExpandsLoopIntoOneBoundedPlyInvocation(t *testing.T) {
 	}
 }
 
+func TestWorkPassesAdmittedEveryActionGateAsLiteralUnixInputs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-ply")
+	if err := os.WriteFile(fixture, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > args\nprintf '%s' \"$MAY\" > may-env\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	may := filepath.Join(dir, "may")
+	if err := os.WriteFile(may, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contractID := "sha256:" + strings.Repeat("a", 64)
+	for range (Runner{Path: fixture, MayPath: may}).Work(context.Background(), TaskRequest{
+		Dir: dir, Goal: "make it", Session: filepath.Join(dir, "task.jsonl"),
+		Options: TaskOptions{IntentContract: true, ContractID: contractID, ApprovalPolicy: ApprovalEveryAction},
+	}) {
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-may-job\n"+MayJob(contractID)+"\n") {
+		t.Fatalf("args=%q", args)
+	}
+	env, err := os.ReadFile(filepath.Join(dir, "may-env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(env) != may {
+		t.Fatalf("MAY=%q want %q", env, may)
+	}
+}
+
 func TestWorkHonorsExplicitLoopBudgets(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test fixture is a POSIX program")
@@ -383,6 +418,8 @@ func TestWorkRejectsInvalidPolicyBeforeStartingPly(t *testing.T) {
 		{Loop: true, Check: "true"},
 		{IntentContract: true, Loop: true},
 		{IntentContract: true, Loop: true, Check: "true", Turns: 0, HasTurns: true},
+		{ApprovalPolicy: ApprovalEveryAction},
+		{IntentContract: true, ApprovalPolicy: "sometimes"},
 	} {
 		var done Event
 		for event := range (Runner{Path: fixture}).Work(context.Background(), TaskRequest{

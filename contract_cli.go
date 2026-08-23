@@ -68,6 +68,7 @@ func runContractDraft(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	task.contract = true
 	fs.StringVar(&task.check, "check", "", "literal verifier bound to later work")
 	fs.BoolVar(&task.checkAll, "check-all", false, "operator admits the configured check as judge of every contract criterion")
+	fs.StringVar(&task.approval, "approval", plyexec.ApprovalOff, "execution approval: off or every-action")
 	fs.StringVar(&task.effort, "effort", "", "reasoning effort for the Ask contract compiler")
 	if err := fs.Parse(args); err != nil {
 		return flagCode(err)
@@ -116,6 +117,7 @@ func runContractRevise(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	fs.SetOutput(stderr)
 	var model, workspace, file, effort string
 	var toolbox trackedString
+	var approval trackedString
 	var shell bool
 	fs.StringVar(&model, "m", os.Getenv("ASK_MODEL"), "provider/model")
 	fs.StringVar(&workspace, "C", "", "workspace directory")
@@ -123,6 +125,7 @@ func runContractRevise(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	fs.StringVar(&effort, "effort", "", "reasoning effort")
 	fs.Var(&toolbox, "t", "replace the draft's Ply toolbox binding")
 	fs.BoolVar(&shell, "sh", false, "replace the toolbox binding with full-shell mode")
+	fs.Var(&approval, "approval", "replace execution approval: off or every-action")
 	if err := fs.Parse(args); err != nil {
 		return flagCode(err)
 	}
@@ -160,7 +163,10 @@ func runContractRevise(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		toolbox.value = ""
 	}
 	options := plyexec.TaskOptions{
-		IntentContract: true, Check: current.Check, CheckAllCriteria: current.CheckAll, Effort: effort,
+		IntentContract: true, Check: current.Check, CheckAllCriteria: current.CheckAll, ApprovalPolicy: current.ApprovalPolicy, Effort: effort,
+	}
+	if approval.set {
+		options.ApprovalPolicy = approval.value
 	}
 	paths := filterPaths()
 	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}}
@@ -357,9 +363,10 @@ func runContractAccept(args []string, stdout, stderr io.Writer) int {
 	options.IntentContract = true
 	options.Check = draft.Check
 	options.CheckAllCriteria = draft.CheckAll
+	options.ApprovalPolicy = draft.ApprovalPolicy
 	paths := filterPaths()
-	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief}
-	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner}
+	plyRunner := plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may}
+	runner := contractexec.Runner{Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief}, Ply: plyRunner, MayPath: paths.may}
 	req := plyexec.TaskRequest{
 		Dir: work, Goal: draft.Intent, Session: resolvedFile,
 		SubagentsDir: session.SubagentsDir(benchDir(work), resolvedFile), Skills: append([]string{}, draft.Skills...),
@@ -432,10 +439,12 @@ func runContractRun(args []string, stdout, stderr io.Writer) int {
 	options.IntentContract = true
 	options.Check = draft.Check
 	options.CheckAllCriteria = draft.CheckAll
+	options.ApprovalPolicy = draft.ApprovalPolicy
 	paths := filterPaths()
 	runner := contractexec.Runner{
-		Ask: askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
-		Ply: plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief},
+		Ask:     askexec.Runner{Path: paths.ask, BriefPath: paths.brief},
+		Ply:     plyexec.Runner{Path: paths.ply, AskPath: paths.ask, BriefPath: paths.brief, MayPath: paths.may},
+		MayPath: paths.may,
 	}
 	req := plyexec.TaskRequest{
 		Dir: work, Goal: draft.Intent, Session: resolvedFile,
@@ -557,4 +566,5 @@ The printed draft.json is ordinary editable JSON; import validates and seals
 changes made by an external editor. Accept checks the exact
 displayed digest, seals the immutable admission, and only then starts Ply.`)
 	fmt.Fprintln(w, "Accept or run with -mode loop to keep one bounded Ply invocation pursuing the admitted check.")
+	fmt.Fprintln(w, "Draft or revise with -approval every-action to bind an exact May decision before every model-authored shell action.")
 }

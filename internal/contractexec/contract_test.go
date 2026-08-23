@@ -3,6 +3,7 @@ package contractexec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,23 +113,44 @@ func TestEvidenceIsReadOnlyBoundedAndExcludesBenchState(t *testing.T) {
 }
 
 type fakeAsk struct {
-	req          askexec.Request
-	record       askexec.RecordRequest
-	recordLog    []askexec.RecordRequest
-	answer       string
-	answers      []string
-	reqLog       []askexec.Request
-	exit         int
-	err          error
-	recordErr    error
-	recordErrAt  int
-	calls        int
-	records      int
-	receipt      askexec.VerifierReceipt
-	receiptErr   error
-	receiptCalls int
-	admissionErr error
-	admissions   int
+	req           askexec.Request
+	record        askexec.RecordRequest
+	recordLog     []askexec.RecordRequest
+	answer        string
+	answers       []string
+	reqLog        []askexec.Request
+	exit          int
+	err           error
+	recordErr     error
+	recordErrAt   int
+	calls         int
+	records       int
+	receipt       askexec.VerifierReceipt
+	receiptErr    error
+	receiptCalls  int
+	approval      askexec.ApprovalReceipt
+	approvalErr   error
+	approvalCalls int
+	approvalDir   string
+	approvalMay   string
+	approvalSHA   string
+	admissionErr  error
+	admissions    int
+}
+
+func (f *fakeAsk) TerminalApproval(_ context.Context, _, contractID, job, directory, mayPath, maySHA256 string) (askexec.ApprovalReceipt, error) {
+	f.approvalCalls++
+	f.approvalDir, f.approvalMay, f.approvalSHA = directory, mayPath, maySHA256
+	if f.approvalErr != nil {
+		return askexec.ApprovalReceipt{}, f.approvalErr
+	}
+	if f.approval.BodySHA256 != "" {
+		return f.approval, nil
+	}
+	return askexec.ApprovalReceipt{
+		Seq: 9, BodySHA256: "sha256:approval", SealSHA256: "sha256:seal", ContractID: contractID,
+		Job: job, Digest: strings.Repeat("a", 64), Verdict: "parked", Action: "{}\n", ActionSHA256: "sha256:action", MaySHA256: maySHA256,
+	}, nil
 }
 
 func (f *fakeAsk) AdmittedContract(_ context.Context, _ string, _ askexec.AdmissionExpectation) error {
@@ -455,6 +477,169 @@ func TestLoopUsesResultV3WithoutChangingReviewResultSchemas(t *testing.T) {
 				t.Fatalf("loop v3 did not preserve receipt-backed completion: %#v", terminal)
 			}
 		})
+	}
+}
+
+func TestEveryActionTerminalApprovalRequiresReceiptAndUsesResultV4(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, verdict, status string
+		exit                  int
+	}{
+		{name: "parked", verdict: "parked", status: "awaiting_approval", exit: 75},
+		{name: "declined", verdict: "declined", status: "approval_declined", exit: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			ask := &fakeAsk{approval: askexec.ApprovalReceipt{
+				Seq: 9, BodySHA256: "sha256:approval", SealSHA256: "sha256:seal",
+				ContractID: "sha256:contract", Job: plyexec.MayJob("sha256:contract"),
+				Digest: strings.Repeat("a", 64), Verdict: test.verdict, Action: "{}\n", ActionSHA256: "sha256:action",
+			}}
+			ply := &fakePly{events: []plyexec.Event{
+				{Stream: plyexec.Stdout, Text: "must stay held"},
+				{Done: true, ExitCode: test.exit, Err: fmt.Errorf("exit status %d", test.exit)},
+			}}
+			req := plyexec.TaskRequest{
+				Dir: workspace, Goal: "make it", Session: "/sessions/run.jsonl",
+				Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction},
+			}
+			events := make(chan plyexec.Event, 8)
+			go func() {
+				(Runner{Ask: ask, Ply: ply, MayPath: "/usr/bin/true"}).runAccepted(context.Background(), req, contract, canonical, digest, "sha256:contract", events)
+				close(events)
+			}()
+			var terminal plyexec.Event
+			for event := range events {
+				if !event.Done && event.Stream == plyexec.Stdout {
+					t.Fatal("approval terminal released worker stdout")
+				}
+				if event.Done {
+					terminal = event
+				}
+			}
+			if terminal.ExitCode != test.exit || terminal.ContractResult == nil || terminal.ContractResult.Status != test.status || terminal.ContractResult.ApprovalReceipt == nil || ask.approvalCalls != 1 {
+				t.Fatalf("terminal=%#v approval calls=%d", terminal, ask.approvalCalls)
+			}
+			if got := ask.recordLog[len(ask.recordLog)-1]; got.Kind != "bench.contract-result/v4" || !strings.Contains(got.JSON, `"approval_policy":"every-action"`) {
+				t.Fatalf("result record=%#v", got)
+			}
+		})
+	}
+}
+
+func TestEveryActionTerminalApprovalFailsClosedWithoutMatchingReceipt(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := &fakeAsk{approvalErr: errors.New("receipt mismatch")}
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 75}}
+	req := plyexec.TaskRequest{
+		Dir: t.TempDir(), Goal: "make it", Session: "/sessions/run.jsonl",
+		Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction},
+	}
+	events := make(chan plyexec.Event, 8)
+	go func() {
+		(Runner{Ask: ask, Ply: ply, MayPath: "/usr/bin/true"}).runAccepted(context.Background(), req, contract, canonical, digest, "sha256:contract", events)
+		close(events)
+	}()
+	terminal := collectPly(t, events)
+	if terminal.ExitCode != 1 || terminal.ContractResult == nil || terminal.ContractResult.Status != "failed" || terminal.ContractResult.ApprovalReceipt != nil || !strings.Contains(terminal.Err.Error(), "approval receipt") {
+		t.Fatalf("terminal=%#v", terminal)
+	}
+}
+
+func TestEveryActionTerminalExitMustMatchApprovalVerdict(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		exit    int
+		verdict string
+	}{{exit: 75, verdict: "declined"}, {exit: 3, verdict: "parked"}} {
+		workspace := t.TempDir()
+		ask := &fakeAsk{approval: askexec.ApprovalReceipt{
+			Seq: 9, BodySHA256: "sha256:approval", SealSHA256: "sha256:seal", ContractID: "sha256:contract",
+			Job: plyexec.MayJob("sha256:contract"), Digest: strings.Repeat("a", 64), Verdict: test.verdict,
+			Action: "{}\n", ActionSHA256: "sha256:action",
+		}}
+		ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: test.exit, Err: fmt.Errorf("exit status %d", test.exit)}}
+		events := make(chan plyexec.Event, 8)
+		go func() {
+			(Runner{Ask: ask, Ply: ply, MayPath: "/usr/bin/true"}).runAccepted(context.Background(), plyexec.TaskRequest{
+				Dir: workspace, Goal: "make it", Session: "/sessions/run.jsonl",
+				Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction},
+			}, contract, canonical, digest, "sha256:contract", events)
+			close(events)
+		}()
+		terminal := collectPly(t, events)
+		if terminal.ExitCode != 1 || terminal.ContractResult == nil || terminal.ContractResult.Status != "failed" || !strings.Contains(terminal.Err.Error(), "verdict") {
+			t.Fatalf("exit=%d verdict=%s terminal=%#v", test.exit, test.verdict, terminal)
+		}
+	}
+}
+
+func TestApprovalReceiptUsesCanonicalWorkspaceAndControllerResolvedMay(t *testing.T) {
+	contract, canonical, digest, err := Parse(fixtureContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	wantTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "workspace-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	may := filepath.Join(t.TempDir(), "may with spaces")
+	if err := os.WriteFile(may, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relMay, err := filepath.Rel(wd, may)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := &fakeAsk{approval: askexec.ApprovalReceipt{
+		Seq: 9, BodySHA256: "sha256:approval", SealSHA256: "sha256:seal", ContractID: "sha256:contract",
+		Job: plyexec.MayJob("sha256:contract"), Digest: strings.Repeat("a", 64), Verdict: "parked", Action: "{}\n", ActionSHA256: "sha256:action",
+	}}
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 75, Err: errors.New("exit status 75")}}
+	events := make(chan plyexec.Event, 8)
+	go func() {
+		(Runner{Ask: ask, Ply: ply, MayPath: relMay}).runAccepted(context.Background(), plyexec.TaskRequest{
+			Dir: link, Goal: "make it", Session: "/sessions/run.jsonl",
+			Options: plyexec.TaskOptions{IntentContract: true, ApprovalPolicy: plyexec.ApprovalEveryAction},
+		}, contract, canonical, digest, "sha256:contract", events)
+		close(events)
+	}()
+	terminal := collectPly(t, events)
+	if terminal.ExitCode != 75 || ask.approvalDir != wantTarget || ask.approvalMay != may || !strings.HasPrefix(ask.approvalSHA, "sha256:") {
+		t.Fatalf("terminal=%#v dir=%q may=%q sha=%q", terminal, ask.approvalDir, ask.approvalMay, ask.approvalSHA)
+	}
+	if !strings.Contains(terminal.Text, fmt.Sprintf("May executable: %q", may)) || !strings.Contains(terminal.Text, "Decision argv: decide ") {
+		t.Fatalf("approval instructions are not literal-path safe: %q", terminal.Text)
+	}
+}
+
+func TestCompilerExplainsApprovalAuthorityForBothPolicies(t *testing.T) {
+	off := compilerMessage(plyexec.TaskRequest{Goal: "publish it"})
+	gated := compilerMessage(plyexec.TaskRequest{Goal: "publish it", Options: plyexec.TaskOptions{ApprovalPolicy: plyexec.ApprovalEveryAction}})
+	if !strings.Contains(off, "authorizes the described consequential scope") || !strings.Contains(off, "no execution-time May gate") {
+		t.Fatalf("off policy was ambiguous:\n%s", off)
+	}
+	if !strings.Contains(gated, "preparation only") || !strings.Contains(gated, "separate May decision") {
+		t.Fatalf("every-action policy was ambiguous:\n%s", gated)
 	}
 }
 

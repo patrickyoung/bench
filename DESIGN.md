@@ -113,9 +113,24 @@ Loop's descriptive pursuit, budget, and terminal-reason fields are sealed in
 unchanged.
 
 Consequential open questions and ungranted approvals stop before Ply receives
-full-shell authority. The user's answer is composed with the full original
+full-shell authority. With approval policy off, the user's answer authorizes
+the described consequential scope; there is no later execution gate. With
+every-action, it authorizes preparation only and May separately grants exact
+action bytes. The user's answer is composed with the full original
 intent and exact pending items into the replacement contract request; it never
 becomes a smaller stand-alone goal.
+
+The optional operator-owned `every-action` policy is stored in the editable
+draft and admitted revision. It composes the existing filters rather than
+inventing an action protocol in Bench: Ply sends the exact shell-action
+envelope to `may request`, verifies May's result and exit status, seals
+`ply.approval/v1`, and only a spent single-use grant permits the unchanged
+Runner action. Parked and declined actions stop before another model turn or
+the verifier. Bench verifies that terminal receipt through `ask replay
+-check -json` and seals `bench.contract-result/v4`. `/approval decide` yields
+the terminal to `may decide`; Bench itself cannot grant approval. Quick cannot
+use this durable policy. Cage remains a separate static confinement boundary;
+May and controller state must stay outside every worker-writable Cage root.
 
 On the direct compatibility path, compaction may move the work into a successor
 Ask session. For checked or compacting work, Bench passes Ply a private

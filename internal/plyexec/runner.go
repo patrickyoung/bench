@@ -3,9 +3,12 @@ package plyexec
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,6 +53,19 @@ type VerifierReceiptRef struct {
 	VerifierSHA256  string `json:"verifier_sha256"`
 }
 
+type ApprovalReceiptRef struct {
+	Seq          int    `json:"seq"`
+	BodySHA256   string `json:"body_sha256"`
+	SealSHA256   string `json:"seal_sha256"`
+	Job          string `json:"job"`
+	Digest       string `json:"digest"`
+	Verdict      string `json:"verdict"`
+	Action       string `json:"action"`
+	ActionSHA256 string `json:"action_sha256"`
+	MayPath      string `json:"may_path"`
+	MaySHA256    string `json:"may_sha256"`
+}
+
 type ContractResult struct {
 	ContractID            string              `json:"contract_id"`
 	Status                string              `json:"status"`
@@ -67,12 +83,16 @@ type ContractResult struct {
 	CycleBudget           string              `json:"cycle_budget,omitempty"`
 	TurnBudget            string              `json:"turn_budget,omitempty"`
 	StopReason            string              `json:"stop_reason,omitempty"`
+	ApprovalPolicy        string              `json:"approval_policy,omitempty"`
+	ApprovalReceipt       *ApprovalReceiptRef `json:"approval_receipt,omitempty"`
 }
 
 const (
-	Stdout           = filterexec.Stdout
-	Stderr           = filterexec.Stderr
-	DefaultLoopTurns = 50
+	Stdout              = filterexec.Stdout
+	Stderr              = filterexec.Stderr
+	DefaultLoopTurns    = 50
+	ApprovalOff         = "off"
+	ApprovalEveryAction = "every-action"
 )
 
 func LoopCycleBudget(options TaskOptions) string {
@@ -125,6 +145,7 @@ type TaskOptions struct {
 	ContractID       string
 	Check            string
 	CheckAllCriteria bool
+	ApprovalPolicy   string
 	Loop             bool
 	Force            bool
 	Effort           string
@@ -151,6 +172,7 @@ type Runner struct {
 	Path      string
 	AskPath   string
 	BriefPath string
+	MayPath   string
 }
 
 // Work lets ply compose Ask with ordinary programs in the workspace. The
@@ -164,6 +186,14 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	dir := strings.TrimSpace(req.Dir)
 	goal := strings.TrimSpace(req.Goal)
 	session := strings.TrimSpace(req.Session)
+	mayPath := ""
+	if approvalPolicy(req.Options) == ApprovalEveryAction {
+		var err error
+		mayPath, err = ResolveMayPath(r.MayPath)
+		if err != nil {
+			return failed(err.Error())
+		}
+	}
 	skills := make([]string, 0, len(req.Skills))
 	for _, skill := range req.Skills {
 		skill = strings.TrimSpace(skill)
@@ -196,6 +226,12 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	}
 	if contractID := strings.TrimSpace(req.Options.ContractID); contractID != "" {
 		args = append(args, "-contract-id", contractID)
+	}
+	if approvalPolicy(req.Options) == ApprovalEveryAction {
+		if strings.TrimSpace(req.Options.ContractID) == "" {
+			return failed("every-action approval needs an admitted contract id")
+		}
+		args = append(args, "-may-job", MayJob(req.Options.ContractID))
 	}
 	if effort := strings.TrimSpace(req.Options.Effort); effort != "" {
 		args = append(args, "-effort", effort)
@@ -257,6 +293,9 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	if brief := strings.TrimSpace(r.BriefPath); brief != "" {
 		env = append(env, "BRIEF="+brief)
 	}
+	if mayPath != "" {
+		env = append(env, "MAY="+mayPath)
+	}
 	// The parent has an explicit session, but nested Ply processes normally
 	// choose their own. Give those subagents a durable, parent-scoped home
 	// without changing either process's stdout/stderr contract.
@@ -280,6 +319,33 @@ func (r Runner) Work(ctx context.Context, req TaskRequest) <-chan Event {
 	return withSessionResult(ctx, processEvents, sessionOut, req.Options.Check != "")
 }
 
+// ResolveMayPath resolves May in the controller process before Ply changes
+// into the worker directory. Execution and receipt verification then share
+// one literal absolute argv value.
+func ResolveMayPath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		path = "may"
+	}
+	resolved, err := exec.LookPath(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve May: %w", err)
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve May: %w", err)
+	}
+	return abs, nil
+}
+
+func ExecutableSHA256(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("hash executable: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum[:]), nil
+}
+
 // Validate checks one task request without starting Ask, Ply, or touching the
 // workspace. Supervisors that add a phase before Ply use the same gate so a
 // bad work policy never spends a model turn.
@@ -301,6 +367,15 @@ func Validate(req TaskRequest) error {
 	}
 	if req.Options.CheckAllCriteria && !req.Options.IntentContract {
 		return errors.New("check-all needs an outcome contract")
+	}
+	switch approvalPolicy(req.Options) {
+	case ApprovalOff:
+	case ApprovalEveryAction:
+		if !req.Options.IntentContract {
+			return errors.New("every-action approval needs an outcome contract")
+		}
+	default:
+		return fmt.Errorf("approval policy %q is not supported", req.Options.ApprovalPolicy)
 	}
 	if req.Options.Loop && !req.Options.IntentContract {
 		return errors.New("loop autonomy needs an outcome contract")
@@ -335,6 +410,20 @@ func Validate(req TaskRequest) error {
 		return errors.New("contracted compaction needs verified session lineage; use -contract=false or omit -compact")
 	}
 	return nil
+}
+
+func approvalPolicy(options TaskOptions) string {
+	if strings.TrimSpace(options.ApprovalPolicy) == "" {
+		return ApprovalOff
+	}
+	return strings.TrimSpace(options.ApprovalPolicy)
+}
+
+// MayJob is one stable, finite namespace per admitted contract. May still
+// binds every individual action by its own exact digest.
+func MayJob(contractID string) string {
+	sum := sha256.Sum256([]byte("bench-may-job/v1\x00" + contractID))
+	return "bench-" + hex.EncodeToString(sum[:])
 }
 
 func withSessionResult(ctx context.Context, source <-chan filterexec.Event, resultPath string, checked bool) <-chan Event {

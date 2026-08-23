@@ -194,6 +194,8 @@ func TestContractAcceptAndRunRejectUnreviewedPolicyFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"accept", "-f", "/tmp/session.jsonl", "-expect", "sha256:draft", "-check", "true"},
 		{"run", "-f", "/tmp/session.jsonl", "-check-all"},
+		{"accept", "-f", "/tmp/session.jsonl", "-expect", "sha256:draft", "-approval", "off"},
+		{"run", "-f", "/tmp/session.jsonl", "-approval", "off"},
 	} {
 		var stdout, stderr strings.Builder
 		if code := runContractCLI(args, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "flag provided but not defined") {
@@ -534,10 +536,12 @@ func TestHeadlessPolicyFlagsRejectInvalidValuesBeforePlyStarts(t *testing.T) {
 		{"run", "-C", dir, "-check-all", "goal"},
 		{"run", "-C", dir, "-contract=false", "-check", "true", "-check-all", "goal"},
 		{"run", "-C", dir, "-mode", "quick", "-check", "true", "-check-all", "goal"},
+		{"run", "-C", dir, "-mode", "quick", "-approval", "every-action", "goal"},
+		{"run", "-C", dir, "-approval", "sometimes", "goal"},
 	} {
 		var stdout, stderr strings.Builder
 		code := run(args, strings.NewReader(""), &stdout, &stderr)
-		if code != 2 || !strings.Contains(stderr.String(), "check-all needs") {
+		if code != 2 || (!strings.Contains(stderr.String(), "check-all needs") && !strings.Contains(stderr.String(), "approval")) {
 			t.Fatalf("%v: code=%d stderr=%q", args, code, stderr.String())
 		}
 	}

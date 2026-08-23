@@ -10,7 +10,7 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.6.3" || len(m.Components) != 6 {
+	if m.Version != "0.6.4" || len(m.Components) != 7 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
 	}
 	data, err := JSON(m)

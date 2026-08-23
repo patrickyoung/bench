@@ -14,9 +14,12 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/patrickyoung/bench/internal/plyexec"
 )
 
 const draftFormat = "bench.contract-draft/v1"
+const draftFormatV2 = "bench.contract-draft/v2"
 const revisionFormat = "bench.contract-revision/v1"
 
 type DraftStore interface {
@@ -46,6 +49,7 @@ type draftFile struct {
 	Check                  string          `json:"check,omitempty"`
 	CheckSHA256            string          `json:"check_sha256"`
 	CheckAll               bool            `json:"check_all"`
+	ApprovalPolicy         string          `json:"approval_policy,omitempty"`
 	Skills                 []string        `json:"skills"`
 	Contract               json.RawMessage `json:"contract"`
 }
@@ -130,11 +134,15 @@ func (s FileStore) saveDraftUnlocked(draft Draft) (Draft, error) {
 		return Draft{}, err
 	}
 	draft.RecordedDraftSHA256 = ""
+	format := draftFormat
+	if approvalPolicy(draft.ApprovalPolicy) != plyexec.ApprovalOff {
+		format = draftFormatV2
+	}
 	body, err := prettyJSON(draftFile{
-		Format: draftFormat, OutcomeID: draft.OutcomeID, BaseRevisionID: draft.ParentRevisionID,
+		Format: format, OutcomeID: draft.OutcomeID, BaseRevisionID: draft.ParentRevisionID,
 		Generation: draft.Generation, Intent: draft.Intent, Workspace: draft.Workspace, Toolbox: draft.Toolbox,
 		CompilerEvidenceSHA256: draft.CompilerEvidenceSHA256, Check: draft.Check, CheckSHA256: draft.CheckSHA256,
-		CheckAll: draft.CheckAll, Skills: append([]string{}, draft.Skills...), Contract: draft.Contract,
+		CheckAll: draft.CheckAll, ApprovalPolicy: policyForFile(draft.ApprovalPolicy), Skills: append([]string{}, draft.Skills...), Contract: draft.Contract,
 	})
 	if err != nil {
 		return Draft{}, err
@@ -236,19 +244,22 @@ func (s FileStore) readDraftFile() (Draft, []byte, error) {
 		return Draft{}, nil, err
 	}
 	var file draftFile
-	if err := strictJSON(body, &file); err != nil || file.Format != draftFormat {
+	if err := strictJSON(body, &file); err != nil || file.Format != draftFormat && file.Format != draftFormatV2 {
 		return Draft{}, nil, errors.New("contract draft is invalid")
+	}
+	if file.Format == draftFormat && file.ApprovalPolicy != "" || file.Format == draftFormatV2 && approvalPolicy(file.ApprovalPolicy) != plyexec.ApprovalEveryAction {
+		return Draft{}, nil, errors.New("contract draft approval policy does not match its format")
 	}
 	_, canonical, contractDigest, err := Parse(string(file.Contract))
 	if err != nil {
 		return Draft{}, nil, err
 	}
 	return Draft{
-		Schema: 1, OutcomeID: file.OutcomeID, Generation: file.Generation, ParentRevisionID: file.BaseRevisionID,
+		Schema: draftSchema(file.ApprovalPolicy), OutcomeID: file.OutcomeID, Generation: file.Generation, ParentRevisionID: file.BaseRevisionID,
 		DraftSHA256: digestBytes(body), Intent: file.Intent, Workspace: file.Workspace, Toolbox: file.Toolbox,
 		Contract: json.RawMessage(canonical), ContractSHA256: "sha256:" + contractDigest,
 		CompilerEvidenceSHA256: file.CompilerEvidenceSHA256, Check: file.Check, CheckSHA256: file.CheckSHA256,
-		CheckAll: file.CheckAll, Skills: append([]string{}, file.Skills...),
+		CheckAll: file.CheckAll, ApprovalPolicy: policyForFile(file.ApprovalPolicy), Skills: append([]string{}, file.Skills...),
 	}, body, nil
 }
 
@@ -256,7 +267,7 @@ func sameDraftEnvelope(a, b Draft) bool {
 	return a.OutcomeID == b.OutcomeID && a.Generation == b.Generation && a.ParentRevisionID == b.ParentRevisionID &&
 		a.Intent == b.Intent && a.Workspace == b.Workspace && a.Toolbox == b.Toolbox &&
 		a.ContractSHA256 == b.ContractSHA256 && a.CompilerEvidenceSHA256 == b.CompilerEvidenceSHA256 &&
-		a.Check == b.Check && a.CheckSHA256 == b.CheckSHA256 && a.CheckAll == b.CheckAll && slices.Equal(a.Skills, b.Skills)
+		a.Check == b.Check && a.CheckSHA256 == b.CheckSHA256 && a.CheckAll == b.CheckAll && approvalPolicy(a.ApprovalPolicy) == approvalPolicy(b.ApprovalPolicy) && slices.Equal(a.Skills, b.Skills)
 }
 
 func (s FileStore) PublishRevision(draft Draft, expectedDraftSHA string) (Draft, error) {
@@ -397,6 +408,28 @@ func (s FileStore) writeState(status string, draft Draft, revisionPath string) e
 }
 
 func admissionID(draft Draft) string {
+	if approvalPolicy(draft.ApprovalPolicy) == plyexec.ApprovalEveryAction {
+		body, _ := json.Marshal(struct {
+			Version   int      `json:"version"`
+			Revision  string   `json:"revision_id"`
+			Draft     string   `json:"draft_sha256"`
+			Intent    string   `json:"intent_sha256"`
+			Evidence  string   `json:"compiler_evidence_sha256"`
+			Check     string   `json:"check_sha256"`
+			CheckAll  bool     `json:"check_all"`
+			Approval  string   `json:"approval_policy"`
+			Workspace string   `json:"workspace"`
+			Toolbox   string   `json:"toolbox,omitempty"`
+			Skills    []string `json:"skills"`
+			Method    string   `json:"method"`
+		}{
+			Version: 2, Revision: draft.RevisionID, Draft: draft.DraftSHA256, Intent: sha256Text(draft.Intent),
+			Evidence: draft.CompilerEvidenceSHA256, Check: draft.CheckSHA256, CheckAll: draft.CheckAll,
+			Approval: plyexec.ApprovalEveryAction, Workspace: draft.Workspace, Toolbox: draft.Toolbox,
+			Skills: append([]string{}, draft.Skills...), Method: "interactive-user",
+		})
+		return digestBytes(body)
+	}
 	body, _ := json.Marshal(struct {
 		Revision  string   `json:"revision_id"`
 		Draft     string   `json:"draft_sha256"`
@@ -414,6 +447,27 @@ func admissionID(draft Draft) string {
 		Workspace: draft.Workspace, Toolbox: draft.Toolbox, Skills: append([]string{}, draft.Skills...), Method: "interactive-user",
 	})
 	return digestBytes(body)
+}
+
+func approvalPolicy(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return plyexec.ApprovalOff
+	}
+	return strings.TrimSpace(value)
+}
+
+func policyForFile(value string) string {
+	if approvalPolicy(value) == plyexec.ApprovalOff {
+		return ""
+	}
+	return approvalPolicy(value)
+}
+
+func draftSchema(value string) int {
+	if approvalPolicy(value) == plyexec.ApprovalEveryAction {
+		return 2
+	}
+	return 1
 }
 
 func prettyJSON(value any) ([]byte, error) {

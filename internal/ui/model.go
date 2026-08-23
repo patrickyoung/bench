@@ -55,27 +55,29 @@ type contractDecision struct {
 
 // Config supplies values bench has already resolved at the command boundary.
 type Config struct {
-	Runner        askClient
-	Recorder      askexec.Recorder
-	Task          plyexec.Worker
-	Contracts     contractexec.Negotiator
-	Draft         draftexec.Client
-	Hone          honeexec.Client
-	Brief         briefexec.Client
-	Ply           plyexec.Client
-	Session       string
-	NewSession    string
-	Resume        bool
-	Choose        bool
-	Sessions      []session.Info
-	Model         string
-	Workspace     string
-	DataDir       string
-	Project       string
-	InitialPrompt string
-	Toolbox       string
-	ActiveSkills  []string
-	TaskOptions   plyexec.TaskOptions
+	Runner          askClient
+	ApprovalResults askexec.ApprovalResultReader
+	Recorder        askexec.Recorder
+	Task            plyexec.Worker
+	Contracts       contractexec.Negotiator
+	Draft           draftexec.Client
+	Hone            honeexec.Client
+	Brief           briefexec.Client
+	Ply             plyexec.Client
+	Session         string
+	NewSession      string
+	Resume          bool
+	Choose          bool
+	Sessions        []session.Info
+	Model           string
+	Workspace       string
+	DataDir         string
+	Project         string
+	InitialPrompt   string
+	Toolbox         string
+	ActiveSkills    []string
+	TaskOptions     plyexec.TaskOptions
+	MayPath         string
 }
 
 // Model is the pointer-owned state for one Bubble Tea event loop. Bubbles
@@ -83,6 +85,7 @@ type Config struct {
 // commands are running.
 type Model struct {
 	runner           askClient
+	approvalResults  askexec.ApprovalResultReader
 	recorder         askexec.Recorder
 	task             plyexec.Worker
 	contracts        contractexec.Negotiator
@@ -100,6 +103,7 @@ type Model struct {
 	toolbox          string
 	taskOptions      plyexec.TaskOptions
 	pendingContract  *plyexec.ContractResult
+	pendingApproval  *plyexec.ContractResult
 	retryContract    bool
 	pendingDecision  *contractDecision
 	contractDraft    *contractexec.Draft
@@ -110,6 +114,7 @@ type Model struct {
 	continueContract bool
 	steeringPath     string
 	activeTaskIntent string
+	mayPath          string
 	taskMode         bool
 
 	composer       textarea.Model
@@ -344,39 +349,41 @@ func New(cfg Config) *Model {
 	view.MouseWheelEnabled = true
 
 	m := Model{
-		runner:         cfg.Runner,
-		recorder:       cfg.Recorder,
-		task:           cfg.Task,
-		contracts:      cfg.Contracts,
-		draft:          cfg.Draft,
-		hone:           cfg.Hone,
-		brief:          cfg.Brief,
-		ply:            cfg.Ply,
-		session:        cfg.Session,
-		newSession:     cfg.NewSession,
-		subagentsDir:   session.SubagentsDir(cfg.DataDir, cfg.Session),
-		contractStore:  contractexec.FileStore{Dir: session.ContractsDir(cfg.DataDir, cfg.Session)},
-		modelName:      cfg.Model,
-		modelDefault:   cfg.Model,
-		workspace:      cfg.Workspace,
-		dataDir:        cfg.DataDir,
-		toolbox:        cfg.Toolbox,
-		taskOptions:    cfg.TaskOptions,
-		taskMode:       true,
-		composer:       composer,
-		project:        project,
-		skill:          skill,
-		skillQuery:     skillQuery,
-		skillName:      skillName,
-		skillDirectory: skillDirectory,
-		skillSource:    &skillSource,
-		viewport:       view,
-		sessions:       cfg.Sessions,
-		activeSkills:   append([]string(nil), cfg.ActiveSkills...),
-		resume:         cfg.Resume,
-		width:          80,
-		height:         24,
-		dark:           true,
+		runner:          cfg.Runner,
+		approvalResults: cfg.ApprovalResults,
+		recorder:        cfg.Recorder,
+		task:            cfg.Task,
+		contracts:       cfg.Contracts,
+		draft:           cfg.Draft,
+		hone:            cfg.Hone,
+		brief:           cfg.Brief,
+		ply:             cfg.Ply,
+		session:         cfg.Session,
+		newSession:      cfg.NewSession,
+		subagentsDir:    session.SubagentsDir(cfg.DataDir, cfg.Session),
+		contractStore:   contractexec.FileStore{Dir: session.ContractsDir(cfg.DataDir, cfg.Session)},
+		modelName:       cfg.Model,
+		modelDefault:    cfg.Model,
+		workspace:       cfg.Workspace,
+		dataDir:         cfg.DataDir,
+		toolbox:         cfg.Toolbox,
+		taskOptions:     cfg.TaskOptions,
+		mayPath:         cfg.MayPath,
+		taskMode:        true,
+		composer:        composer,
+		project:         project,
+		skill:           skill,
+		skillQuery:      skillQuery,
+		skillName:       skillName,
+		skillDirectory:  skillDirectory,
+		skillSource:     &skillSource,
+		viewport:        view,
+		sessions:        cfg.Sessions,
+		activeSkills:    append([]string(nil), cfg.ActiveSkills...),
+		resume:          cfg.Resume,
+		width:           80,
+		height:          24,
+		dark:            true,
 	}
 	if m.newSession == "" {
 		m.newSession = m.session
@@ -448,6 +455,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncContent()
 		return m, m.composer.Focus()
+	case approvalReturnedMsg:
+		return m.updateApprovalDecision(msg)
 	case editorReturnedMsg:
 		if msg.err != nil {
 			m.editingContract = false
@@ -542,6 +551,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, tea.Quit
+		case "a":
+			if m.pendingApproval != nil && strings.TrimSpace(m.composer.Value()) == "" {
+				return m.decidePendingApproval()
+			}
 		case "esc":
 			if m.running {
 				m.interrupt()
@@ -620,6 +633,11 @@ func (m *Model) submit() (tea.Model, tea.Cmd) {
 	}
 	if m.taskMode && m.pendingContract != nil {
 		m.notice = "Review pending · /accept after inspection · /continue to revise · /check -- CMD to strengthen the verifier"
+		m.syncContent()
+		return m, nil
+	}
+	if m.taskMode && m.pendingApproval != nil {
+		m.notice = "Approval pending · press a or use /approval decide · /contract amends the admitted boundary"
 		m.syncContent()
 		return m, nil
 	}
@@ -844,6 +862,9 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 	if event.ContractResult != nil && event.ContractResult.Status != "review_required" {
 		m.pendingContract = nil
 	}
+	if event.ContractResult != nil && event.ContractResult.Status != "awaiting_approval" {
+		m.pendingApproval = nil
+	}
 	m.retryContract = event.ContractResult != nil && m.taskOptions.Loop &&
 		(event.ContractResult.Status == "not_done" || event.ContractResult.Status == "interrupted")
 	switch {
@@ -876,7 +897,11 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		m.pendingContract = nil
 		questions := append([]string{}, event.ContractResult.OpenQuestions...)
 		for _, approval := range event.ContractResult.PendingApprovals {
-			questions = append(questions, "Approval required before work: "+approval+". Do you approve?")
+			if m.taskOptions.ApprovalPolicy == plyexec.ApprovalEveryAction {
+				questions = append(questions, "Pre-work scope decision: "+approval+". May Bench prepare an exact action for this boundary? Exact execution still requires May.")
+			} else {
+				questions = append(questions, "Permission decision: "+approval+". Approving authorizes this described scope; no execution-time May gate is configured.")
+			}
 		}
 		m.pendingDecision = &contractDecision{
 			Intent: m.activeTaskIntent, Questions: questions,
@@ -884,6 +909,23 @@ func (m *Model) updateTaskProcess(event plyexec.Event) (tea.Model, tea.Cmd) {
 		m.notice = strings.TrimSpace(event.Text)
 		if m.notice == "" {
 			m.notice = fmt.Sprintf("Needs decision · resolve %d question(s)/approval(s) before work begins", len(questions))
+		}
+	case event.ContractResult != nil && event.ContractResult.Status == "awaiting_approval":
+		pending := *event.ContractResult
+		m.pendingApproval = &pending
+		m.pendingContract = nil
+		m.retryContract = false
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" && pending.ApprovalReceipt != nil {
+			m.notice = "Approval required · action " + pending.ApprovalReceipt.Digest + " was not executed"
+		}
+	case event.ContractResult != nil && event.ContractResult.Status == "approval_declined":
+		m.pendingApproval = nil
+		m.pendingContract = nil
+		m.retryContract = m.admittedContract != nil
+		m.notice = strings.TrimSpace(event.Text)
+		if m.notice == "" {
+			m.notice = "Approval declined · the action was not executed · /continue can pursue another approach"
 		}
 	case m.taskOptions.IntentContract && event.ContractResult == nil:
 		if answer != "" {
@@ -965,9 +1007,21 @@ func contractResultCard(result plyexec.ContractResult) string {
 			lines = append(lines, "- "+question)
 		}
 		for _, approval := range result.PendingApprovals {
-			lines = append(lines, "- Approval required: "+approval)
+			if result.ApprovalPolicy == plyexec.ApprovalEveryAction {
+				lines = append(lines, "- Pre-work scope decision; exact execution still requires May: "+approval)
+			} else {
+				lines = append(lines, "- Permission decision; approval authorizes this scope because no May gate is configured: "+approval)
+			}
 		}
 		lines = append(lines, "Next: reply normally with the missing decision.")
+	case "awaiting_approval":
+		lines = append(lines, "APPROVAL REQUIRED", "The proposed action was not executed.")
+		if result.ApprovalReceipt != nil {
+			lines = append(lines, "May digest: "+result.ApprovalReceipt.Digest, "Exact action envelope:", result.ApprovalReceipt.Action)
+		}
+		lines = append(lines, "Next: press a or /approval decide to hand the exact digest to May.")
+	case "approval_declined":
+		lines = append(lines, "APPROVAL DECLINED", "The proposed action was not executed.", "Next: /continue can pursue a different action, or /contract can amend the outcome.")
 	case "not_done":
 		lines = append(lines, "NOT DONE", "Ply stopped before the outcome check accepted the work.", "Next: review the work log, then /continue under this admission · or /contract to amend it.")
 	case "interrupted":
@@ -1544,6 +1598,7 @@ func (m *Model) renderHelp(width int) string {
 		helpRow(t, "enter", sendHelp, width),
 		helpRow(t, "/check -- CMD", "attach one literal verifier to the next outcome", width),
 		helpRow(t, "/check all", "you declare that check sufficient for every criterion", width),
+		helpRow(t, "/approval every-action", "require an exact May decision before each model action", width),
 		helpRow(t, "/accept", "accept remaining criteria after inspecting the result", width),
 		helpRow(t, "/continue", "retry work under the same admitted contract", width),
 		helpRow(t, "/mode quick|review|loop", "choose immediate, negotiated, or verifier-loop work", width),
@@ -1892,6 +1947,9 @@ func (m *Model) defaultWorkHint() string {
 	}
 	if m.retryContract {
 		return "loop stopped   /continue retries the admitted outcome   /contract amends it"
+	}
+	if m.pendingApproval != nil {
+		return "approval required   a decide with May   /continue changes approach   /contract amends"
 	}
 	if m.autonomyMode() == autonomy.Quick && m.contractDraft == nil && m.pendingContract == nil {
 		return "autonomy quick   enter starts Ply without contract review   /mode review negotiates first"

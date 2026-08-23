@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/patrickyoung/bench/internal/plyexec"
 )
 
 func TestAcceptedVerifierComposesAsksVerifiedPublicReplay(t *testing.T) {
@@ -179,6 +181,131 @@ func TestSelectAcceptedVerifierRequiresCurrentTerminalEvidence(t *testing.T) {
 	if _, err := selectAcceptedVerifier(newerMalformedMap, digestBytes(mapBody), receipt.ContractID, receipt.Verifier, receipt.CandidateSHA256, receipt.Directory); err == nil {
 		t.Fatal("older matching judge map won over a newer malformed map")
 	}
+}
+
+func TestSelectTerminalApprovalBindsExactMayTransition(t *testing.T) {
+	contractID := "sha256:contract"
+	job := "bench-job"
+	mayPath := "/suite/bin/may"
+	action := approvalActionBody{
+		Version: 1, ContractID: contractID, Directory: "/workspace", Shell: "/bin/sh",
+		Path: "/tools", TimeoutNS: 30_000_000_000, Script: "printf done > result",
+	}
+	actionBytes, err := json.Marshal(action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionBytes = append(actionBytes, '\n')
+	digest := mayDigest(job, string(actionBytes))
+	result, err := json.Marshal(mayResultBody{Version: 1, Job: job, Digest: digest, Action: string(actionBytes), Verdict: "parked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = append(result, '\n')
+	body := approvalBody{
+		Version: 1, ContractID: contractID, Job: job, Digest: digest, Action: action,
+		ActionSHA256: digestText(string(actionBytes)), Verdict: "parked", MayPath: mayPath,
+		MaySHA256: "sha256:" + strings.Repeat("a", 64), MayArgv: []string{mayPath, "request", job},
+		MayInputSHA256: digestText(string(actionBytes)), MayStdoutSHA256: digestText(string(result)),
+		MayStdoutBytes: int64(len(result)), MayExitCode: 75,
+	}
+	maySHA256 := body.MaySHA256
+	replay := approvalReplay(t, body)
+	got, err := selectTerminalApproval(replay, contractID, job, action.Directory, mayPath, maySHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Verdict != "parked" || got.Digest != digest || got.Action != string(actionBytes) || got.Seq != 2 || got.SealSHA256 != "sha256:approval-seal" {
+		t.Fatalf("receipt=%#v", got)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*approvalBody)
+	}{
+		{name: "contract", mutate: func(v *approvalBody) { v.ContractID = "sha256:other" }},
+		{name: "action contract", mutate: func(v *approvalBody) { v.Action.ContractID = "sha256:other" }},
+		{name: "job", mutate: func(v *approvalBody) { v.Job = "other" }},
+		{name: "directory", mutate: func(v *approvalBody) { v.Action.Directory = "/other" }},
+		{name: "relative shell", mutate: func(v *approvalBody) { v.Action.Shell = "sh" }},
+		{name: "timeout", mutate: func(v *approvalBody) { v.Action.TimeoutNS = 0 }},
+		{name: "digest", mutate: func(v *approvalBody) { v.Digest = strings.Repeat("b", 64) }},
+		{name: "input digest", mutate: func(v *approvalBody) { v.MayInputSHA256 = "sha256:wrong" }},
+		{name: "stdout digest", mutate: func(v *approvalBody) { v.MayStdoutSHA256 = "sha256:wrong" }},
+		{name: "stdout bytes", mutate: func(v *approvalBody) { v.MayStdoutBytes++ }},
+		{name: "exit", mutate: func(v *approvalBody) { v.MayExitCode = 0 }},
+		{name: "may path", mutate: func(v *approvalBody) { v.MayPath = "/other/may" }},
+		{name: "may digest", mutate: func(v *approvalBody) { v.MaySHA256 = "sha256:" + strings.Repeat("b", 64) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := body
+			changed.MayArgv = append([]string{}, body.MayArgv...)
+			test.mutate(&changed)
+			if _, err := selectTerminalApproval(approvalReplay(t, changed), contractID, job, action.Directory, mayPath, maySHA256); err == nil {
+				t.Fatal("invalid approval receipt was accepted")
+			}
+		})
+	}
+
+	stale := appendReplayEvent(t, replay, map[string]any{"seq": 4, "type": "assistant", "data": map[string]any{"text": "later"}})
+	stale = appendReplayEvent(t, stale, map[string]any{"seq": 5, "type": "done", "data": map[string]any{"status": "ok"}})
+	if _, err := selectTerminalApproval(stale, contractID, job, action.Directory, mayPath, maySHA256); err == nil {
+		t.Fatal("stale approval receipt survived a later turn")
+	}
+}
+
+func TestSelectLatestApprovalResultRestoresOnlyAdjacentReceipt(t *testing.T) {
+	contractID := "sha256:contract"
+	job := "bench-job"
+	mayPath := "/suite/bin/may"
+	maySHA256 := "sha256:" + strings.Repeat("a", 64)
+	action := approvalActionBody{Version: 1, ContractID: contractID, Directory: "/workspace", Shell: "/bin/sh", Path: "/tools", TimeoutNS: 1, Script: "publish"}
+	actionBytes, _ := json.Marshal(action)
+	actionBytes = append(actionBytes, '\n')
+	digest := mayDigest(job, string(actionBytes))
+	mayResult, _ := json.Marshal(mayResultBody{Version: 1, Job: job, Digest: digest, Action: string(actionBytes), Verdict: "parked"})
+	mayResult = append(mayResult, '\n')
+	body := approvalBody{
+		Version: 1, ContractID: contractID, Job: job, Digest: digest, Action: action,
+		ActionSHA256: digestText(string(actionBytes)), Verdict: "parked", MayPath: mayPath, MaySHA256: maySHA256,
+		MayArgv: []string{mayPath, "request", job}, MayInputSHA256: digestText(string(actionBytes)),
+		MayStdoutSHA256: digestText(string(mayResult)), MayStdoutBytes: int64(len(mayResult)), MayExitCode: 75,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	result := plyexec.ContractResult{
+		ContractID: contractID, Status: "awaiting_approval", WorkerExitCode: 75,
+		ApprovalPolicy: plyexec.ApprovalEveryAction, StopReason: "approval_required",
+		ApprovalReceipt: &plyexec.ApprovalReceiptRef{
+			Seq: 2, BodySHA256: digestBytes(bodyBytes), SealSHA256: "sha256:approval-seal",
+			Job: job, Digest: digest, Verdict: "parked", Action: string(actionBytes), ActionSHA256: digestText(string(actionBytes)), MayPath: mayPath, MaySHA256: maySHA256,
+		},
+	}
+	replay := approvalReplay(t, body)
+	resultBytes, _ := json.Marshal(result)
+	replay = appendReplayEvent(t, replay, map[string]any{"seq": 4, "type": "note", "data": map[string]any{"source": "bench", "kind": "bench.contract-result/v4", "body": json.RawMessage(resultBytes)}})
+	replay = appendReplayEvent(t, replay, map[string]any{"seq": 5, "type": "seal", "data": map[string]any{"through": 4, "sha256": "sha256:result-seal"}})
+	got, found, err := selectLatestApprovalResult(replay, contractID, job, action.Directory, mayPath, maySHA256)
+	if err != nil || !found || got.Status != "awaiting_approval" || got.ApprovalReceipt == nil || got.ApprovalReceipt.Digest != digest {
+		t.Fatalf("found=%v result=%#v err=%v", found, got, err)
+	}
+
+	stale := appendReplayEvent(t, replay, map[string]any{"seq": 6, "type": "assistant", "data": map[string]any{"text": "later"}})
+	if _, found, err := selectLatestApprovalResult(stale, contractID, job, action.Directory, mayPath, maySHA256); err != nil || found {
+		t.Fatalf("stale result restored: found=%v err=%v", found, err)
+	}
+}
+
+func approvalReplay(t *testing.T, receipt approvalBody) []byte {
+	t.Helper()
+	body, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return marshalReplayEvents(t, []map[string]any{
+		{"seq": 1, "type": "session", "data": map[string]any{"id": "run"}},
+		{"seq": 2, "type": "note", "data": map[string]any{"source": "ply", "kind": "ply.approval/v1", "body": json.RawMessage(body)}},
+		{"seq": 3, "type": "seal", "data": map[string]any{"through": 2, "sha256": "sha256:approval-seal"}},
+	})
 }
 
 func verifierReplay(t *testing.T, mapBody json.RawMessage, receipt verifierBody) []byte {

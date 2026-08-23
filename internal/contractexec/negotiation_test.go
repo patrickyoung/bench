@@ -2,6 +2,7 @@ package contractexec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -65,6 +66,69 @@ func TestNegotiationCompilesDurableEditableDraftWithoutPly(t *testing.T) {
 	}
 	if _, err := os.Stat(store.DraftPath()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRevisionMessageCarriesApprovalAuthority(t *testing.T) {
+	current := Draft{Intent: "publish it", Contract: json.RawMessage(fixtureContract)}
+	off := revisionMessage(current, "use the public channel", "", false, plyexec.ApprovalOff)
+	gated := revisionMessage(current, "use the public channel", "", false, plyexec.ApprovalEveryAction)
+	if !strings.Contains(off, "authorizes the described consequential scope") || !strings.Contains(off, "no execution-time May gate") {
+		t.Fatalf("off revision boundary missing:\n%s", off)
+	}
+	if !strings.Contains(gated, "preparation only") || !strings.Contains(gated, "separate May decision") {
+		t.Fatalf("gated revision boundary missing:\n%s", gated)
+	}
+}
+
+func TestEveryActionPolicyIsVisibleDurableAndRequiredForAdmittedWork(t *testing.T) {
+	req := negotiationRequest(t)
+	req.Options.ApprovalPolicy = plyexec.ApprovalEveryAction
+	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 2}}
+	ask := &fakeAsk{answer: fixtureContract}
+	store := FileStore{Dir: filepath.Join(req.Dir, "contracts")}
+	draft := *collectDraft(t, (Runner{Ask: ask, Ply: ply}).Compile(context.Background(), DraftRequest{Task: req, Store: store})).Draft
+	if draft.Schema != 2 || draft.ApprovalPolicy != plyexec.ApprovalEveryAction || ask.record.Kind != "bench.contract-proposal/v2" {
+		t.Fatalf("draft=%#v record=%#v", draft, ask.record)
+	}
+	body, err := os.ReadFile(store.DraftPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"format": "bench.contract-draft/v2"`) || !strings.Contains(string(body), `"approval_policy": "every-action"`) {
+		t.Fatalf("draft file omitted approval authority:\n%s", body)
+	}
+
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply}).Admit(context.Background(), AdmitRequest{
+		Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256,
+	}))
+	if terminal.ContractResult == nil || terminal.ContractResult.ApprovalPolicy != plyexec.ApprovalEveryAction || ply.calls != 1 || ply.req.Options.ApprovalPolicy != plyexec.ApprovalEveryAction || ply.req.Options.ContractID == "" {
+		t.Fatalf("terminal=%#v ply=%#v", terminal, ply)
+	}
+	foundAdmission := false
+	for _, record := range ask.recordLog {
+		if record.Kind == "bench.contract/v4" && strings.Contains(record.JSON, `"approval_policy":"every-action"`) {
+			foundAdmission = true
+		}
+	}
+	if !foundAdmission || ask.record.Kind != "bench.contract-result/v4" {
+		t.Fatalf("records=%#v", ask.recordLog)
+	}
+}
+
+func TestEveryActionPolicyCannotBeRemovedAtAdmission(t *testing.T) {
+	req := negotiationRequest(t)
+	req.Options.ApprovalPolicy = plyexec.ApprovalEveryAction
+	ply := &fakePly{}
+	ask := &fakeAsk{answer: fixtureContract}
+	store := FileStore{Dir: filepath.Join(req.Dir, "contracts")}
+	draft := *collectDraft(t, (Runner{Ask: ask, Ply: ply}).Compile(context.Background(), DraftRequest{Task: req, Store: store})).Draft
+	req.Options.ApprovalPolicy = plyexec.ApprovalOff
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply}).Admit(context.Background(), AdmitRequest{
+		Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256,
+	}))
+	if terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "approval policy changed") || ply.calls != 0 {
+		t.Fatalf("terminal=%#v ply=%d", terminal, ply.calls)
 	}
 }
 

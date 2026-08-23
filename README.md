@@ -135,12 +135,15 @@ compiler and Ply; they never replace the verifier or count as evidence. Its JSON
 through Ask's native structured-output boundary. The validated canonical
 contract is written to an ordinary editable `draft.json` under
 `.bench/contracts`, and a sealed `bench.contract-proposal/v1` snapshot records
-each generated or manual proposal. Natural-language changes use another Ask
+each ordinary generated or manual proposal. A draft with the operator-owned
+`approval_policy: "every-action"` uses proposal v2; the policy is visible in
+the editable envelope and changes its exact digest. Natural-language changes use another Ask
 schema turn. `bench contract edit` or `/contract edit` uses `$VISUAL` or
 `$EDITOR`; changes made by another JSON editor become admissible only after
 `bench contract import` or `/contract import` validates and seals them.
 Neither path can start Ply. `/contract accept` re-reads the displayed exact
-draft digest, publishes an immutable revision, seals `bench.contract/v3`, and
+draft digest, publishes an immutable revision, seals `bench.contract/v3` (or
+v4 for every-action approval), and
 only then passes those exact admitted bytes to Ply. Ply binds every
 sealed `ply.verifier/v1` receipt to the contract envelope ID. `ask replay -check`
 verifies conversation folds, event sequence, and those record-prefix seals.
@@ -151,11 +154,14 @@ Bench first seals `bench.judge-map/v1`, strictly matches Ply's accepted verifier
 receipt, and seals `bench.contract-result/v2`; only that path may automatically
 complete a contracted outcome. Invocation-scoped Loop runs seal the same verdict
 and evidence fields plus their effective budgets and terminal reason as
-`bench.contract-result/v3`; Review continues to emit unchanged v1/v2 records.
-A consequential open question or ungranted approval
-stops before work. The next reply is compiled with the full original intent,
-exact questions/approvals, and the user's answer; a short answer never replaces
-the requested outcome.
+`bench.contract-result/v3`; action-gated runs use result v4, while ordinary
+Review continues to emit unchanged v1/v2 records.
+A consequential open question or unresolved approval stops before work. The
+next reply is compiled with the full original intent, exact questions and
+approvals, and the user's answer; a short answer never replaces the requested
+outcome. With approval policy `off`, that answer authorizes the described
+scope and there is no execution-time gate. With `every-action`, it authorizes
+preparation only; May must separately grant the exact bytes before execution.
 After inspection, `/accept` seals the interactive user's acceptance; `/continue`
 starts another implementation attempt under the same admitted contract even
 when the retained check already passes. Amend the outcome itself by reopening
@@ -165,6 +171,21 @@ criterion IDs. Headless work remains review-required/exit 2 by default.
 Automation may use `-check COMMAND -check-all` to make the explicit blanket
 assertion that this exact command proves every criterion the compiler emits.
 Use it only when that statement is genuinely true.
+
+`-approval every-action` (or `/approval every-action`) is the conservative
+execution-time boundary. It is available only with Review or Loop and is bound
+into the editable contract before admission. Ply sends every model-authored
+shell action—not Ask, Brief, or the verifier—to the standalone `may request`
+filter immediately before execution. May binds the physical working directory,
+resolved interpreter, exact PATH, nanosecond timeout, contract ID, and literal
+script bytes. A parked action exits 75 without execution; a declined action
+exits 3. In the TUI, `a` or `/approval decide` yields the terminal to the
+ordinary `may decide DIGEST` command. Only May can create or spend the
+single-use grant, and the byte-identical action must be proposed again to use
+it. Bench replay-verifies Ply's sealed approval receipt and records result v4
+before showing an approval state. This policy gates every action deliberately;
+neither model prose nor Bench attempts to classify which arbitrary shell text
+is risky.
 
 Open work starts unchecked. `/check -- COMMAND` attaches one literal verifier
 to the next outcome; Bench displays it beside the composer and passes it to
@@ -185,7 +206,8 @@ commands; it does not own a private contract format or a second agent loop:
 ```sh
 # Compile and stop. stdout is the editable draft path; Ply has not started.
 draft_path=$(bench contract draft -C . -f .bench/sessions/gallery.jsonl \
-  -s ascii-cinema 'create a high-quality ANSI poem gallery')
+  -s ascii-cinema -approval every-action \
+  'create a high-quality ANSI poem gallery')
 
 # Inspect, revise with Ask, or edit the JSON with any Unix editor.
 bench contract show -C . -f .bench/sessions/gallery.jsonl >reviewed-draft.json
@@ -288,7 +310,7 @@ passes the command as one argv value and never evaluates it itself. Agent
 designs remain the durable home for recurring checked work.
 
 Both the interactive workbench and `bench run` accept `-contract=true|false`,
-`-check COMMAND`, `-check-all`, and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
+`-check COMMAND`, `-check-all`, `-approval off|every-action`, and Ply's optional policy controls: `-effort LEVEL`, `-cycles N`, `-turns N`, `-timeout DURATION`,
 `-compact`, and `-compactions N`. Bench passes effort names literally through
 Ply; Ask and its provider decide which names are supported. Omitted controls
 stay omitted so the installed Ply owns its defaults; an explicit zero retains

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,10 @@ import (
 
 type shellReturnedMsg struct{ err error }
 type editorReturnedMsg struct{ err error }
+type approvalReturnedMsg struct {
+	digest string
+	err    error
+}
 
 // handleCommand interprets an explicit slash command. A leading // is handled
 // by submit before this point and sends one literal slash to the model.
@@ -48,6 +53,11 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 	case "mode":
 		return m.commandAutonomy(args)
 	case "ask":
+		if m.pendingApproval != nil {
+			m.notice = "Approval pending · decide with May or /continue to release it before entering Ask mode"
+			m.syncContent()
+			return m, nil
+		}
 		m.composer.SetValue("")
 		m.taskMode = false
 		m.notice = "Ask mode · model answers without running commands"
@@ -61,6 +71,8 @@ func (m *Model) handleCommand(line string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "check":
 		return m.commandCheck(line)
+	case "approval", "approve":
+		return m.commandApproval(args)
 	case "contract":
 		return m.commandContract(args)
 	case "accept":
@@ -112,8 +124,10 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 	m.taskOptions.Loop = mode == autonomy.Loop
 	m.retryContract = false
 	if mode == autonomy.Quick {
+		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.pendingApproval = nil
 		m.retryContract = false
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
@@ -131,6 +145,99 @@ func (m *Model) commandAutonomy(args []string) (tea.Model, tea.Cmd) {
 	}
 	m.syncContent()
 	return m, nil
+}
+
+func (m *Model) commandApproval(args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		bound, staged, isBound := m.approvalPolicyState()
+		m.composer.SetValue("")
+		m.notice = "Action approval · " + staged
+		if isBound {
+			m.notice = "Action approval · bound " + bound
+			if staged != bound {
+				m.notice += " · requested for next amendment " + staged
+			}
+		}
+		m.syncContent()
+		return m, nil
+	}
+	if len(args) != 1 {
+		m.notice = "usage: /approval [off|every-action|decide]"
+		return m, nil
+	}
+	switch strings.ToLower(args[0]) {
+	case "decide":
+		m.composer.SetValue("")
+		return m.decidePendingApproval()
+	case plyexec.ApprovalOff, plyexec.ApprovalEveryAction:
+		policy := strings.ToLower(args[0])
+		if policy == plyexec.ApprovalEveryAction && !m.taskOptions.IntentContract {
+			m.notice = "Every-action approval needs Review or Loop · select /mode review first"
+			return m, nil
+		}
+		m.taskOptions.ApprovalPolicy = policy
+		m.composer.SetValue("")
+		m.notice = "Action approval set to " + policy + " for the next contract revision"
+		if m.contractDraft != nil || m.admittedContract != nil {
+			m.notice += " · revise or amend before it becomes admitted policy"
+		}
+		m.syncContent()
+		return m, nil
+	default:
+		m.notice = "usage: /approval [off|every-action|decide]"
+		return m, nil
+	}
+}
+
+func (m *Model) decidePendingApproval() (tea.Model, tea.Cmd) {
+	if m.pendingApproval == nil || m.pendingApproval.ApprovalReceipt == nil {
+		m.notice = "No exact May action is awaiting a decision"
+		m.syncContent()
+		return m, nil
+	}
+	digest := m.pendingApproval.ApprovalReceipt.Digest
+	may := strings.TrimSpace(m.pendingApproval.ApprovalReceipt.MayPath)
+	if may == "" {
+		may = strings.TrimSpace(m.mayPath)
+	}
+	if may == "" {
+		may = "may"
+	}
+	if expected := strings.TrimSpace(m.pendingApproval.ApprovalReceipt.MaySHA256); expected != "" {
+		got, err := plyexec.ExecutableSHA256(may)
+		if err != nil || got != expected {
+			m.notice = "May executable changed since the action was parked · approval remains pending"
+			m.syncContent()
+			return m, nil
+		}
+	}
+	m.composer.SetValue("")
+	m.composer.Blur()
+	m.notice = "Opening May for exact action " + digest + " · Bench cannot approve it"
+	m.syncContent()
+	cmd := exec.Command(may, "decide", digest)
+	cmd.Dir = m.workspace
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return approvalReturnedMsg{digest: digest, err: err} })
+}
+
+func (m *Model) updateApprovalDecision(msg approvalReturnedMsg) (tea.Model, tea.Cmd) {
+	if msg.err == nil {
+		m.pendingApproval = nil
+		m.taskOptions.Force = true
+		m.messages = append(m.messages, message{role: roleOutcome, text: "APPROVED IN MAY\nExact action " + msg.digest + " has a single-use grant. Bench will rerun the same admitted outcome; only byte-identical action input can spend it."})
+		m.notice = "May granted the exact action · restarting the same admission"
+		return m.runAdmittedContract("The operator granted May action " + msg.digest + ". Re-propose those exact bytes only if the action is still required.")
+	}
+	var exit *exec.ExitError
+	if errors.As(msg.err, &exit) && exit.ExitCode() == 3 {
+		m.messages = append(m.messages, message{role: roleOutcome, text: "NOT GRANTED BY MAY\nExact action " + msg.digest + " was not executed. May may have recorded a decline, or the decision terminal was unavailable."})
+		m.notice = "May did not grant the action · approval state is retained · retry May or /continue with another approach"
+		m.syncContent()
+		return m, m.composer.Focus()
+	}
+	m.notice = "May decision did not complete · approval remains pending · " + msg.err.Error()
+	m.syncContent()
+	return m, m.composer.Focus()
 }
 
 func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
@@ -156,8 +263,10 @@ func (m *Model) commandContract(args []string) (tea.Model, tea.Cmd) {
 	case "off":
 		m.taskOptions.IntentContract = false
 		m.taskOptions.Loop = false
+		m.taskOptions.ApprovalPolicy = plyexec.ApprovalOff
 		m.taskOptions.CheckAllCriteria = false
 		m.pendingContract = nil
+		m.pendingApproval = nil
 		m.retryContract = false
 		m.pendingDecision = nil
 		m.taskOptions.Force = false
@@ -325,6 +434,11 @@ func (m *Model) commandTools(args []string) (tea.Model, tea.Cmd) {
 	choice := args[0]
 	switch strings.ToLower(choice) {
 	case "off", "none", "ask":
+		if m.pendingApproval != nil {
+			m.notice = "Approval pending · decide with May or /continue to release it before disabling work mode"
+			m.syncContent()
+			return m, nil
+		}
 		m.taskMode = false
 	case "on", "ply", "work":
 		m.taskMode = true
@@ -426,6 +540,14 @@ func (m *Model) statusReport() string {
 	if len(m.activeSkills) > 0 {
 		skills = strings.Join(m.activeSkills, " · ") + " · shape contract and work, never the verdict"
 	}
+	boundApproval, stagedApproval, approvalBound := m.approvalPolicyState()
+	approval := approvalPolicyLabel(boundApproval)
+	if approvalBound {
+		approval = "Bound: " + approval
+		if stagedApproval != boundApproval {
+			approval += " · requested for next amendment: " + approvalPolicyLabel(stagedApproval)
+		}
+	}
 	return strings.Join([]string{
 		"Mode: " + m.modeDisplay(),
 		"Autonomy: " + string(m.autonomyMode()) + " · " + m.autonomyMode().Description(),
@@ -433,6 +555,7 @@ func (m *Model) statusReport() string {
 		"Tools: " + tools,
 		"Outcome contract: " + contract,
 		"Check: " + check,
+		"Action approval: " + approval,
 		"Brief skills: " + skills,
 		"Session evidence: " + m.session,
 		"Contract files: " + m.contractStore.DraftPath(),
@@ -453,8 +576,17 @@ func (m *Model) taskPolicyDisplay() string {
 		parts = append(parts, "contract draft pending admission")
 	} else if m.pendingContract != nil {
 		parts = append(parts, "review pending")
+	} else if m.pendingApproval != nil {
+		parts = append(parts, "May approval pending")
 	} else if m.taskOptions.Force {
 		parts = append(parts, "continue armed")
+	}
+	boundApproval, stagedApproval, approvalBound := m.approvalPolicyState()
+	if boundApproval == plyexec.ApprovalEveryAction {
+		parts = append(parts, "May before every action")
+	}
+	if approvalBound && stagedApproval != boundApproval {
+		parts = append(parts, "next amendment approval="+stagedApproval)
 	}
 	if m.taskOptions.HasCycles {
 		parts = append(parts, "cycles="+plyexec.LoopCycleBudget(m.taskOptions))
@@ -480,4 +612,32 @@ func (m *Model) taskPolicyDisplay() string {
 		parts = append(parts, fmt.Sprintf("compactions=%d", m.taskOptions.Compactions))
 	}
 	return strings.Join(parts, " · ")
+}
+
+func (m *Model) approvalPolicyState() (bound, staged string, isBound bool) {
+	staged = strings.TrimSpace(m.taskOptions.ApprovalPolicy)
+	if staged == "" {
+		staged = plyexec.ApprovalOff
+	}
+	if m.contractDraft != nil {
+		bound = strings.TrimSpace(m.contractDraft.ApprovalPolicy)
+		isBound = true
+	} else if m.admittedContract != nil {
+		bound = strings.TrimSpace(m.admittedContract.ApprovalPolicy)
+		isBound = true
+	}
+	if bound == "" {
+		bound = plyexec.ApprovalOff
+	}
+	if !isBound {
+		bound = staged
+	}
+	return bound, staged, isBound
+}
+
+func approvalPolicyLabel(policy string) string {
+	if policy == plyexec.ApprovalEveryAction {
+		return "Every action · exact May decision immediately before execution"
+	}
+	return "Off"
 }
