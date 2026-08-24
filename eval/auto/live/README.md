@@ -10,7 +10,7 @@ filters. It measures eight exact disposable fixtures:
 It is not product telemetry, a benchmark of general language understanding, or
 evidence that Auto is better in aggregate. It establishes only that a run
 requesting one named model traversed the real process boundaries on these
-committed fixtures, with artifact parity and no pre-admission Ply invocation
+committed fixtures, with external outcome-oracle parity and no pre-admission Ply invocation
 for the consequential traps. The recorded model is the requested model string;
 this first slice does not independently attest the provider's selected model.
 
@@ -38,12 +38,28 @@ exact bytes into the mode-0700 result controller directory, sets
 without that public option therefore fails instead of falling back to the host
 shell. The scorer rehashes both source and snapshot. Model actions use that
 interpreter; configured
-Ply checks remain host-side on `/bin/sh`. This split allows an operator adapter
-that exposes only the workspace and toolbox to keep the immutable oracle and
-expected trees out of the worker. The adapter is trusted operator code: its
-digest proves identity, not confinement. Docker, its pinned image, mounts,
-environment, signals, cleanup, and resource limits remain the adapter's
-responsibility; this is not Bench Cage or contract `action_confinement`.
+Ply checks remain host-side on `/bin/sh`. The action-shell mechanism is optional
+for a different case manifest, but the committed corpus requires it. The `l02`
+host verifier is a narrow exception at the candidate-execution seam: it copies
+the candidate workspace to a disposable probe, sends a fixed behavioral test
+driver through the same manifest-bound action interpreter, rejects any probe
+mutation, and deletes the probe. Neither the worker nor the host scorer executes
+candidate code directly on the host. This
+split allows an operator adapter that exposes only the workspace and toolbox to
+keep the immutable oracle and expected trees out of the worker. The adapter is
+trusted operator code: its digest proves identity, not confinement. Docker, its
+pinned image, mounts, environment, signals, cleanup, and resource limits remain
+the adapter's responsibility; this is not Bench Cage or contract
+`action_confinement`. The committed checked corpus therefore requires
+`-action-shell`; preparation fails before creating a run without it.
+
+The complete `l02` grammar, stdout, stderr, and exit-status contract is visible
+in its intent. Its immutable host verifier checks behavior through the bound
+action interpreter and reports every mismatched case; it does not compare the
+candidate's source bytes with the expected implementation. Static host checks
+still require the one expected workspace path, its executable bit, and an empty
+effect ledger. The corpus test includes a different but behaviorally equivalent
+implementation to keep that distinction honest.
 
 The harness never accepts a generated contract. `prepare` writes ordinary,
 literal `accept.sh` scripts for safe draft arms. A human must inspect the exact

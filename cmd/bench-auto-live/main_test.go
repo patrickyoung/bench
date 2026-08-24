@@ -447,6 +447,31 @@ func TestPrepareRejectsWhitespaceActionShellBeforeCreatingOutput(t *testing.T) {
 	}
 }
 
+func TestPrepareRequiresActionShellForBehavioralCheckedCase(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	casesPath := filepath.Join(repoRoot, "eval", "auto", "live", "cases.jsonl")
+	casesData, err := os.ReadFile(casesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "experiment")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"prepare", "-cases", casesPath, "-expect", digestBytes(casesData), "-bench", truePath, "-ask", truePath, "-ply", truePath, "-model", "provider/model", "-out", out}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "l02 requires -action-shell") {
+		t.Fatalf("prepare exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Lstat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing action shell left output: %v", err)
+	}
+}
+
 func TestPrepareRejectsOutputInsideCorpusBeforeCreatingIt(t *testing.T) {
 	dir := t.TempDir()
 	casesPath := filepath.Join(dir, "cases.jsonl")
@@ -1049,7 +1074,7 @@ func TestCommittedExternalOracleFailsBaselineAndAcceptsExactArtifacts(t *testing
 			return os.WriteFile(filepath.Join(root, "bin", "greet"), []byte("#!/bin/sh\nprintf 'hello bench\\n'\n"), 0o700)
 		},
 		"l02": func(root string) error {
-			script := "#!/bin/sh\ncase \"${1-}\" in\n  0) printf 'zero\\n' ;;\n  -[1-9]|-[1-9][0-9]*) printf 'negative\\n' ;;\n  [1-9]|[1-9][0-9]*) printf 'positive\\n' ;;\n  *) printf 'usage: classify.sh INTEGER\\n'; exit 2 ;;\nesac\n"
+			script := "#!/bin/sh\nif test \"$#\" -ne 1; then\n  printf 'usage: classify.sh INTEGER\\n'\n  exit 2\nfi\ncase \"${1-}\" in\n  0) printf 'zero\\n' ;;\n  -[1-9]|-[1-9][0-9]*) printf 'negative\\n' ;;\n  [1-9]|[1-9][0-9]*) printf 'positive\\n' ;;\n  *) printf 'usage: classify.sh INTEGER\\n'; exit 2 ;;\nesac\n"
 			return os.WriteFile(filepath.Join(root, "lib", "classify.sh"), []byte(script), 0o700)
 		},
 	}
@@ -1064,20 +1089,190 @@ func TestCommittedExternalOracleFailsBaselineAndAcceptsExactArtifacts(t *testing
 			if err := os.WriteFile(ledger, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			initial, err := execute(context.Background(), oracle, []string{"score", id, root, ledger}, os.Environ(), filepath.Dir(oracle), "baseline", filepath.Join(base, "baseline.stdout"), filepath.Join(base, "baseline.stderr"))
+			env := experimentEnv(os.Environ(), nil)
+			if id == "l02" {
+				actionShell := filepath.Join(base, "action-shell")
+				if err := os.WriteFile(actionShell, []byte("#!/bin/sh\nexec /bin/sh \"$@\"\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				env = experimentEnv(env, map[string]string{"PLY_ACTION_SHELL": actionShell})
+			}
+			initial, err := execute(context.Background(), oracle, []string{"score", id, root, ledger}, env, root, "baseline", filepath.Join(base, "baseline.stdout"), filepath.Join(base, "baseline.stderr"))
 			if err != nil || initial.Exit != 1 {
 				t.Fatalf("baseline phase=%+v err=%v", initial, err)
 			}
 			if err := fix[id](root); err != nil {
 				t.Fatal(err)
 			}
-			final, err := execute(context.Background(), oracle, []string{"score", id, root, ledger}, os.Environ(), filepath.Dir(oracle), "final", filepath.Join(base, "final.stdout"), filepath.Join(base, "final.stderr"))
+			final, err := execute(context.Background(), oracle, []string{"score", id, root, ledger}, env, root, "final", filepath.Join(base, "final.stdout"), filepath.Join(base, "final.stderr"))
 			if err != nil || final.Exit != 0 {
 				stdout, _ := os.ReadFile(filepath.Join(base, "final.stdout"))
 				stderr, _ := os.ReadFile(filepath.Join(base, "final.stderr"))
 				t.Fatalf("final phase=%+v err=%v stdout=%s stderr=%s", final, err, stdout, stderr)
 			}
 		})
+	}
+}
+
+func TestL02OracleIsBehavioralDiagnosticAndActionShellBound(t *testing.T) {
+	oracle, err := filepath.Abs(filepath.Join("..", "..", "eval", "auto", "live", "oracle.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "workspace")
+	if err := os.MkdirAll(filepath.Join(root, "lib"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(base, "effects")
+	if err := os.WriteFile(ledger, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(base, "action-shell.log")
+	actionShell := filepath.Join(base, "action-shell")
+	adapter := "#!/bin/sh\ncase \"$PWD/\" in */workspace/) ;; *) exit 125 ;; esac\nprintf 'action-shell\\n' >> \"$BENCH_TEST_ACTION_LOG\"\nexec /bin/sh \"$@\"\n"
+	if err := os.WriteFile(actionShell, []byte(adapter), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := experimentEnv(os.Environ(), map[string]string{"PLY_ACTION_SHELL": actionShell, "BENCH_TEST_ACTION_LOG": log})
+
+	invokeOracle := func(ctx context.Context, name string, runEnv []string) (phase, []byte, error) {
+		stdout, stderr := filepath.Join(base, name+".stdout"), filepath.Join(base, name+".stderr")
+		got, runErr := execute(ctx, oracle, []string{"score", "l02", root, ledger}, runEnv, root, name, stdout, stderr)
+		out, readErr := os.ReadFile(stdout)
+		return got, out, errors.Join(runErr, readErr)
+	}
+	runOracle := func(t *testing.T, name, script string, wantExit int, wantOutput string, runEnv []string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "lib", "classify.sh"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		phase, out, err := invokeOracle(context.Background(), name, runEnv)
+		if err != nil || phase.Exit != wantExit {
+			errout, _ := os.ReadFile(filepath.Join(base, name+".stderr"))
+			t.Fatalf("%s phase=%+v err=%v stdout=%s stderr=%s", name, phase, err, out, errout)
+		}
+		if !bytes.Contains(out, []byte(wantOutput)) {
+			t.Fatalf("%s output=%q, want %q", name, out, wantOutput)
+		}
+	}
+
+	equivalent := "#!/bin/sh\ninput=${1-}\nif test \"$#\" -ne 1; then input=invalid; fi\ncase \"$input\" in\n  0) word=zero ;;\n  [1-9]|[1-9][0-9]*) word=positive ;;\n  -[1-9]|-[1-9][0-9]*) word=negative ;;\n  *) printf 'usage: classify.sh INTEGER\\n'; exit 2 ;;\nesac\nprintf '%s\\n' \"$word\"\n"
+	runOracle(t, "equivalent", equivalent, 0, `"pass":true`, env)
+	wantSource, err := os.ReadFile(filepath.Join(filepath.Dir(oracle), "expected", "l02", "lib", "classify.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equivalent == string(wantSource) {
+		t.Fatal("behavioral oracle test reused the canonical implementation")
+	}
+
+	wrongOutput := strings.Replace(equivalent, "word=zero", "word=positive", 1)
+	runOracle(t, "wrong-output", wrongOutput, 1, "l02 zero:", env)
+	wrongGrammar := strings.Replace(equivalent, "[1-9]|[1-9][0-9]*)", "[0-9]|[0-9][0-9]*)", 1)
+	runOracle(t, "wrong-grammar", wrongGrammar, 1, "l02 leading-zero:", env)
+	wrongStatus := strings.Replace(equivalent, "exit 2", "exit 1", 1)
+	runOracle(t, "wrong-status", wrongStatus, 1, "expected status 2, got 1", env)
+	wrongStderr := strings.Replace(equivalent, "printf 'usage: classify.sh INTEGER\\n'", "printf 'usage: classify.sh INTEGER\\n' >&2", 1)
+	runOracle(t, "wrong-stderr", wrongStderr, 1, "actual stderr bytes:", env)
+	mutatesWorkspace := strings.Replace(equivalent, "printf '%s\\n' \"$word\"", "printf '%s\\n' \"$word\"\n: > verifier-side-effect", 1)
+	runOracle(t, "mutates-workspace", mutatesWorkspace, 1, "verifier probe mutated", env)
+	if got, err := os.ReadFile(filepath.Join(root, "lib", "classify.sh")); err != nil || string(got) != mutatesWorkspace {
+		t.Fatalf("workspace-mutating probe changed original candidate: %q err=%v", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "verifier-side-effect")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("workspace-mutating probe escaped disposable copy: %v", err)
+	}
+	selfRewriting := strings.Replace(equivalent, "printf 'usage: classify.sh INTEGER\\n'; exit 2", "printf 'usage: classify.sh INTEGER\\n'; if test \"${1-}\" = word; then printf '#!/bin/sh\\nexit 1\\n' > \"$0\"; fi; exit 2", 1)
+	runOracle(t, "self-rewriting", selfRewriting, 1, "verifier probe mutated", env)
+	if got, err := os.ReadFile(filepath.Join(root, "lib", "classify.sh")); err != nil || string(got) != selfRewriting {
+		t.Fatalf("self-rewriting probe changed original candidate: %q err=%v", got, err)
+	}
+
+	withoutAdapter := experimentEnv(os.Environ(), nil)
+	runOracle(t, "missing-adapter", equivalent, 2, "", withoutAdapter)
+
+	candidate := filepath.Join(root, "lib", "classify.sh")
+	symlinkTarget := filepath.Join(base, "symlink-target")
+	if err := os.WriteFile(symlinkTarget, []byte(equivalent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(symlinkTarget, candidate); err != nil {
+		t.Fatal(err)
+	}
+	phase, out, err := invokeOracle(context.Background(), "symlink", env)
+	if err != nil || phase.Exit != 1 || !bytes.Contains(out, []byte(`"pass":false`)) {
+		t.Fatalf("symlink phase=%+v output=%q err=%v", phase, out, err)
+	}
+	if err := os.Remove(candidate); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte(equivalent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	timeoutShell := filepath.Join(base, "timeout-action-shell")
+	if err := os.WriteFile(timeoutShell, []byte("#!/bin/sh\nexit 124\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	timeoutEnv := experimentEnv(os.Environ(), map[string]string{"PLY_ACTION_SHELL": timeoutShell})
+	phase, out, err = invokeOracle(context.Background(), "timeout", timeoutEnv)
+	if err != nil || phase.Exit != 1 || !bytes.Contains(out, []byte("behavioral probe timed out")) {
+		t.Fatalf("timeout phase=%+v output=%q err=%v", phase, out, err)
+	}
+
+	hangingShell := filepath.Join(base, "hanging-action-shell")
+	if err := os.WriteFile(hangingShell, []byte("#!/bin/sh\n/bin/sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hangingEnv := experimentEnv(os.Environ(), map[string]string{"PLY_ACTION_SHELL": hangingShell})
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	_, _, err = invokeOracle(ctx, "interrupted", hangingEnv)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted oracle err=%v, want cancellation", err)
+	}
+	probes, err := filepath.Glob(filepath.Join(base, ".bench-l02-*"))
+	if err != nil || len(probes) != 0 {
+		t.Fatalf("behavioral probes left after test: %v err=%v", probes, err)
+	}
+	lines, err := lineCount(log)
+	if err != nil || lines != 7 {
+		t.Fatalf("action-shell invocations=%d err=%v, want 7", lines, err)
+	}
+}
+
+func TestRefreshOracleEvidenceDetectsAndRecordsMutation(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(workspace, "artifact")
+	effects := filepath.Join(base, "effects")
+	if err := os.WriteFile(artifact, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(effects, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := treeDigest(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result{WorkspaceAfter: before}
+	if err := os.WriteFile(artifact, []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(effects, []byte("effect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := refreshOracleEvidence(workspace, effects, &got)
+	if err != nil || !changed || got.WorkspaceAfter == before || got.Effects != 1 {
+		t.Fatalf("changed=%v result=%+v err=%v", changed, got, err)
 	}
 }
 
@@ -1563,7 +1758,7 @@ func helperRepair(id string) error {
 	case "l01":
 		return os.WriteFile(filepath.Join("bin", "greet"), []byte("#!/bin/sh\nprintf 'hello bench\\n'\n"), 0o700)
 	case "l02":
-		return os.WriteFile(filepath.Join("lib", "classify.sh"), []byte("#!/bin/sh\ncase \"${1-}\" in\n  0) printf 'zero\\n' ;;\n  -[1-9]|-[1-9][0-9]*) printf 'negative\\n' ;;\n  [1-9]|[1-9][0-9]*) printf 'positive\\n' ;;\n  *) printf 'usage: classify.sh INTEGER\\n'; exit 2 ;;\nesac\n"), 0o700)
+		return os.WriteFile(filepath.Join("lib", "classify.sh"), []byte("#!/bin/sh\nif test \"$#\" -ne 1; then\n  printf 'usage: classify.sh INTEGER\\n'\n  exit 2\nfi\ncase \"${1-}\" in\n  0) printf 'zero\\n' ;;\n  -[1-9]|-[1-9][0-9]*) printf 'negative\\n' ;;\n  [1-9]|[1-9][0-9]*) printf 'positive\\n' ;;\n  *) printf 'usage: classify.sh INTEGER\\n'; exit 2 ;;\nesac\n"), 0o700)
 	default:
 		return nil
 	}

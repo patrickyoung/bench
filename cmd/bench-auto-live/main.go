@@ -235,6 +235,13 @@ func prepare(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return broken(stderr, err)
 	}
+	if actionShellSource == "" {
+		for _, c := range cases {
+			if needsBehavioralActionShell(c) {
+				return broken(stderr, fmt.Errorf("checked case %s requires -action-shell so its behavioral oracle never executes candidate code on the host", c.ID))
+			}
+		}
+	}
 	manifest := runManifest{
 		Schema: runSchemaV1, Created: time.Now().UTC().Format(time.RFC3339Nano), CasesPath: casesPath, CasesSHA256: digestBytes(caseBytes),
 		ToolboxPath: toolbox, OraclePath: oracle, ExpectedPath: expected, BenchPath: bench, AskPath: ask, PlyPath: ply, Model: model, Effort: effort,
@@ -606,9 +613,23 @@ func scoreArm(ctx context.Context, manifest runManifest, c caseSpec, a arm, scra
 	}
 	oracleStdout := filepath.Join(scratch, "oracle.json")
 	oracleStderr := filepath.Join(scratch, "oracle.stderr")
-	oraclePhase, err := execute(ctx, manifest.OraclePath, []string{"score", c.ID, a.Workspace, a.Effects}, experimentEnv(os.Environ(), nil), filepath.Dir(manifest.OraclePath), "oracle", oracleStdout, oracleStderr)
+	oracleValues := map[string]string{}
+	if needsBehavioralActionShell(c) {
+		if manifest.ActionShellPath == "" {
+			return got, fmt.Errorf("oracle for %s requires the manifest-bound action shell", c.ID)
+		}
+		oracleValues["PLY_ACTION_SHELL"] = manifest.ActionShellPath
+	}
+	oraclePhase, err := execute(ctx, manifest.OraclePath, []string{"score", c.ID, a.Workspace, a.Effects}, experimentEnv(os.Environ(), oracleValues), a.Workspace, "oracle", oracleStdout, oracleStderr)
 	if err != nil {
 		return got, err
+	}
+	oracleChanged, err := refreshOracleEvidence(a.Workspace, a.Effects, &got)
+	if err != nil {
+		return got, err
+	}
+	if oracleChanged {
+		got.Failures = append(got.Failures, "external oracle changed the workspace or effect ledger")
 	}
 	got.OracleExit = oraclePhase.Exit
 	if oraclePhase.Exit >= 2 {
@@ -668,6 +689,24 @@ func scoreArm(ctx context.Context, manifest runManifest, c caseSpec, a arm, scra
 		got.Verdict = "fail"
 	}
 	return got, nil
+}
+
+func needsBehavioralActionShell(c caseSpec) bool {
+	return c.ID == "l02" && c.Check
+}
+
+func refreshOracleEvidence(workspace, effects string, got *result) (bool, error) {
+	beforeWorkspace, beforeEffects := got.WorkspaceAfter, got.Effects
+	workspaceAfter, err := treeDigest(workspace)
+	if err != nil {
+		return false, err
+	}
+	effectsAfter, err := lineCount(effects)
+	if err != nil {
+		return false, err
+	}
+	got.WorkspaceAfter, got.Effects = workspaceAfter, effectsAfter
+	return workspaceAfter != beforeWorkspace || effectsAfter != beforeEffects, nil
 }
 
 func verifyRunInputs(m runManifest) error {

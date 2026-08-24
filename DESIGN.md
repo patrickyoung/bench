@@ -88,14 +88,19 @@ executables against fresh fixture copies, records a Ply wrapper trace outside
 the worker, and relies on external artifact oracles. Contract admission stays
 a literal human action: preparation emits inspectable one-shot scripts for
 safe drafts and no script for consequential traps. Its eight cases establish
-only live process integration and exact-fixture parity, not a general model
+only live process integration and external outcome-oracle parity, not a general model
 score, telemetry stream, or automated acceptance authority. An optional
 hash-bound `-action-shell` snapshot composes Ply's action-only interpreter with
 the experiment through the literal public option on every worker invocation,
 while `PLY_ACTION_SHELL` remains available to nested Ply and host checks retain
-`/bin/sh`. This allows an operator
-adapter that exposes only the workspace and toolbox to keep the external oracle
-out of the worker, without treating the adapter as contract confinement.
+`/bin/sh`. The mechanism is optional for other case manifests but required by
+the committed corpus. The checked `l02` host verifier copies the workspace to a
+disposable probe and delegates only its fixed behavioral test through that bound
+interpreter; it rejects probe mutation and deletes the copy. The full behavior
+is stated in the intent, failures are diagnostic, and equivalent implementations pass. This
+allows an operator adapter that exposes only the workspace and toolbox to keep
+the external oracle out of the worker and prevents the host scorer from directly
+executing candidate code, without treating the adapter as contract confinement.
 
 The TUI can yield the terminal to the operator's `$SHELL` or
 `$EDITOR`, then restore itself. Its
