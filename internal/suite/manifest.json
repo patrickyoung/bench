@@ -69,7 +69,7 @@
     {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "317986a2cd9e6befc86eedb041ea8eb8eb2584b7",
+      "revision": "e27fdca093c70c5d64d0badc40ab1feabdbaacb5",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",
