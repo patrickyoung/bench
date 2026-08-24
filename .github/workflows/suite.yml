@@ -107,6 +107,12 @@ jobs:
           env ASK="$ask" BRIEF="$brief" PLY="$ply" HONE="$hone" \
             VOUCH="$not_in_suite" WEB="$not_in_suite" \
             "$draft_test/bin/draft" sync
+          if ! cmp -s "$draft/skills/draft/references/tools.md" \
+            "$draft_test/skills/draft/references/tools.md"; then
+            diff -u "$draft/skills/draft/references/tools.md" \
+              "$draft_test/skills/draft/references/tools.md" || true
+            exit 1
+          fi
           (
             cd "$draft_test"
             export ASK="$ask" BRIEF="$brief" PLY="$ply" HONE="$hone"
