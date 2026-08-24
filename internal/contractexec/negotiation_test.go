@@ -84,6 +84,10 @@ func TestRevisionMessageCarriesApprovalAuthority(t *testing.T) {
 func TestEveryActionPolicyIsVisibleDurableAndRequiredForAdmittedWork(t *testing.T) {
 	req := negotiationRequest(t)
 	req.Options.ApprovalPolicy = plyexec.ApprovalEveryAction
+	may := filepath.Join(t.TempDir(), "may")
+	if err := os.WriteFile(may, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	ply := &fakePly{event: plyexec.Event{Done: true, ExitCode: 2}}
 	ask := &fakeAsk{answer: fixtureContract}
 	store := FileStore{Dir: filepath.Join(req.Dir, "contracts")}
@@ -99,7 +103,7 @@ func TestEveryActionPolicyIsVisibleDurableAndRequiredForAdmittedWork(t *testing.
 		t.Fatalf("draft file omitted approval authority:\n%s", body)
 	}
 
-	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply}).Admit(context.Background(), AdmitRequest{
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply, MayPath: may}).Admit(context.Background(), AdmitRequest{
 		Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256,
 	}))
 	if terminal.ContractResult == nil || terminal.ContractResult.ApprovalPolicy != plyexec.ApprovalEveryAction || ply.calls != 1 || ply.req.Options.ApprovalPolicy != plyexec.ApprovalEveryAction || ply.req.Options.ContractID == "" {
@@ -151,11 +155,15 @@ func TestCagePolicyIsEditableAdmittedAndCannotBeRemovedAtRun(t *testing.T) {
 	if !strings.Contains(body, `"format": "bench.contract-draft/v3"`) || !strings.Contains(body, `"action_confinement": "cage"`) {
 		t.Fatalf("draft file:\n%s", body)
 	}
-	cage := filepath.Join(req.Dir, "cage")
-	if err := os.WriteFile(cage, []byte("cage"), 0o700); err != nil {
-		t.Fatal(err)
+	controllerDir := t.TempDir()
+	may := filepath.Join(controllerDir, "may")
+	cage := filepath.Join(controllerDir, "cage")
+	for _, path := range []string{may, cage} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply, CagePath: cage}).Admit(context.Background(), AdmitRequest{Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256}))
+	terminal := collectPly(t, (Runner{Ask: ask, Ply: ply, MayPath: may, CagePath: cage}).Admit(context.Background(), AdmitRequest{Task: req, Draft: draft, Store: store, ExpectedDraftSHA256: draft.DraftSHA256}))
 	if terminal.ContractResult == nil || terminal.ContractResult.ActionConfinement != plyexec.ConfinementCage || ask.record.Kind != "bench.contract-result/v5" {
 		t.Fatalf("terminal=%#v record=%#v", terminal, ask.record)
 	}
@@ -173,7 +181,7 @@ func TestCagePolicyIsEditableAdmittedAndCannotBeRemovedAtRun(t *testing.T) {
 		t.Fatalf("load admitted status=%q err=%v", status, err)
 	}
 	req.Options.ActionConfinement = plyexec.ConfinementOff
-	bad := collectPly(t, (Runner{Ask: ask, Ply: ply, CagePath: cage}).Run(context.Background(), RunRequest{Task: req, Draft: admitted, Store: store}))
+	bad := collectPly(t, (Runner{Ask: ask, Ply: ply, MayPath: may, CagePath: cage}).Run(context.Background(), RunRequest{Task: req, Draft: admitted, Store: store}))
 	if bad.Err == nil || !strings.Contains(bad.Err.Error(), "action confinement changed") {
 		t.Fatalf("bad=%#v", bad)
 	}
