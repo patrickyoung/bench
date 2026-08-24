@@ -103,8 +103,11 @@ jobs:
           brief="$bundle/bin/brief"
           ply="$bundle/bin/ply"
           hone="$bundle/bin/hone"
+          cage="$bundle/bin/cage"
+          may="$bundle/bin/may"
           not_in_suite="$RUNNER_TEMP/not-in-suite"
           env ASK="$ask" BRIEF="$brief" PLY="$ply" HONE="$hone" \
+            CAGE="$cage" MAY="$may" \
             VOUCH="$not_in_suite" WEB="$not_in_suite" \
             "$draft_test/bin/draft" sync
           if ! cmp -s "$draft/skills/draft/references/tools.md" \
