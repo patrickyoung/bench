@@ -181,7 +181,7 @@ func build(m suite.Manifest, o options) (string, error) {
 	if dirty {
 		installVersion += "-dirty"
 	}
-	if err := os.WriteFile(filepath.Join(root, "install.sh"), []byte(installScript(installVersion)), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "install.sh"), []byte(installScript(installVersion, componentNames(resolved.Components))), 0o755); err != nil {
 		return "", err
 	}
 	if err := smokeBundle(root, o); err != nil {
@@ -459,7 +459,50 @@ func smokeBundle(root string, o options) error {
 			return fmt.Errorf("bundled %s discovery smoke failed: exit=%v output=%q", probe.name, runErr, strings.TrimSpace(string(output)))
 		}
 	}
+
+	agentHome := filepath.Join(temp, "agent-home")
+	agent := filepath.Join(root, "bin", "agent")
+	cmd := exec.Command(agent, "new", agentHome, "suite smoke")
+	cmd.Env = env
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("bundled Agent scaffold smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(filepath.Join(agentHome, "bin", "check"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		return fmt.Errorf("prepare bundled Agent smoke home: %w", err)
+	}
+	for _, probe := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"check", []string{"home", "check", agentHome}, "valid agent home"},
+		{"zero-model run", []string{"home", "run", agentHome}, "nothing to do"},
+		{"Trail history", []string{"home", "history", agentHome}, "agent: history · home="},
+	} {
+		cmd := exec.Command(bench, probe.args...)
+		cmd.Env = env
+		output, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(output), probe.want) {
+			return fmt.Errorf("bundled Agent %s smoke failed: exit=%v output=%q", probe.name, err, strings.TrimSpace(string(output)))
+		}
+	}
+	runs, err := os.ReadDir(filepath.Join(agentHome, ".agent", "runs"))
+	if err != nil {
+		return fmt.Errorf("inspect bundled Agent smoke evidence: %w", err)
+	}
+	if len(runs) != 0 {
+		return fmt.Errorf("bundled Agent zero-model smoke created %d run artifact(s)", len(runs))
+	}
 	return nil
+}
+
+func componentVersion(m suite.Manifest, name string) (string, error) {
+	for _, component := range m.Components {
+		if component.Name == name {
+			return component.Version, nil
+		}
+	}
+	return "", fmt.Errorf("suite has no %s component", name)
 }
 
 func smokeInstall(root string, m suite.Manifest, o options) error {
@@ -481,24 +524,25 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 		}
 	}
 	bench := filepath.Join(prefix, "bin", "bench")
+	benchVersion, err := componentVersion(m, "bench")
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(bench, "version")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
 	output, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "bench "+m.Version {
-		return fmt.Errorf("installed Bench smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
+	if err != nil || strings.TrimSpace(string(output)) != "bench "+benchVersion {
+		return fmt.Errorf("installed Bench smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
 	}
-	mayVersion := ""
-	for _, component := range m.Components {
-		if component.Name == "may" {
-			mayVersion = component.Version
-			break
-		}
+	mayVersion, err := componentVersion(m, "may")
+	if err != nil {
+		return err
 	}
 	cmd = exec.Command(filepath.Join(prefix, "bin", "may"), "version")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
 	output, err = cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(output)) != "may "+mayVersion {
-		return fmt.Errorf("installed May smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("installed May smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
 	}
 	blockedPrefix := filepath.Join(temp, "blocked-prefix")
 	blockedBench := filepath.Join(blockedPrefix, "bin", "bench")
@@ -797,7 +841,15 @@ every component. `+"`SHA256SUMS`"+` covers every other shipped file.
 `, name, name)
 }
 
-func installScript(version string) string {
+func componentNames(components []suite.Component) []string {
+	names := make([]string, 0, len(components))
+	for _, component := range components {
+		names = append(names, component.Name)
+	}
+	return names
+}
+
+func installScript(version string, tools []string) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
 
@@ -809,7 +861,7 @@ case $prefix in /*) ;; *) prefix=$PWD/$prefix ;; esac
 lib=$prefix/lib/bench-suite
 dest=$lib/$version
 bindir=$prefix/bin
-tools='bench ask brief ply hone draft may cage'
+tools='%s'
 
 verify() {
 	dir=$1
@@ -871,7 +923,7 @@ echo "Bench suite $version installed in $dest"
 case :${PATH:-}: in *:"$bindir":*) ;; *)
 	echo "Add $bindir to PATH." >&2
 ;; esac
-`, version)
+`, version, strings.Join(tools, " "))
 }
 
 func report(w io.Writer, err error) int {

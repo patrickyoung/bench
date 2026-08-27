@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.6.6",
+  "version": "0.7.0",
   "go": "1.26",
   "components": [
     {
@@ -60,16 +60,36 @@
     {
       "name": "hone",
       "repository": "https://github.com/patrickyoung/hone.git",
-      "revision": "9ed128f485755e75c9223802299d0260452a1cd6",
+      "revision": "8a531e4d320713b4b85f0070be82adcd2aeea1f3",
+      "version": "0.2.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "trail",
+      "repository": "https://github.com/patrickyoung/trail.git",
+      "revision": "c269feada358eb6a7ccb53f862410655fea67e44",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
     },
     {
+      "name": "agent",
+      "repository": "https://github.com/patrickyoung/agent.git",
+      "revision": "a2b98b957d803382807e778840e735edc1288039",
+      "version": "0.1.1",
+      "kind": "files",
+      "entry": "bin/agent",
+      "assets": ["bin/agent-action-shell"],
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "e27fdca093c70c5d64d0badc40ab1feabdbaacb5",
+      "revision": "adc12ce3b9b470302f31dc46ff304361895a3256",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",

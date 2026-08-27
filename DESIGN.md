@@ -252,7 +252,7 @@ These boundaries are what let later screens compose rather than accrete:
 - Approval and confinement are separate `may` and `cage` compositions, not booleans in UI
   state.
 
-## The agent project already has a format
+## Design projects and running agent homes have distinct formats
 
 `bench` will not invent an `agent.toml`. The durable project artifact is the
 `DESIGN.md` owned by `draft`: one human-readable agreement containing the
@@ -273,6 +273,43 @@ draft prove DIR             # mutate it; measure what the check detects
 states legible and interruptible, not to reproduce any of them. The stage line
 is consequently `Ask → Design → Build → Prove → Learn`, with every stage
 leaving an ordinary file or command behind.
+
+A built standing worker is a different lifecycle object from its build
+design. Its experimental runtime form is the sibling `agent` filter's ordinary
+agent home: `AGENTS.md`, `GOAL.md`, optional `SOUL.md`, `HEARTBEAT.md`, and
+`MEMORY.md`, Brief skills, nested specialist homes, a toolbox, mutable
+`work/` and `state/`, executable `bin/check`/`bin/wake`, and controller-owned
+`.agent/runs/`. `agent show/check/run/tick/specialist/learn/history/amend`
+compile that directory through Brief, Ply, Ask, Cage, Hone, Trail, and May.
+The complete boundary and research are in
+`FILESYSTEM_AGENTS.md`. Draft remains how the system is designed and proved;
+the agent home is how an already-built digital worker is tuned and run.
+Headless `bench home [-C DIR] COMMAND...` is an attached process boundary over
+those public verbs: it supplies the selected companions but preserves
+literal argv, stdin, stdout, stderr, and exit status. Interactive `/agent`
+retains its existing and distinct Draft-promotion meaning.
+Interactive `bench -C PARENT -home NAME` starts from public `agent show` and
+offers only direct public operations: refresh, offline check, default-confined
+goal run, heartbeat tick, Trail history list, Ask-backed history check, and
+bounded read-only proposal review through `agent proposals`. A structured
+specialist form collects one child name and bounded task, then invokes public
+`agent specialist`: the name and selected model remain literal argv, the task
+uses attached stdin, and the child owns every home and execution rule. A
+separate structured form invokes `agent learn -why` for one destination skill
+and home session; it shows only replay-verified recovery evidence and cannot
+call a model or write the skill. Three adjacent exact-learning actions invoke
+public Agent commands without importing the learning envelope: prepare one
+user-named proposal from a destination and verified session, reopen its literal
+proposed `SKILL.md` bytes read-only, then replay-check and admit those exact
+bytes without another model call. A successful admission invalidates the old
+compiled home until refresh. The amendment form passes one literal reviewed
+patch name to public `agent amend`: exit 75 remains an approval-parked verdict, exit
+3 remains a decline, and only an identical retry after May grants the exact
+action can apply and receipt the definition change.
+The UI renders stdout as result data, stderr as evidence, and exit status as
+the verdict; it does not parse session internals or treat displayed prose as
+success. Authority-widening flags remain headless; definition-changing
+learning is exposed only through Hone's exact reviewed-artifact interaction.
 
 ## Interaction model
 
@@ -393,6 +430,16 @@ and writes the brief skill. There is no TUI memory schema.
     processes, with flat bounded fan-out, inherited model/tool/workspace
     context, private parent-scoped evidence, ordered failure-aware synthesis,
     and cooperative whole-tree interruption.
+13. **In progress:** validate the experimental sibling `agent` filter in real
+    homes, expose every public verb through headless `bench home`, and provide
+    a dedicated interactive view for `show/check/run/tick/history`. Headless
+    specialist runs, explicit learning, and exact May-gated definition
+    amendments are implemented. The TUI now has bounded read-only proposal
+    review, a structured direct-specialist form, model-free verified
+    learning-evidence review, and exact prepare/show/admit learning interactions.
+    The TUI also submits one literal reviewed patch through Agent's exact
+    May-gated amendment path. Neither flow imports Agent's parser, loop,
+    scheduler, evidence, approval, or confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

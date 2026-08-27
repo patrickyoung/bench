@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/patrickyoung/bench/internal/agentexec"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/autoroute"
@@ -63,6 +64,7 @@ type Config struct {
 	Task            plyexec.Worker
 	Contracts       contractexec.Negotiator
 	Draft           draftexec.Client
+	Agent           agentClient
 	Hone            honeexec.Client
 	Brief           briefexec.Client
 	Ply             plyexec.Client
@@ -75,6 +77,7 @@ type Config struct {
 	Workspace       string
 	DataDir         string
 	Project         string
+	Home            string
 	InitialPrompt   string
 	Toolbox         string
 	ActiveSkills    []string
@@ -95,6 +98,7 @@ type Model struct {
 	task              plyexec.Worker
 	contracts         contractexec.Negotiator
 	draft             draftexec.Client
+	agent             agentClient
 	hone              honeexec.Client
 	brief             briefexec.Client
 	ply               plyexec.Client
@@ -129,58 +133,86 @@ type Model struct {
 	lastAuto          *autoroute.Decision
 	autoInterrupted   bool
 
-	composer       textarea.Model
-	project        textinput.Model
+	composer        textarea.Model
+	project         textinput.Model
+	agentChild      textinput.Model
+	agentLearnSkill textinput.Model
+	agentLearnRun   textinput.Model
+
+	agentLearnProposal textinput.Model
+
+	agentAmend     textinput.Model
 	skill          textinput.Model
 	skillQuery     textinput.Model
 	skillName      textinput.Model
 	skillDirectory textinput.Model
 	// Keep the heavyweight secondary editor indirect so the event-loop object
 	// stays lean while it is passed through the tea.Model interface.
-	skillSource     *textarea.Model
-	viewport        viewport.Model
-	messages        []message
-	restored        string
-	sessions        []session.Info
-	selected        int
-	picking         bool
-	resume          bool
-	screen          screen
-	formFocus       int
-	askComposer     string
-	designDir       string
-	designBody      string
-	designCheck     string
-	designBuildable bool
-	designBroken    bool
-	buildLog        string
-	buildAnswer     string
-	buildSession    string
-	buildState      buildState
-	buildAdmitted   bool
-	proveLog        string
-	proveFindings   string
-	proveState      proveState
-	learnLog        string
-	learnOutput     string
-	learnState      learnState
-	learnReturn     screen
-	skills          []skillEntry
-	skillCursor     int
-	skillsReturn    screen
-	skillForm       skillFormMode
-	skillFormFocus  int
-	skillDetailName string
-	skillDetailPath string
-	skillBody       string
-	skillFiles      string
-	skillLint       string
-	skillLintState  skillLintState
-	skillRunLog     string
-	skillRunAnswer  string
-	skillRunState   skillRunState
-	skillRunSession string
-	activeSkills    []string
+	skillSource       *textarea.Model
+	viewport          viewport.Model
+	messages          []message
+	restored          string
+	sessions          []session.Info
+	selected          int
+	picking           bool
+	resume            bool
+	screen            screen
+	formFocus         int
+	askComposer       string
+	designDir         string
+	designBody        string
+	designCheck       string
+	designBuildable   bool
+	designBroken      bool
+	buildLog          string
+	buildAnswer       string
+	buildSession      string
+	buildState        buildState
+	buildAdmitted     bool
+	proveLog          string
+	proveFindings     string
+	proveState        proveState
+	learnLog          string
+	learnOutput       string
+	learnState        learnState
+	learnReturn       screen
+	skills            []skillEntry
+	skillCursor       int
+	skillsReturn      screen
+	skillForm         skillFormMode
+	skillFormFocus    int
+	skillDetailName   string
+	skillDetailPath   string
+	skillBody         string
+	skillFiles        string
+	skillLint         string
+	skillLintState    skillLintState
+	skillRunLog       string
+	skillRunAnswer    string
+	skillRunState     skillRunState
+	skillRunSession   string
+	activeSkills      []string
+	agentHome         string
+	agentDefinition   string
+	agentOutput       string
+	agentActivity     string
+	agentCommand      string
+	agentExitCode     int
+	agentState        agentState
+	agentChildOpen    bool
+	agentChildFocus   int
+	agentChildName    string
+	agentChildTask    string
+	agentLearnOpen    bool
+	agentLearnFocus   int
+	agentLearnName    string
+	agentLearnSession string
+
+	agentLearnProposalName string
+	agentLearnMode         agentLearnMode
+
+	agentAmendOpen bool
+	agentAmendName string
 
 	width          int
 	height         int
@@ -196,6 +228,7 @@ type Model struct {
 	cancel         context.CancelFunc
 	events         <-chan askexec.Event
 	draftEvents    <-chan draftexec.Event
+	agentEvents    <-chan agentexec.Event
 	honeEvents     <-chan honeexec.Event
 	briefEvents    <-chan briefexec.Event
 	plyEvents      <-chan plyexec.Event
@@ -208,7 +241,9 @@ type processEvent askexec.Event
 type tickMsg time.Time
 type beginReplayMsg struct{}
 type beginProjectMsg struct{}
+type beginAgentHomeMsg struct{}
 type draftProcessEvent draftexec.Event
+type agentProcessEvent agentexec.Event
 type honeProcessEvent honeexec.Event
 type briefProcessEvent briefexec.Event
 type plyProcessEvent plyexec.Event
@@ -220,6 +255,10 @@ type askClient interface {
 	askexec.Replayer
 }
 
+type agentClient interface {
+	Start(context.Context, []string, string) <-chan agentexec.Event
+}
+
 type job uint8
 
 const (
@@ -229,6 +268,7 @@ const (
 	jobDraftCheck
 	jobDraftBuild
 	jobDraftProve
+	jobAgent
 	jobHone
 	jobBriefList
 	jobBriefPath
@@ -256,6 +296,28 @@ const (
 	screenSkillForm
 	screenSkillRun
 	screenContract
+	screenAgentHome
+)
+
+type agentState uint8
+
+const (
+	agentUnknown agentState = iota
+	agentRunning
+	agentSucceeded
+	agentNegative
+	agentApprovalPending
+	agentBroken
+	agentInterrupted
+)
+
+type agentLearnMode uint8
+
+const (
+	agentLearnEvidence agentLearnMode = iota
+	agentLearnPrepare
+	agentLearnShow
+	agentLearnAdmit
 )
 
 type buildState uint8
@@ -332,6 +394,31 @@ func New(cfg Config) *Model {
 	project.Prompt = ""
 	project.CharLimit = 240
 	project.SetWidth(68)
+	agentChild := textinput.New()
+	agentChild.Placeholder = "researcher"
+	agentChild.Prompt = ""
+	agentChild.CharLimit = 64
+	agentChild.SetWidth(68)
+	agentLearnSkill := textinput.New()
+	agentLearnSkill.Placeholder = "triage"
+	agentLearnSkill.Prompt = ""
+	agentLearnSkill.CharLimit = 64
+	agentLearnSkill.SetWidth(68)
+	agentLearnRun := textinput.New()
+	agentLearnRun.Placeholder = "SESSION.jsonl"
+	agentLearnRun.Prompt = ""
+	agentLearnRun.CharLimit = 1024
+	agentLearnRun.SetWidth(68)
+	agentLearnProposal := textinput.New()
+	agentLearnProposal.Placeholder = "recovery.json"
+	agentLearnProposal.Prompt = ""
+	agentLearnProposal.CharLimit = 255
+	agentLearnProposal.SetWidth(68)
+	agentAmend := textinput.New()
+	agentAmend.Placeholder = "tighten-checking.patch"
+	agentAmend.Prompt = ""
+	agentAmend.CharLimit = 255
+	agentAmend.SetWidth(68)
 	skill := textinput.New()
 	skill.Placeholder = "agent-house"
 	skill.Prompt = ""
@@ -371,6 +458,7 @@ func New(cfg Config) *Model {
 		task:            cfg.Task,
 		contracts:       cfg.Contracts,
 		draft:           cfg.Draft,
+		agent:           cfg.Agent,
 		hone:            cfg.Hone,
 		brief:           cfg.Brief,
 		ply:             cfg.Ply,
@@ -390,18 +478,25 @@ func New(cfg Config) *Model {
 		taskMode:        true,
 		composer:        composer,
 		project:         project,
-		skill:           skill,
-		skillQuery:      skillQuery,
-		skillName:       skillName,
-		skillDirectory:  skillDirectory,
-		skillSource:     &skillSource,
-		viewport:        view,
-		sessions:        cfg.Sessions,
-		activeSkills:    append([]string(nil), cfg.ActiveSkills...),
-		resume:          cfg.Resume,
-		width:           80,
-		height:          24,
-		dark:            true,
+		agentChild:      agentChild,
+		agentLearnSkill: agentLearnSkill,
+		agentLearnRun:   agentLearnRun,
+
+		agentLearnProposal: agentLearnProposal,
+
+		agentAmend:     agentAmend,
+		skill:          skill,
+		skillQuery:     skillQuery,
+		skillName:      skillName,
+		skillDirectory: skillDirectory,
+		skillSource:    &skillSource,
+		viewport:       view,
+		sessions:       cfg.Sessions,
+		activeSkills:   append([]string(nil), cfg.ActiveSkills...),
+		resume:         cfg.Resume,
+		width:          80,
+		height:         24,
+		dark:           true,
 	}
 	if m.newSession == "" {
 		m.newSession = m.session
@@ -413,6 +508,11 @@ func New(cfg Config) *Model {
 		m.screen = screenDesignReview
 		m.picking = false
 	}
+	if cfg.Home != "" {
+		m.agentHome = cfg.Home
+		m.screen = screenAgentHome
+		m.picking = false
+	}
 	m.applyTheme()
 	m.syncContent()
 	return &m
@@ -421,6 +521,9 @@ func New(cfg Config) *Model {
 func (m *Model) Init() tea.Cmd {
 	if m.designDir != "" && m.screen == screenDesignReview {
 		return func() tea.Msg { return beginProjectMsg{} }
+	}
+	if m.agentHome != "" && m.screen == screenAgentHome {
+		return func() tea.Msg { return beginAgentHomeMsg{} }
 	}
 	if m.resume {
 		return func() tea.Msg { return beginReplayMsg{} }
@@ -446,10 +549,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startReplay(m.session)
 	case beginProjectMsg:
 		return m.startDraftCheck()
+	case beginAgentHomeMsg:
+		return m.startAgentCommand("show")
 	case processEvent:
 		return m.updateProcess(askexec.Event(msg))
 	case draftProcessEvent:
 		return m.updateDraftProcess(draftexec.Event(msg))
+	case agentProcessEvent:
+		return m.updateAgentProcess(agentexec.Event(msg))
 	case honeProcessEvent:
 		return m.updateLearnProcess(honeexec.Event(msg))
 	case briefProcessEvent:
@@ -507,6 +614,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showHelp {
 				m.composer.Blur()
 				m.project.Blur()
+				m.agentChild.Blur()
+				m.agentLearnSkill.Blur()
+				m.agentLearnRun.Blur()
+				m.agentLearnProposal.Blur()
+				m.agentAmend.Blur()
 				m.skillQuery.Blur()
 				m.skillName.Blur()
 				m.skillDirectory.Blur()
@@ -537,8 +649,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncContent()
 			return m, tea.Suspend
 		}
-		if key == "f2" && !m.running && !m.picking && !isSkillScreen(m.screen) {
+		if key == "f2" && !m.running && !m.picking && !isSkillScreen(m.screen) && m.screen != screenAgentHome {
 			return m.openSkills()
+		}
+		if m.screen == screenAgentHome {
+			return m.updateAgentHome(msg, key)
 		}
 		if isSkillScreen(m.screen) {
 			return m.updateSkills(msg, key)
@@ -1231,6 +1346,8 @@ func (m *Model) interrupt() {
 			name = "ask"
 		case jobDraftNew, jobDraftCheck, jobDraftBuild, jobDraftProve:
 			name = "draft"
+		case jobAgent:
+			name = "agent"
 		case jobHone:
 			name = "hone"
 		case jobBriefList, jobBriefPath, jobBriefCat, jobBriefFiles, jobBriefLint, jobBriefNew:
@@ -1298,6 +1415,11 @@ func (m *Model) resize() {
 	m.composer.SetWidth(w - 2)
 	m.composer.SetHeight(composerHeight)
 	m.project.SetWidth(w - 6)
+	m.agentChild.SetWidth(w - 6)
+	m.agentLearnSkill.SetWidth(w - 6)
+	m.agentLearnRun.SetWidth(w - 6)
+	m.agentLearnProposal.SetWidth(w - 6)
+	m.agentAmend.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
 	m.skillQuery.SetWidth(w - 6)
 	m.skillName.SetWidth(w - 6)
@@ -1315,6 +1437,8 @@ func (m *Model) syncContent() {
 	var content string
 	if m.showHelp {
 		content = m.renderHelp(width)
+	} else if m.screen == screenAgentHome {
+		content = m.renderAgentHome(width)
 	} else if m.screen == screenDesignForm {
 		content = m.renderDesignForm(width)
 	} else if m.screen == screenDesignReview {
@@ -1366,7 +1490,7 @@ func (m *Model) syncContent() {
 		}
 		return
 	}
-	if m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn || m.screen == screenSkillRun {
+	if m.screen == screenAgentHome || m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn || m.screen == screenSkillRun {
 		if wasBottom {
 			m.viewport.GotoBottom()
 		}
@@ -1598,6 +1722,48 @@ func formatBytes(n int64) string {
 
 func (m *Model) renderHelp(width int) string {
 	t := makeTheme(m.dark)
+	if m.screen == screenAgentHome {
+		escapeHelp := "interrupt, or close the agent-home view"
+		if m.agentChildOpen {
+			escapeHelp = "cancel the specialist form without invoking a child"
+		} else if m.agentLearnOpen {
+			switch m.agentLearnMode {
+			case agentLearnPrepare:
+				escapeHelp = "cancel before any proposal or skill is written"
+			case agentLearnAdmit:
+				escapeHelp = "cancel before the reviewed lesson is admitted"
+			default:
+				escapeHelp = "cancel the evidence review without learning"
+			}
+		} else if m.agentAmendOpen {
+			escapeHelp = "cancel the amendment form without invoking Agent or May"
+		}
+		rows := []string{
+			t.hero.Render("Agent home keyboard"), "",
+			helpRow(t, "r", "refresh the exact compiled home with agent show", width),
+			helpRow(t, "c", "validate the home offline with agent check", width),
+			helpRow(t, "g", "pursue GOAL.md through the default confined run", width),
+			helpRow(t, "t", "run the cheap heartbeat gate", width),
+			helpRow(t, "l", "list replayable run history as Trail JSONL", width),
+			helpRow(t, "v", "ask Trail and Ask to replay-check every run", width),
+			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
+			helpRow(t, "s", "open a bounded specialist name and task form", width),
+			helpRow(t, "h", "review one session's verified learning evidence via Hone", width),
+			helpRow(t, "n", "prepare exact proposed skill bytes from one recovery", width),
+			helpRow(t, "o", "open one exact learning proposal read-only", width),
+			helpRow(t, "u", "admit one reviewed proposal without another model call", width),
+			helpRow(t, "a", "submit one exact reviewed patch through Agent and May", width),
+			helpRow(t, "tab", "move between fields in the active form", width),
+			helpRow(t, "ctrl+enter", "submit the active form (ctrl+s fallback)", width),
+			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
+			helpRow(t, "esc", escapeHelp, width),
+			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
+			helpRow(t, "f1", "close this help", width), "",
+			t.muted.Render("Agent owns the home parser, loop, evidence, history, approval, and confinement. Bench only invokes its public commands."),
+			t.code.Width(max(10, width-4)).Render("agent show " + m.agentHome + "\nagent proposals " + m.agentHome + "\nagent history " + m.agentHome + " check"),
+		}
+		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
+	}
 	if m.screen == screenContract {
 		rows := []string{
 			t.hero.Render("Contract review keyboard"), "",
@@ -1799,7 +1965,9 @@ func (m *Model) View() tea.View {
 	if !m.taskMode {
 		section = "ask"
 	}
-	if m.screen == screenDesignForm || m.screen == screenDesignReview {
+	if m.screen == screenAgentHome {
+		section = "agent home"
+	} else if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		section = "design"
 	} else if m.screen == screenBuild {
 		section = "build"
@@ -1812,7 +1980,36 @@ func (m *Model) View() tea.View {
 	} else if m.screen == screenContract {
 		section = "contract"
 	}
-	if m.screen == screenDesignForm && m.running {
+	if m.screen == screenAgentHome && m.running {
+		state = "running"
+	} else if m.screen == screenAgentHome && m.agentState == agentSucceeded {
+		switch m.agentCommand {
+		case "run":
+			state = "accepted"
+		case "show", "check":
+			state = "valid"
+		case "history", "history-check":
+			state = "history"
+		case "proposals":
+			state = "reviewed"
+		case "learn-prepare":
+			state = "prepared"
+		case "learn-show":
+			state = "reviewed"
+		case "learn-admit":
+			state = "admitted"
+		default:
+			state = "complete"
+		}
+	} else if m.screen == screenAgentHome && m.agentState == agentNegative {
+		state = "not accepted"
+	} else if m.screen == screenAgentHome && m.agentState == agentApprovalPending {
+		state = "approval parked"
+	} else if m.screen == screenAgentHome && m.agentState == agentBroken {
+		state = "broken"
+	} else if m.screen == screenAgentHome {
+		state = "inspect"
+	} else if m.screen == screenDesignForm && m.running {
 		state = "drafting"
 	} else if m.screen == screenDesignForm {
 		state = "shape"
@@ -1916,6 +2113,46 @@ func (m *Model) View() tea.View {
 		if m.running {
 			composerContent = t.muted.Render("The read-only compiler is revising the proposal. Ply has not started.")
 		}
+	} else if m.screen == screenAgentHome && m.agentChildOpen {
+		composerLabel = t.sessionLabel.Render(" SPECIALIST TASK ")
+		composerContent = m.composer.View()
+	} else if m.screen == screenAgentHome && m.agentLearnOpen {
+		switch m.agentLearnMode {
+		case agentLearnPrepare:
+			composerLabel = t.sessionLabel.Render(" EXACT LEARNING PROPOSAL ")
+			composerContent = t.muted.Render("One model call words the proposal. The skill remains unchanged until a separate exact admission.")
+		case agentLearnShow:
+			composerLabel = t.sessionLabel.Render(" EXACT LEARNING PROPOSAL ")
+			composerContent = t.muted.Render("Read-only artifact validation and literal SKILL.md bytes; no model or write.")
+		case agentLearnAdmit:
+			composerLabel = t.sessionLabel.Render(" REVIEWED LEARNING ADMISSION ")
+			composerContent = t.muted.Render("No model call. Changed evidence, wording, destination, or proposal bytes are refused.")
+		default:
+			composerLabel = t.sessionLabel.Render(" VERIFIED LEARNING EVIDENCE ")
+			composerContent = t.muted.Render("Replay-verified, model-free evidence review. No proposal or skill write.")
+		}
+	} else if m.screen == screenAgentHome && m.agentAmendOpen {
+		composerLabel = t.sessionLabel.Render(" MAY-GATED AMENDMENT ")
+		composerContent = t.muted.Render("The first submit parks the exact action. After a separate May decision, rerun the identical patch name to apply it.")
+	} else if m.screen == screenAgentHome {
+		composerLabel = t.faint.Render(" AGENT VERDICT ")
+		verdict, verdictStyle := m.agentVerdict(t)
+		detail := "Agent has not inspected this home yet."
+		if m.agentState == agentRunning {
+			detail = "The standalone agent command owns this operation and its evidence."
+		} else if m.agentState == agentSucceeded {
+			detail = "The public command exited zero; inspect its exact output above."
+		} else if m.agentState == agentNegative {
+			detail = "A negative exit is a usable verdict, not controller success."
+			if m.agentCommand == "amend" && m.agentExitCode == 3 {
+				detail = "May declined this exact amendment; the definition is unchanged."
+			}
+		} else if m.agentState == agentApprovalPending {
+			detail = "May parked the exact action; the definition is unchanged. Decide its digest separately, then retry the identical command."
+		} else if m.agentState == agentBroken {
+			detail = "The agent command could not produce a trustworthy result."
+		}
+		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
 	} else if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
 		if m.formFocus == 1 && !m.running {
@@ -2005,7 +2242,25 @@ func (m *Model) View() tea.View {
 	composer := t.composer.Width(max(20, w-4)).Height(m.composer.Height()).Render(composerContent)
 	notice := m.notice
 	if notice == "" {
-		if m.screen == screenContract {
+		if m.screen == screenAgentHome {
+			if m.agentChildOpen {
+				notice = "tab move   ctrl+enter run specialist   esc cancel   f1 help"
+			} else if m.agentLearnOpen {
+				action := "review evidence"
+				if m.agentLearnMode == agentLearnPrepare {
+					action = "prepare exact lesson"
+				} else if m.agentLearnMode == agentLearnShow {
+					action = "open exact lesson"
+				} else if m.agentLearnMode == agentLearnAdmit {
+					action = "admit reviewed lesson"
+				}
+				notice = "tab move   ctrl+enter " + action + "   esc cancel   f1 help"
+			} else if m.agentAmendOpen {
+				notice = "ctrl+enter submit exact amendment   esc cancel   f1 help"
+			} else {
+				notice = "r inspect   g run   h evidence   n prepare   o open   u admit   a amend   f1 help"
+			}
+		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
 		} else if m.screen == screenDesignForm {
 			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
@@ -2035,6 +2290,8 @@ func (m *Model) View() tea.View {
 	rightContext := filepath.Base(m.session) + "  ·  " + m.modelDisplay()
 	if m.screen == screenContract {
 		rightContext = filepath.Base(m.contractStore.DraftPath())
+	} else if m.screen == screenAgentHome {
+		rightContext = filepath.Base(m.agentHome) + "  ·  " + m.agentCommand
 	} else if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		rightContext = filepath.Base(m.designDir)
 		if rightContext == "." || rightContext == "" {
@@ -2208,6 +2465,11 @@ func (m *Model) applyTheme() {
 	inputStyles.Focused.Placeholder = t.faint
 	inputStyles.Blurred = inputStyles.Focused
 	m.project.SetStyles(inputStyles)
+	m.agentChild.SetStyles(inputStyles)
+	m.agentLearnSkill.SetStyles(inputStyles)
+	m.agentLearnRun.SetStyles(inputStyles)
+	m.agentLearnProposal.SetStyles(inputStyles)
+	m.agentAmend.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
 	m.skillQuery.SetStyles(inputStyles)
 	m.skillName.SetStyles(inputStyles)
@@ -2225,7 +2487,10 @@ func lastUsefulLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
-			return ansi.TruncateLeft(line, 120, "…")
+			if lipgloss.Width(line) > 120 {
+				return ansi.TruncateLeft(line, 120, "…")
+			}
+			return line
 		}
 	}
 	return ""

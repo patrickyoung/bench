@@ -10,7 +10,7 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.6.6" || len(m.Components) != 8 {
+	if m.Version != "0.7.0" || len(m.Components) != 10 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
 	}
 	data, err := JSON(m)
@@ -27,9 +27,19 @@ func TestManifestRejectsMissingSuiteMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.Components = m.Components[:len(m.Components)-1]
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "draft") {
-		t.Fatalf("Validate() = %v", err)
+	for _, missing := range []string{"bench", "ask", "brief", "ply", "may", "cage", "hone", "trail", "agent", "draft"} {
+		t.Run(missing, func(t *testing.T) {
+			broken := m
+			broken.Components = nil
+			for _, component := range m.Components {
+				if component.Name != missing {
+					broken.Components = append(broken.Components, component)
+				}
+			}
+			if err := broken.Validate(); err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
 	}
 }
 
@@ -53,4 +63,21 @@ func TestManifestRejectsUnsafeComponentFields(t *testing.T) {
 			t.Fatal("unsafe manifest unexpectedly validated")
 		}
 	}
+}
+
+func TestEmbeddedManifestKeepsAgentActionShellPrivate(t *testing.T) {
+	m, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range m.Components {
+		if component.Name != "agent" {
+			continue
+		}
+		if component.Kind != "files" || component.Entry != "bin/agent" || len(component.Assets) != 1 || component.Assets[0] != "bin/agent-action-shell" {
+			t.Fatalf("agent component = %#v", component)
+		}
+		return
+	}
+	t.Fatal("agent component is missing")
 }

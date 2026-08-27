@@ -289,6 +289,35 @@ func (m *Model) focusCurrent() tea.Cmd {
 	if m.running || m.picking || m.screen == screenDesignReview || m.screen == screenBuild || m.screen == screenProve {
 		return nil
 	}
+	if m.screen == screenAgentHome {
+		if m.agentChildOpen && m.agentChildFocus == 0 {
+			m.composer.Blur()
+			return m.agentChild.Focus()
+		}
+		if m.agentChildOpen {
+			m.agentChild.Blur()
+			return m.composer.Focus()
+		}
+		if m.agentLearnOpen {
+			m.agentLearnSkill.Blur()
+			m.agentLearnRun.Blur()
+			m.agentLearnProposal.Blur()
+			switch {
+			case m.agentLearnMode == agentLearnShow || m.agentLearnMode == agentLearnAdmit:
+				return m.agentLearnProposal.Focus()
+			case m.agentLearnFocus == 0:
+				return m.agentLearnSkill.Focus()
+			case m.agentLearnFocus == 1:
+				return m.agentLearnRun.Focus()
+			default:
+				return m.agentLearnProposal.Focus()
+			}
+		}
+		if m.agentAmendOpen {
+			return m.agentAmend.Focus()
+		}
+		return nil
+	}
 	if m.screen == screenSkills {
 		m.composer.Blur()
 		m.project.Blur()
@@ -338,9 +367,20 @@ func filterFailure(name string, code int, err error, activity string) string {
 // ProjectPath resolves an agent project while keeping the TUI's file writes
 // inside its explicit workspace.
 func ProjectPath(workspace, value string) (string, error) {
+	return containedPath(workspace, value, "project directory")
+}
+
+// HomePath resolves an existing agent home through the same workspace
+// containment boundary used for Draft projects. Agent itself remains the
+// authority on whether the resulting directory is a valid home.
+func HomePath(workspace, value string) (string, error) {
+	return containedPath(workspace, value, "agent home")
+}
+
+func containedPath(workspace, value, label string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", errors.New("project directory is empty")
+		return "", errors.New(label + " is empty")
 	}
 	workspace, err := filepath.Abs(workspace)
 	if err != nil {
@@ -352,7 +392,7 @@ func ProjectPath(workspace, value string) (string, error) {
 	}
 	path = filepath.Clean(path)
 	if !pathWithin(workspace, path) {
-		return "", errors.New("project directory must stay inside the workspace")
+		return "", errors.New(label + " must stay inside the workspace")
 	}
 	workspaceReal, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
@@ -363,20 +403,20 @@ func ProjectPath(workspace, value string) (string, error) {
 		stat, statErr := os.Lstat(ancestor)
 		if statErr == nil {
 			if ancestor == path && stat.Mode()&os.ModeSymlink != 0 {
-				return "", errors.New("project directory may not be a symbolic link")
+				return "", errors.New(label + " may not be a symbolic link")
 			}
 			real, evalErr := filepath.EvalSymlinks(ancestor)
 			if evalErr != nil || !pathWithin(workspaceReal, real) {
-				return "", errors.New("project directory must stay inside the workspace")
+				return "", errors.New(label + " must stay inside the workspace")
 			}
 			break
 		}
 		if !errors.Is(statErr, os.ErrNotExist) {
-			return "", errors.New("project directory is unreadable")
+			return "", errors.New(label + " is unreadable")
 		}
 		parent := filepath.Dir(ancestor)
 		if parent == ancestor {
-			return "", errors.New("project directory has no readable ancestor")
+			return "", errors.New(label + " has no readable ancestor")
 		}
 		ancestor = parent
 	}

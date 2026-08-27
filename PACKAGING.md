@@ -14,20 +14,26 @@ version number.
 | `brief` | skill catalogue | native executable |
 | `ply` | tool loop and executable verdict | native executable |
 | `hone` | verified learning path | native executable |
+| `trail` | read-only Ask archive inspection | native executable |
+| `agent` | filesystem-worker runtime | script plus private `bin/agent-action-shell` |
 | `draft` | agent design/build/prove composition | script plus `skills/draft` |
 | `may` | exact, single-use human action decisions | native executable |
 | `cage` | kernel-enforced model-action confinement | native executable |
 
-`rules`, `trail`, `vouch`, and `web` remain useful standalone capabilities.
+`rules`, `vouch`, and `web` remain useful standalone capabilities.
 May and Cage are now required suite components because Review/Loop can admit
 their exact-action approval and confinement policies. They remain ordinary
 independent filters; packaging them does not merge their runtimes into Bench.
+Agent and Trail are required because the folder-worker boundary includes
+replayable history. Agent remains an ordinary POSIX shell program rather than
+a runtime embedded in Bench.
 
 The release layout is relocatable:
 
 ```text
 bench-suite-VERSION-GOOS-GOARCH/
-  bin/bench  bin/ask  bin/brief  bin/ply  bin/hone  bin/draft  bin/may  bin/cage
+  bin/bench  bin/ask  bin/brief  bin/ply  bin/hone  bin/trail
+  bin/agent  bin/agent-action-shell  bin/draft  bin/may  bin/cage
   skills/draft/...
   licenses/COMPONENT/LICENSE
   licenses/third-party/MODULE-ID/...
@@ -39,11 +45,23 @@ bench-suite-VERSION-GOOS-GOARCH/
   INSTALL.md
 ```
 
+The generated installer derives its public command links from the manifest;
+there is no second hard-coded command list to update. A `files` component may
+also carry executable assets beneath `bin/` beside its public entry point.
+Those companion programs remain private unless they are separate manifest
+components. This lets a script command resolve a trusted action adapter beside
+its real suite path without adding an accidental user-facing command.
+
 When `bin/bench` sees the valid `suite.json` marker above it, it resolves its
 companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
 `BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values
-still win. Without the
-marker, a standalone or `go install` build retains the existing `PATH`
+still win. The experimental headless `bench home` boundary likewise resolves
+`agent` from `BENCH_AGENT` and its history reader from `BENCH_TRAIL`, then the
+suite when present or ordinary `PATH`; it also supplies the already-pinned May
+path for explicit definition amendments. Agent's action adapter is shipped
+beside its real script path and covered by the archive checksum, but is not a
+manifest component or public installed command. Without the marker, a
+standalone or `go install` build retains the existing `PATH`
 behavior. This lets an application invoke a private `bin/bench` by absolute
 path without mutating the user's environment.
 
@@ -53,7 +71,7 @@ There are two useful version axes and they should not be conflated:
 
 1. **Suite version.** Bench owns a SemVer release such as `0.5.0`. Developers
    and applications depend on this version. `internal/suite/manifest.json`
-pins every component to an exact Git commit and records its standalone
+   pins every component to an exact Git commit and records its standalone
    version, SPDX license identifier, and license file.
 2. **Component version.** Each filter keeps its own SemVer and release cadence
    for standalone users. Components do not move in lockstep merely because a
@@ -61,7 +79,7 @@ pins every component to an exact Git commit and records its standalone
 
 An update to any required component is a manifest change followed by the full
 suite build and smoke tests. Compatibility is therefore demonstrated by the
-artifact that ships, rather than inferred from eight independent `@latest`
+artifact that ships, rather than inferred from ten independent `@latest`
 resolutions. Exact revisions are intentional while the command contracts are
 young; version ranges can be introduced only after those contracts have
 declared compatibility majors of their own.
@@ -130,21 +148,25 @@ deliberately does not claim to be legal advice or a complete standardized
 SBOM.
 
 Every native build also launches the bundled Bench by absolute path with a
-minimal `PATH` and confirms that both its Ask and Ply boundaries reach the
-adjacent suite executables. Cross builds compile temporary host copies from
-the same revisions so component versions and Draft's generated reference are
-still checked without executing a foreign binary.
+minimal `PATH` and confirms that its Ask and Ply boundaries reach the adjacent
+suite executables. It then scaffolds a disposable Agent home through the
+bundled script and exercises Bench's check, zero-model run, and Trail history
+boundaries; the run must create no session. Cross builds compile temporary host
+copies from the same revisions so component versions and Draft's generated
+reference are still checked without executing a foreign binary.
 
 ## Installation surfaces
 
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all eight commands without overwriting unrelated files.
+  directory, and links all ten public commands without overwriting unrelated
+  files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install eight `HEAD` formulas. It can link the eight commands and
-  keep `skills/draft` beside the versioned keg.
+  independently install ten `HEAD` formulas. It can link the ten public
+  commands and keep Agent's private adapter and `skills/draft` beside the
+  versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
   checksum during the app build, and launch its `bin/bench` by absolute path.
   Application releases pin the suite version and checksum. Keep the whole
@@ -172,18 +194,18 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all eight commands;
+   versions for all ten public commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
-   the bundled Ask/Ply/Draft boundaries, and all eight commands report their
-   pinned versions, in offline smoke tests.
+   the bundled Ask/Ply/Draft and Agent/Trail boundaries, and all ten public
+   commands report their pinned versions, in offline smoke tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.
 
 `.github/workflows/suite.yml` executes this gate on native Linux and macOS,
 for both amd64 and arm64, and retains the archives as CI artifacts. It does not
 publish a GitHub release until the tag matches the suite version and every
-matrix artifact passes. Bench, Draft, Ask, Brief, Ply, and Hone are MIT
-licensed, and their license files travel in the archive. The compiled module
-inventory remains the input to third-party notice generation. The publish job
-and a Homebrew formula consume the exact checked artifacts rather than
-introducing a second build definition.
+matrix artifact passes. Bench, Draft, Ask, Brief, Ply, Hone, Trail, Agent, May,
+and Cage are MIT licensed, and their license files travel in the archive. The
+compiled module inventory remains the input to third-party notice generation.
+The publish job and a Homebrew formula consume the exact checked artifacts
+rather than introducing a second build definition.

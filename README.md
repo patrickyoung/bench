@@ -12,7 +12,9 @@ commands, results, and final answer occupy one explicit Ask session.
 **Task → Design → Build → Prove → Learn** is the promotion
 path for agent work: the project is draft's ordinary `DESIGN.md`; building and
 evaluation are `draft build/prove`; durable lessons are admitted by `hone` into
-an ordinary `brief` skill. `bench` is not a second model client, tool runtime,
+an ordinary `brief` skill. When the result is a standing digital worker, the
+experimental sibling `agent` filter gives that built worker a separate,
+folder-shaped runtime form. `bench` is not a second model client, tool runtime,
 evaluator, or memory store. It runs the installed filters and respects their
 stdout/stderr/exit-status contracts.
 
@@ -33,6 +35,8 @@ Requirements when running from source rather than a suite archive:
 - `hone` on `PATH` to admit lessons from verified build recoveries
 - `may` and `cage` on `PATH` for admitted exact-action approval and action-only
   confinement
+- `agent` on `PATH` for the experimental `bench home` folder-worker boundary
+- `trail` on `PATH` for that boundary's read-only run-history operations
 
 Build a relocatable development suite from the sibling repositories with:
 
@@ -42,7 +46,7 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-eight commands under `~/.local`. Pass `-prefix DIR` to change the destination.
+ten public commands under `~/.local`. Pass `-prefix DIR` to change the destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.
 
@@ -52,6 +56,7 @@ go run . -m openai-codex/your-model 'Find the failing test and fix it.'
 go run . -f 20260820-154753-32d9f393
 go run . -n
 go run . -project path/to/existing-agent
+go run . -C path/to/agent-parent -home built-agent
 git diff | bench 'review this patch'
 ```
 
@@ -115,6 +120,14 @@ running from the bench checkout before installing `draft/bin/draft` on
 `BENCH_BRIEF` and `BENCH_PLY` select the executables used by the Skills
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
+
+`BENCH_AGENT` selects the standalone folder-agent executable used by
+`bench home`, and `BENCH_TRAIL` selects its read-only history browser. Bench
+passes its selected Ask, Ply, Brief, Cage, Hone, Trail, and May paths into that
+process; it does not parse or reimplement agent-home behavior. Agent scrubs
+May from model-run environments and resolves it only for the controller's
+explicit amendment command. Trail remains a standalone `PATH` dependency
+until it and Agent are added to the pinned suite.
 
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
@@ -598,6 +611,101 @@ To add features later, edit the project's ordinary files or `DESIGN.md`, then
 reopen it with `bench -project DIR`. Bench reruns `draft check` and returns to
 the same Build → Prove → Learn loop. There is no project registry to migrate
 or synchronize.
+
+## From a checked design to a running folder agent
+
+Draft's `DESIGN.md` remains the build agreement. A worker intended to persist
+after that build can use the experimental sibling `agent` filter as its
+runtime link step:
+
+```sh
+agent new support-chief
+agent show support-chief
+agent check support-chief
+agent run support-chief
+agent tick support-chief
+agent specialist support-chief researcher -- 'answer one bounded question'
+agent learn -into triage support-chief SESSION.jsonl
+agent learn -into triage -prepare recovery.json support-chief SESSION.jsonl
+agent learn -show recovery.json support-chief
+agent learn -admit recovery.json support-chief
+agent proposals support-chief
+agent amend support-chief tighten-checking.patch
+```
+
+Bench exposes the same headless process boundary when it is useful to keep one
+suite entry point:
+
+```sh
+bench home show support-chief
+bench home run -m provider/model support-chief
+bench home tick support-chief
+bench home specialist support-chief researcher -- 'answer one bounded question'
+bench home learn -into triage support-chief SESSION.jsonl
+bench home learn -into triage -prepare recovery.json support-chief SESSION.jsonl
+bench home learn -show recovery.json support-chief
+bench home learn -admit recovery.json support-chief
+bench home history support-chief
+bench home history support-chief check
+bench home proposals support-chief
+bench home amend support-chief tighten-checking.patch
+```
+
+Everything after the agent command is literal argv, stdin remains attached,
+and the agent's stdout, stderr, and exit status pass through unchanged.
+`bench home` is therefore different from interactive `/agent`: `/agent`
+promotes a task into a Draft design, while `bench home` operates an already
+built folder worker.
+
+An existing home can also open as a dedicated interactive view:
+
+```sh
+bench -C "$PWD/agents" -home support-chief
+```
+
+That screen begins with public `agent show`; `r` refreshes the compiled home,
+`c` runs the offline check, `g` pursues `GOAL.md`, `t` runs the cheap heartbeat
+gate, `l` lists Trail history, `v` replay-checks it through Ask, `p` shows the
+bounded literal patches and exact May actions through the read-only public
+`agent proposals` command, `s` opens a structured direct-specialist form, and
+`h` reviews one session's replay-verified learning evidence through public
+`agent learn -why` without calling a model or changing a skill. `n` prepares
+one user-named exact learning proposal from a destination skill and verified
+session, `o` reopens and validates that proposal without a model or write, and
+`u` replay-checks and admits its literal proposed `SKILL.md` bytes without
+another model call. `a` opens an amendment form for one reviewed patch filename
+and invokes literal `agent amend HOME PATCH`.
+The specialist form sends one portable child name and the caller-selected
+model as literal argv while the bounded task travels on attached stdin; the
+child keeps its own context, work, check, and evidence. Stdout, stderr, and the
+executable exit verdict stay distinct. Network widening, unconfined runs,
+and arbitrary session browsing remain explicit headless commands rather than
+hidden TUI defaults. Bench passes learning fields as literal Agent arguments;
+it does not parse, recreate, or weaken Hone's artifact contract. Preparation
+never overwrites an artifact or changes a skill. Admission rejects changed
+source evidence, changed wording evidence, stale destination bytes, changed
+paths, and any proposal whose rehashed result is not Hone's exact allowed
+append or scaffold delta. Amendment submission never grants itself: exit 75
+displays the exact May request as parked with the definition unchanged; decide
+its digest separately, then repeat the same form submission.
+Exit 3 remains declined, and only Agent's zero exit is shown as applied; the
+old compiled view is then cleared until `r` reloads it. Hone's `-N` can generate
+write-free wording directly, but reviewed admission uses the stricter
+`-prepare` / `show` / `admit` artifact path. A successful admission clears the
+old compiled view until `r` reloads the changed skill catalogue.
+
+The home keeps definition, mutable work/state, and controller evidence in
+separate directories. Brief owns its skills, Ply and Ask own its loop and
+session, `bin/check` owns completion, `bin/wake` can suppress idle model calls,
+direct child homes keep separate evidence, Hone owns explicit verified
+learning, May owns exact human approval for one reviewed root-definition
+patch, and Cage owns the default write/network boundary. Approved amendments
+are revalidated, rolled back on failure, and receipted under
+`.agent/amendments/`. The current
+vertical slice is available through `bench home` and the dedicated `-home`
+view, but is not yet included in Bench's pinned suite. See
+[FILESYSTEM_AGENTS.md](FILESYSTEM_AGENTS.md) for the cross-system research,
+security model, and delivery plan.
 
 See [DESIGN.md](DESIGN.md) for the product model and why the TUI remains a
 thin control plane over the filters.

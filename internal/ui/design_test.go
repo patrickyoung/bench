@@ -227,6 +227,17 @@ func TestProjectPathCannotEscapeThroughSymlinkedParent(t *testing.T) {
 	}
 }
 
+func TestHomePathUsesWorkspaceContainment(t *testing.T) {
+	workspace := t.TempDir()
+	home := filepath.Join(workspace, "support-chief")
+	if got, err := HomePath(workspace, "support-chief"); err != nil || got != home {
+		t.Fatalf("home path = %q, %v", got, err)
+	}
+	if _, err := HomePath(workspace, "../outside"); err == nil || !strings.Contains(err.Error(), "agent home") {
+		t.Fatalf("outside home error = %v", err)
+	}
+}
+
 func TestProjectSlugIsBoringAndPortable(t *testing.T) {
 	if got := projectSlug("Build: A Go Patch_Review Agent!!!"); got != "build-a-go-patch-review-agent" {
 		t.Fatalf("slug = %q", got)
