@@ -112,6 +112,87 @@ func TestAgentHomeBrokenStatusIsNotSuccess(t *testing.T) {
 	}
 }
 
+func TestAgentSpecialistFormInvokesOneLiteralChildTask(t *testing.T) {
+	agent := &fakeAgent{}
+	home := "/work/home with spaces"
+	m := New(Config{Workspace: "/work", Home: home, Agent: agent, Model: "provider/model"})
+
+	updated, _ := m.Update(key("s"))
+	m = updated.(*Model)
+	if !m.agentChildOpen || m.agentChildFocus != 0 || !m.agentChild.Focused() {
+		t.Fatalf("specialist form open=%v focus=%d input-focused=%v", m.agentChildOpen, m.agentChildFocus, m.agentChild.Focused())
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "specialist name") {
+		t.Fatalf("empty specialist submitted args=%#v notice=%q", agent.args, m.notice)
+	}
+
+	m.agentChild.SetValue("researcher")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "bounded task") {
+		t.Fatalf("empty task submitted args=%#v notice=%q", agent.args, m.notice)
+	}
+	updated, _ = m.Update(key("tab"))
+	m = updated.(*Model)
+	task := "Compare the two fixtures.\nReturn only evidence and one recommendation."
+	m.composer.SetValue(task)
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	want := []string{"specialist", home, "researcher", "-m", "provider/model"}
+	if len(agent.args) != 1 || !slices.Equal(agent.args[0], want) {
+		t.Fatalf("specialist args = %#v, want %#v", agent.args, want)
+	}
+	if m.agentChildOpen || !m.running || m.job != jobAgent || agent.stdin[0] != task {
+		t.Fatalf("specialist start open=%v running=%v job=%v stdin=%q", m.agentChildOpen, m.running, m.job, agent.stdin)
+	}
+
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "bounded child result\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	view := m.renderAgentHome(76)
+	if m.agentState != agentSucceeded || !strings.Contains(view, "SPECIALIST RESULT") || !strings.Contains(view, "SPECIALIST CHECK ACCEPTED") {
+		t.Fatalf("specialist result state=%v view=%q", m.agentState, view)
+	}
+}
+
+func TestAgentSpecialistFormCancelsWithoutInvokingChild(t *testing.T) {
+	agent := &fakeAgent{}
+	m := New(Config{Workspace: "/work", Home: "/work/chief", Agent: agent})
+	updated, _ := m.Update(key("s"))
+	m = updated.(*Model)
+	m.agentChild.SetValue("researcher")
+	m.composer.SetValue("do not run")
+	updated, cmd := m.Update(key("esc"))
+	m = updated.(*Model)
+	if cmd != nil || m.agentChildOpen || len(agent.args) != 0 || !strings.Contains(m.notice, "cancelled") {
+		t.Fatalf("cancel cmd=%v open=%v args=%#v notice=%q", cmd != nil, m.agentChildOpen, agent.args, m.notice)
+	}
+}
+
+func TestRunningAgentSpecialistCanBeInterrupted(t *testing.T) {
+	agent := &fakeAgent{}
+	m := New(Config{Workspace: "/work", Home: "/work/chief", Agent: agent})
+	updated, _ := m.Update(key("s"))
+	m = updated.(*Model)
+	m.agentChild.SetValue("researcher")
+	m.composer.SetValue("one bounded task")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	updated, _ = m.Update(key("esc"))
+	m = updated.(*Model)
+	if !m.running || !strings.Contains(m.notice, "Interrupting agent") {
+		t.Fatalf("interrupt running=%v notice=%q", m.running, m.notice)
+	}
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 130, Err: context.Canceled})
+	m = updated.(*Model)
+	if m.running || m.agentState != agentInterrupted || !strings.Contains(m.notice, "interrupted") {
+		t.Fatalf("interrupted running=%v state=%v notice=%q", m.running, m.agentState, m.notice)
+	}
+}
+
 func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	home := filepath.Join("/work", "support-chief")
 	m := New(Config{Workspace: "/work", Home: home, Agent: &fakeAgent{}})
@@ -130,5 +211,15 @@ func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 	if !strings.Contains(m.View().Content, "Agent home keyboard") {
 		t.Fatalf("agent help missing: %q", m.View().Content)
+	}
+	m.showHelp = false
+	updated, _ = m.Update(key("s"))
+	m = updated.(*Model)
+	m.agentChild.SetValue("researcher")
+	m.composer.SetValue("one bounded task")
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if !strings.Contains(m.View().Content, "DIRECT SPECIALIST HOME") || !strings.Contains(m.View().Content, "SPECIALIST TASK") {
+		t.Fatalf("specialist form missing: %q", m.View().Content)
 	}
 }

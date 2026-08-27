@@ -135,6 +135,7 @@ type Model struct {
 
 	composer       textarea.Model
 	project        textinput.Model
+	agentChild     textinput.Model
 	skill          textinput.Model
 	skillQuery     textinput.Model
 	skillName      textinput.Model
@@ -192,6 +193,10 @@ type Model struct {
 	agentCommand    string
 	agentExitCode   int
 	agentState      agentState
+	agentChildOpen  bool
+	agentChildFocus int
+	agentChildName  string
+	agentChildTask  string
 
 	width          int
 	height         int
@@ -363,6 +368,11 @@ func New(cfg Config) *Model {
 	project.Prompt = ""
 	project.CharLimit = 240
 	project.SetWidth(68)
+	agentChild := textinput.New()
+	agentChild.Placeholder = "researcher"
+	agentChild.Prompt = ""
+	agentChild.CharLimit = 64
+	agentChild.SetWidth(68)
 	skill := textinput.New()
 	skill.Placeholder = "agent-house"
 	skill.Prompt = ""
@@ -422,6 +432,7 @@ func New(cfg Config) *Model {
 		taskMode:        true,
 		composer:        composer,
 		project:         project,
+		agentChild:      agentChild,
 		skill:           skill,
 		skillQuery:      skillQuery,
 		skillName:       skillName,
@@ -551,6 +562,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showHelp {
 				m.composer.Blur()
 				m.project.Blur()
+				m.agentChild.Blur()
 				m.skillQuery.Blur()
 				m.skillName.Blur()
 				m.skillDirectory.Blur()
@@ -1347,6 +1359,7 @@ func (m *Model) resize() {
 	m.composer.SetWidth(w - 2)
 	m.composer.SetHeight(composerHeight)
 	m.project.SetWidth(w - 6)
+	m.agentChild.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
 	m.skillQuery.SetWidth(w - 6)
 	m.skillName.SetWidth(w - 6)
@@ -1650,6 +1663,10 @@ func formatBytes(n int64) string {
 func (m *Model) renderHelp(width int) string {
 	t := makeTheme(m.dark)
 	if m.screen == screenAgentHome {
+		escapeHelp := "interrupt, or close the agent-home view"
+		if m.agentChildOpen {
+			escapeHelp = "cancel the specialist form without invoking a child"
+		}
 		rows := []string{
 			t.hero.Render("Agent home keyboard"), "",
 			helpRow(t, "r", "refresh the exact compiled home with agent show", width),
@@ -1659,8 +1676,11 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "l", "list replayable run history as Trail JSONL", width),
 			helpRow(t, "v", "ask Trail and Ask to replay-check every run", width),
 			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
+			helpRow(t, "s", "open a bounded specialist name and task form", width),
+			helpRow(t, "tab", "move between specialist name and task", width),
+			helpRow(t, "ctrl+enter", "run the selected direct child (ctrl+s fallback)", width),
 			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
-			helpRow(t, "esc", "interrupt, or close the agent-home view", width),
+			helpRow(t, "esc", escapeHelp, width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
 			helpRow(t, "f1", "close this help", width), "",
 			t.muted.Render("Agent owns the home parser, loop, evidence, history, approval, and confinement. Bench only invokes its public commands."),
@@ -2009,6 +2029,9 @@ func (m *Model) View() tea.View {
 		if m.running {
 			composerContent = t.muted.Render("The read-only compiler is revising the proposal. Ply has not started.")
 		}
+	} else if m.screen == screenAgentHome && m.agentChildOpen {
+		composerLabel = t.sessionLabel.Render(" SPECIALIST TASK ")
+		composerContent = m.composer.View()
 	} else if m.screen == screenAgentHome {
 		composerLabel = t.faint.Render(" AGENT VERDICT ")
 		verdict, verdictStyle := m.agentVerdict(t)
@@ -2113,7 +2136,11 @@ func (m *Model) View() tea.View {
 	notice := m.notice
 	if notice == "" {
 		if m.screen == screenAgentHome {
-			notice = "r inspect   c check   g run   t tick   l history   v verify   p proposals   f1 help"
+			if m.agentChildOpen {
+				notice = "tab move   ctrl+enter run specialist   esc cancel   f1 help"
+			} else {
+				notice = "r inspect   c check   g run   t tick   s specialist   p proposals   f1 help"
+			}
 		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
 		} else if m.screen == screenDesignForm {
@@ -2319,6 +2346,7 @@ func (m *Model) applyTheme() {
 	inputStyles.Focused.Placeholder = t.faint
 	inputStyles.Blurred = inputStyles.Focused
 	m.project.SetStyles(inputStyles)
+	m.agentChild.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
 	m.skillQuery.SetStyles(inputStyles)
 	m.skillName.SetStyles(inputStyles)

@@ -286,8 +286,19 @@ func waitDraftEvent(events <-chan draftexec.Event) tea.Cmd {
 }
 
 func (m *Model) focusCurrent() tea.Cmd {
-	if m.running || m.picking || m.screen == screenAgentHome || m.screen == screenDesignReview || m.screen == screenBuild || m.screen == screenProve {
+	if m.running || m.picking || m.screen == screenDesignReview || m.screen == screenBuild || m.screen == screenProve {
 		return nil
+	}
+	if m.screen == screenAgentHome {
+		if !m.agentChildOpen {
+			return nil
+		}
+		if m.agentChildFocus == 0 {
+			m.composer.Blur()
+			return m.agentChild.Focus()
+		}
+		m.agentChild.Blur()
+		return m.composer.Focus()
 	}
 	if m.screen == screenSkills {
 		m.composer.Blur()

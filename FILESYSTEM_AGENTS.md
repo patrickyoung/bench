@@ -623,16 +623,16 @@ from Slice 4. Its 102-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
 history scoping, bounded side-effect-free proposal review, May parking and
-hash binding, approved application receipts,
-rollback, controller-capability scrubbing, and exit preservation. A live
-disposable home also ran
-red-to-green through installed Brief, Ply, Ask, and Cage; its accepted Ask
-session replayed exactly, definition/evidence write probes were denied, and a
-later quiet tick created no new session. A separate live run produced a valid
-one-file definition proposal without mutating authored context. Suite
-packaging and interactive specialist/learning/proposal review remain future
-slices. Bench
-now also exposes an attached `bench home [-C DIR] COMMAND...` boundary that
+hash binding, approved application receipts, rollback,
+controller-capability scrubbing, and exit preservation. A live disposable
+home also ran red-to-green through installed Brief, Ply, Ask, and Cage; its
+accepted Ask session replayed exactly, definition/evidence write probes were
+denied, and a later quiet tick created no new session. A separate live run
+produced a valid one-file definition proposal without mutating authored
+context. Suite packaging and interactive learning/amendment application
+remain future slices.
+Bench now also exposes an attached `bench home [-C DIR] COMMAND...` boundary
+that
 passes literal arguments and streams to the public agent program, supplies the
 selected Ask/Ply/Brief/Cage/Hone/Trail/May executables, and preserves its exit status.
 The standalone runtime now also composes Trail for scoped read-only
@@ -641,9 +641,12 @@ verdict rather than a new agent-session parser.
 The first interactive Bench view is also present: `bench -C PARENT -home NAME`
 invokes public show/check/run/tick/history operations, keeps stdout, stderr,
 and exit verdicts visibly separate, and offers no implicit authority widening.
-Specialist forms and interactive learning/amendment application remain future
-work; exact proposal bytes and approval actions are visible in the TUI, while
-approval and application remain explicit headless operations.
+Its specialist form passes one direct-child name and caller-selected model as
+literal argv and a bounded self-contained task on stdin to public
+`agent specialist`; it neither parses the child catalogue nor shares parent
+conversation state. Interactive learning and amendment application remain
+future work; exact proposal bytes and approval actions are visible in the TUI,
+while approval and application remain explicit headless operations.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled

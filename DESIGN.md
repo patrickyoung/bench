@@ -291,7 +291,10 @@ retains its existing and distinct Draft-promotion meaning.
 Interactive `bench -C PARENT -home NAME` starts from public `agent show` and
 offers only direct public operations: refresh, offline check, default-confined
 goal run, heartbeat tick, Trail history list, Ask-backed history check, and
-bounded read-only proposal review through `agent proposals`.
+bounded read-only proposal review through `agent proposals`. A structured
+specialist form collects one child name and bounded task, then invokes public
+`agent specialist`: the name and selected model remain literal argv, the task
+uses attached stdin, and the child owns every home and execution rule.
 The UI renders stdout as result data, stderr as evidence, and exit status as
 the verdict; it does not parse session internals or treat displayed prose as
 success. Authority-widening flags, definition-changing learning, and
@@ -421,9 +424,11 @@ and writes the brief skill. There is no TUI memory schema.
     homes, expose every public verb through headless `bench home`, and provide
     a dedicated interactive view for `show/check/run/tick/history`. Headless
     specialist runs, explicit learning, and exact May-gated definition
-    amendments are implemented. Their reviewed interactive forms remain later
-    UI slices; they must still avoid importing Agent's parser, loop, scheduler,
-    evidence, approval, or confinement policy.
+    amendments are implemented. The TUI now has bounded read-only proposal
+    review and a structured direct-specialist form. Interactive learning and
+    amendment application remain later UI slices; they must still avoid
+    importing Agent's parser, loop, scheduler, evidence, approval, or
+    confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.
