@@ -626,6 +626,11 @@ invokes public show/check/run/tick/history operations, keeps stdout, stderr,
 and exit verdicts visibly separate, and offers no implicit authority widening.
 Specialist forms, learning/amendment review, and approval UX remain future
 work.
+The Agent repository now ships a frozen four-home integration corpus covering
+already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
+a recursive specialist. Its network-free report measures definition/compiled
+bytes and verifies a minimal real Ask archive through Trail; model-quality and
+false-success studies still need separate tasks and an external oracle.
 
 The local `agent` repository is now committed and installs as
 `~/.local/bin/agent`. Benchpack's installer derives commands from the manifest,
@@ -670,6 +675,9 @@ command independently useful.
 Add an import assistant for OpenClaw, Hermes, Claude Code, Codex, and Pi
 folders. Import copies and maps authored context; it never imports credentials,
 ambient permissions, opaque scheduler state, or unverified memory silently.
+
+The first deterministic corpus is implemented under `agent/eval/corpus`.
+Import fixtures and oracle-scored model-quality tasks remain outstanding.
 
 Publish a frozen corpus of representative homes and measure:
 
