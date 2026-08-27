@@ -294,7 +294,10 @@ goal run, heartbeat tick, Trail history list, Ask-backed history check, and
 bounded read-only proposal review through `agent proposals`. A structured
 specialist form collects one child name and bounded task, then invokes public
 `agent specialist`: the name and selected model remain literal argv, the task
-uses attached stdin, and the child owns every home and execution rule.
+uses attached stdin, and the child owns every home and execution rule. A
+separate structured form invokes `agent learn -why` for one destination skill
+and home session; it shows only replay-verified recovery evidence and cannot
+call a model or write the skill.
 The UI renders stdout as result data, stderr as evidence, and exit status as
 the verdict; it does not parse session internals or treat displayed prose as
 success. Authority-widening flags, definition-changing learning, and
@@ -425,8 +428,9 @@ and writes the brief skill. There is no TUI memory schema.
     a dedicated interactive view for `show/check/run/tick/history`. Headless
     specialist runs, explicit learning, and exact May-gated definition
     amendments are implemented. The TUI now has bounded read-only proposal
-    review and a structured direct-specialist form. Interactive learning and
-    amendment application remain later UI slices; they must still avoid
+    review, a structured direct-specialist form, and model-free verified
+    learning-evidence review. Generated lesson admission and amendment
+    application remain later UI slices; they must still avoid
     importing Agent's parser, loop, scheduler, evidence, approval, or
     confinement policy.
 

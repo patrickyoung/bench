@@ -48,6 +48,8 @@ func (m *Model) startAgentCommand(command string) (tea.Model, tea.Cmd) {
 			args = append(args, "-m", model)
 		}
 		input = m.agentChildTask
+	case "learn-why":
+		args = []string{"learn", "-into", m.agentLearnName, "-why", m.agentHome, m.agentLearnSession}
 	default:
 		m.notice = "Unknown agent operation"
 		return m, nil
@@ -120,6 +122,8 @@ func (m *Model) agentNegativeNotice() string {
 		return "One or more proposals cannot be reviewed safely · inspect Agent's evidence"
 	case "specialist":
 		return "The specialist did not reach its own executable definition of done"
+	case "learn-why":
+		return "This run has no replay-verified recovery to learn from"
 	case "run":
 		return "Not accepted · the home check still rejects the standing outcome"
 	case "history", "history-check":
@@ -144,6 +148,9 @@ func (m *Model) updateAgentHome(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.agentChildOpen {
 		return m.updateAgentSpecialistForm(msg, key)
 	}
+	if m.agentLearnOpen {
+		return m.updateAgentLearnForm(msg, key)
+	}
 	switch key {
 	case "ctrl+c", "esc":
 		return m, tea.Quit
@@ -163,6 +170,8 @@ func (m *Model) updateAgentHome(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		return m.startAgentCommand("proposals")
 	case "s":
 		return m.openAgentSpecialistForm()
+	case "h":
+		return m.openAgentLearnForm()
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -255,6 +264,79 @@ func (m *Model) startAgentSpecialist() (tea.Model, tea.Cmd) {
 	return m.startAgentCommand("specialist")
 }
 
+func (m *Model) openAgentLearnForm() (tea.Model, tea.Cmd) {
+	m.agentLearnOpen = true
+	m.agentLearnFocus = 0
+	m.agentLearnSkill.SetValue(m.agentLearnName)
+	m.agentLearnRun.SetValue(m.agentLearnSession)
+	m.agentLearnRun.Blur()
+	m.notice = "Name a destination skill and one home session to inspect through Hone -why"
+	m.viewport.GotoBottom()
+	m.syncContent()
+	return m, m.agentLearnSkill.Focus()
+}
+
+func (m *Model) closeAgentLearnForm() (tea.Model, tea.Cmd) {
+	m.agentLearnOpen = false
+	m.agentLearnSkill.Blur()
+	m.agentLearnRun.Blur()
+	m.notice = "Learning review cancelled; no model was called and no skill was changed"
+	m.syncContent()
+	return m, nil
+}
+
+func (m *Model) updateAgentLearnForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.closeAgentLearnForm()
+	case "tab", "shift+tab":
+		if m.agentLearnFocus == 0 {
+			m.agentLearnFocus = 1
+			m.agentLearnSkill.Blur()
+			m.syncContent()
+			return m, m.agentLearnRun.Focus()
+		}
+		m.agentLearnFocus = 0
+		m.agentLearnRun.Blur()
+		m.syncContent()
+		return m, m.agentLearnSkill.Focus()
+	case "ctrl+s", "ctrl+enter":
+		return m.startAgentLearnWhy()
+	case "pgup", "pgdown":
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	}
+
+	var cmd tea.Cmd
+	if m.agentLearnFocus == 0 {
+		m.agentLearnSkill, cmd = m.agentLearnSkill.Update(msg)
+	} else {
+		m.agentLearnRun, cmd = m.agentLearnRun.Update(msg)
+	}
+	m.syncContent()
+	return m, cmd
+}
+
+func (m *Model) startAgentLearnWhy() (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.agentLearnSkill.Value()) == "" {
+		m.notice = "Name the destination skill whose possible amendment you are reviewing"
+		return m, nil
+	}
+	if strings.TrimSpace(m.agentLearnRun.Value()) == "" {
+		m.notice = "Name one replayable session from this agent home"
+		return m, nil
+	}
+	m.agentLearnName = strings.TrimSpace(m.agentLearnSkill.Value())
+	m.agentLearnSession = strings.TrimSpace(m.agentLearnRun.Value())
+	m.agentLearnOpen = false
+	m.agentLearnSkill.Blur()
+	m.agentLearnRun.Blur()
+	return m.startAgentCommand("learn-why")
+}
+
 func waitAgentEvent(events <-chan agentexec.Event) tea.Cmd {
 	return func() tea.Msg {
 		event, ok := <-events
@@ -305,6 +387,8 @@ func (m *Model) renderAgentHome(width int) string {
 			label = "PROPOSALS · READ ONLY"
 		} else if m.agentCommand == "specialist" {
 			label = "SPECIALIST RESULT"
+		} else if m.agentCommand == "learn-why" {
+			label = "LEARNING EVIDENCE · READ ONLY"
 		}
 		rows = append(rows, "", t.sessionLabel.Render(label), t.document.Width(max(16, width-5)).Render(output))
 	}
@@ -322,6 +406,20 @@ func (m *Model) renderAgentHome(width int) string {
 			t.hero.Render("Run one child with separate context, work, check, and evidence."),
 			t.muted.Render("Bench passes only this name, task, and caller-selected model to agent specialist."),
 			"", label, t.input.Width(max(16, width-5)).Render(m.agentChild.View()))
+	}
+	if m.agentLearnOpen {
+		skillLabel := t.faint.Render("DESTINATION SKILL")
+		runLabel := t.faint.Render("HOME SESSION EVIDENCE")
+		if m.agentLearnFocus == 0 {
+			skillLabel = t.sessionLabel.Render("DESTINATION SKILL")
+		} else {
+			runLabel = t.sessionLabel.Render("HOME SESSION EVIDENCE")
+		}
+		rows = append(rows, "",
+			t.hero.Render("Review what one verified recovery could teach."),
+			t.muted.Render("This invokes Hone -why: replay verification and evidence extraction, with no model call or skill write."),
+			"", skillLabel, t.input.Width(max(16, width-5)).Render(m.agentLearnSkill.View()),
+			"", runLabel, t.input.Width(max(16, width-5)).Render(m.agentLearnRun.View()))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -345,6 +443,8 @@ func (m *Model) agentCommandDisplay() string {
 			model = " -m " + strconv.Quote(m.modelName)
 		}
 		return "<" + fmt.Sprint(len([]byte(m.agentChildTask))) + "-byte task> | agent specialist " + home + " " + strconv.Quote(m.agentChildName) + model
+	case "learn-why":
+		return "agent learn -into " + strconv.Quote(m.agentLearnName) + " -why " + home + " " + strconv.Quote(m.agentLearnSession)
 	case "":
 		return "agent show " + home
 	default:
@@ -381,6 +481,8 @@ func (m *Model) agentVerdict(t theme) (string, lipgloss.Style) {
 			return "✓ PROPOSALS REVIEWED", t.success
 		case "specialist":
 			return "✓ SPECIALIST CHECK ACCEPTED", t.success
+		case "learn-why":
+			return "✓ LEARNING EVIDENCE REVIEWED", t.success
 		}
 		return "✓ SUCCEEDED", t.success
 	}

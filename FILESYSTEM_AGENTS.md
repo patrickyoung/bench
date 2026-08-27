@@ -619,7 +619,7 @@ capability and truth, and the filesystem supplies composition and provenance.
 Prototype status on 27 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
 from Slice 3, and the history, learning, and reviewed-amendment headless paths
-from Slice 4. Its 102-check offline process-boundary suite covers scaffold,
+from Slice 4. Its 103-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
 history scoping, bounded side-effect-free proposal review, May parking and
@@ -644,9 +644,14 @@ and exit verdicts visibly separate, and offers no implicit authority widening.
 Its specialist form passes one direct-child name and caller-selected model as
 literal argv and a bounded self-contained task on stdin to public
 `agent specialist`; it neither parses the child catalogue nor shares parent
-conversation state. Interactive learning and amendment application remain
-future work; exact proposal bytes and approval actions are visible in the TUI,
-while approval and application remain explicit headless operations.
+conversation state. A second form invokes public `agent learn -why` with one
+destination skill and home session, exposing replay-verified recovery evidence
+without a model call or skill write. Generated lesson admission and amendment
+application remain future work; exact proposal bytes and approval actions are
+visible in the TUI, while approval and application remain explicit headless
+operations. Hone `-N` generates fresh wording but does not yield an exact
+artifact that a later write consumes, so it is not treated as reviewed
+admission.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled

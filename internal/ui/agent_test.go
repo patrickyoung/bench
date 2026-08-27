@@ -193,6 +193,70 @@ func TestRunningAgentSpecialistCanBeInterrupted(t *testing.T) {
 	}
 }
 
+func TestAgentLearningFormReviewsEvidenceWithoutLearning(t *testing.T) {
+	agent := &fakeAgent{}
+	home := "/work/home with spaces"
+	m := New(Config{Workspace: "/work", Home: home, Agent: agent, Model: "provider/model"})
+
+	updated, _ := m.Update(key("h"))
+	m = updated.(*Model)
+	if !m.agentLearnOpen || m.agentLearnFocus != 0 || !m.agentLearnSkill.Focused() {
+		t.Fatalf("learn form open=%v focus=%d skill-focused=%v", m.agentLearnOpen, m.agentLearnFocus, m.agentLearnSkill.Focused())
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "destination skill") {
+		t.Fatalf("empty learn form submitted args=%#v notice=%q", agent.args, m.notice)
+	}
+
+	m.agentLearnSkill.SetValue("triage")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "replayable session") {
+		t.Fatalf("empty learn session submitted args=%#v notice=%q", agent.args, m.notice)
+	}
+	updated, _ = m.Update(key("tab"))
+	m = updated.(*Model)
+	m.agentLearnRun.SetValue("recovery with spaces.jsonl")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	want := []string{"learn", "-into", "triage", "-why", home, "recovery with spaces.jsonl"}
+	if len(agent.args) != 1 || !slices.Equal(agent.args[0], want) || agent.stdin[0] != "" {
+		t.Fatalf("learn review args=%#v stdin=%#v want=%#v", agent.args, agent.stdin, want)
+	}
+
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "GOAL\nfix it\n\nCHECK\nmake check\n\nSTUMBLE 1\nfailed then passed\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	view := m.renderAgentHome(76)
+	if m.agentState != agentSucceeded || !strings.Contains(view, "LEARNING EVIDENCE · READ ONLY") || !strings.Contains(view, "LEARNING EVIDENCE REVIEWED") {
+		t.Fatalf("learning review state=%v view=%q", m.agentState, view)
+	}
+	lastCommand := m.agentCommandDisplay()
+	updated, _ = m.Update(key("h"))
+	m = updated.(*Model)
+	m.agentLearnSkill.SetValue("different-skill")
+	m.agentLearnRun.SetValue("different-run.jsonl")
+	if got := m.agentCommandDisplay(); got != lastCommand {
+		t.Fatalf("editing a new review changed prior command display: got %q want %q", got, lastCommand)
+	}
+}
+
+func TestAgentLearningReviewPreservesNothingToLearnVerdict(t *testing.T) {
+	agent := &fakeAgent{}
+	m := New(Config{Workspace: "/work", Home: "/work/chief", Agent: agent})
+	m.agentLearnName = "triage"
+	m.agentLearnSession = "clean-run.jsonl"
+	updated, _ := m.startAgentCommand("learn-why")
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 1})
+	m = updated.(*Model)
+	if m.agentState != agentNegative || !strings.Contains(m.notice, "no replay-verified recovery") {
+		t.Fatalf("learning negative state=%v notice=%q", m.agentState, m.notice)
+	}
+}
+
 func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	home := filepath.Join("/work", "support-chief")
 	m := New(Config{Workspace: "/work", Home: home, Agent: &fakeAgent{}})
@@ -221,5 +285,16 @@ func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 	if !strings.Contains(m.View().Content, "DIRECT SPECIALIST HOME") || !strings.Contains(m.View().Content, "SPECIALIST TASK") {
 		t.Fatalf("specialist form missing: %q", m.View().Content)
+	}
+	updated, _ = m.closeAgentSpecialistForm()
+	m = updated.(*Model)
+	updated, _ = m.Update(key("h"))
+	m = updated.(*Model)
+	m.agentLearnSkill.SetValue("triage")
+	m.agentLearnRun.SetValue("recovery.jsonl")
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if !strings.Contains(m.View().Content, "DESTINATION SKILL") || !strings.Contains(m.View().Content, "VERIFIED LEARNING EVIDENCE") {
+		t.Fatalf("learning form missing: %q", m.View().Content)
 	}
 }

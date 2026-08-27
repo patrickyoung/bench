@@ -133,70 +133,76 @@ type Model struct {
 	lastAuto          *autoroute.Decision
 	autoInterrupted   bool
 
-	composer       textarea.Model
-	project        textinput.Model
-	agentChild     textinput.Model
-	skill          textinput.Model
-	skillQuery     textinput.Model
-	skillName      textinput.Model
-	skillDirectory textinput.Model
+	composer        textarea.Model
+	project         textinput.Model
+	agentChild      textinput.Model
+	agentLearnSkill textinput.Model
+	agentLearnRun   textinput.Model
+	skill           textinput.Model
+	skillQuery      textinput.Model
+	skillName       textinput.Model
+	skillDirectory  textinput.Model
 	// Keep the heavyweight secondary editor indirect so the event-loop object
 	// stays lean while it is passed through the tea.Model interface.
-	skillSource     *textarea.Model
-	viewport        viewport.Model
-	messages        []message
-	restored        string
-	sessions        []session.Info
-	selected        int
-	picking         bool
-	resume          bool
-	screen          screen
-	formFocus       int
-	askComposer     string
-	designDir       string
-	designBody      string
-	designCheck     string
-	designBuildable bool
-	designBroken    bool
-	buildLog        string
-	buildAnswer     string
-	buildSession    string
-	buildState      buildState
-	buildAdmitted   bool
-	proveLog        string
-	proveFindings   string
-	proveState      proveState
-	learnLog        string
-	learnOutput     string
-	learnState      learnState
-	learnReturn     screen
-	skills          []skillEntry
-	skillCursor     int
-	skillsReturn    screen
-	skillForm       skillFormMode
-	skillFormFocus  int
-	skillDetailName string
-	skillDetailPath string
-	skillBody       string
-	skillFiles      string
-	skillLint       string
-	skillLintState  skillLintState
-	skillRunLog     string
-	skillRunAnswer  string
-	skillRunState   skillRunState
-	skillRunSession string
-	activeSkills    []string
-	agentHome       string
-	agentDefinition string
-	agentOutput     string
-	agentActivity   string
-	agentCommand    string
-	agentExitCode   int
-	agentState      agentState
-	agentChildOpen  bool
-	agentChildFocus int
-	agentChildName  string
-	agentChildTask  string
+	skillSource       *textarea.Model
+	viewport          viewport.Model
+	messages          []message
+	restored          string
+	sessions          []session.Info
+	selected          int
+	picking           bool
+	resume            bool
+	screen            screen
+	formFocus         int
+	askComposer       string
+	designDir         string
+	designBody        string
+	designCheck       string
+	designBuildable   bool
+	designBroken      bool
+	buildLog          string
+	buildAnswer       string
+	buildSession      string
+	buildState        buildState
+	buildAdmitted     bool
+	proveLog          string
+	proveFindings     string
+	proveState        proveState
+	learnLog          string
+	learnOutput       string
+	learnState        learnState
+	learnReturn       screen
+	skills            []skillEntry
+	skillCursor       int
+	skillsReturn      screen
+	skillForm         skillFormMode
+	skillFormFocus    int
+	skillDetailName   string
+	skillDetailPath   string
+	skillBody         string
+	skillFiles        string
+	skillLint         string
+	skillLintState    skillLintState
+	skillRunLog       string
+	skillRunAnswer    string
+	skillRunState     skillRunState
+	skillRunSession   string
+	activeSkills      []string
+	agentHome         string
+	agentDefinition   string
+	agentOutput       string
+	agentActivity     string
+	agentCommand      string
+	agentExitCode     int
+	agentState        agentState
+	agentChildOpen    bool
+	agentChildFocus   int
+	agentChildName    string
+	agentChildTask    string
+	agentLearnOpen    bool
+	agentLearnFocus   int
+	agentLearnName    string
+	agentLearnSession string
 
 	width          int
 	height         int
@@ -373,6 +379,16 @@ func New(cfg Config) *Model {
 	agentChild.Prompt = ""
 	agentChild.CharLimit = 64
 	agentChild.SetWidth(68)
+	agentLearnSkill := textinput.New()
+	agentLearnSkill.Placeholder = "triage"
+	agentLearnSkill.Prompt = ""
+	agentLearnSkill.CharLimit = 64
+	agentLearnSkill.SetWidth(68)
+	agentLearnRun := textinput.New()
+	agentLearnRun.Placeholder = "SESSION.jsonl"
+	agentLearnRun.Prompt = ""
+	agentLearnRun.CharLimit = 1024
+	agentLearnRun.SetWidth(68)
 	skill := textinput.New()
 	skill.Placeholder = "agent-house"
 	skill.Prompt = ""
@@ -433,6 +449,8 @@ func New(cfg Config) *Model {
 		composer:        composer,
 		project:         project,
 		agentChild:      agentChild,
+		agentLearnSkill: agentLearnSkill,
+		agentLearnRun:   agentLearnRun,
 		skill:           skill,
 		skillQuery:      skillQuery,
 		skillName:       skillName,
@@ -563,6 +581,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.composer.Blur()
 				m.project.Blur()
 				m.agentChild.Blur()
+				m.agentLearnSkill.Blur()
+				m.agentLearnRun.Blur()
 				m.skillQuery.Blur()
 				m.skillName.Blur()
 				m.skillDirectory.Blur()
@@ -1360,6 +1380,8 @@ func (m *Model) resize() {
 	m.composer.SetHeight(composerHeight)
 	m.project.SetWidth(w - 6)
 	m.agentChild.SetWidth(w - 6)
+	m.agentLearnSkill.SetWidth(w - 6)
+	m.agentLearnRun.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
 	m.skillQuery.SetWidth(w - 6)
 	m.skillName.SetWidth(w - 6)
@@ -1666,6 +1688,8 @@ func (m *Model) renderHelp(width int) string {
 		escapeHelp := "interrupt, or close the agent-home view"
 		if m.agentChildOpen {
 			escapeHelp = "cancel the specialist form without invoking a child"
+		} else if m.agentLearnOpen {
+			escapeHelp = "cancel the evidence review without learning"
 		}
 		rows := []string{
 			t.hero.Render("Agent home keyboard"), "",
@@ -1677,8 +1701,9 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "v", "ask Trail and Ask to replay-check every run", width),
 			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
 			helpRow(t, "s", "open a bounded specialist name and task form", width),
-			helpRow(t, "tab", "move between specialist name and task", width),
-			helpRow(t, "ctrl+enter", "run the selected direct child (ctrl+s fallback)", width),
+			helpRow(t, "h", "review one session's verified learning evidence via Hone", width),
+			helpRow(t, "tab", "move between fields in the active form", width),
+			helpRow(t, "ctrl+enter", "submit the active form (ctrl+s fallback)", width),
 			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
 			helpRow(t, "esc", escapeHelp, width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
@@ -2032,6 +2057,9 @@ func (m *Model) View() tea.View {
 	} else if m.screen == screenAgentHome && m.agentChildOpen {
 		composerLabel = t.sessionLabel.Render(" SPECIALIST TASK ")
 		composerContent = m.composer.View()
+	} else if m.screen == screenAgentHome && m.agentLearnOpen {
+		composerLabel = t.sessionLabel.Render(" VERIFIED LEARNING EVIDENCE ")
+		composerContent = t.muted.Render("Model-free review only. Skill admission remains an explicit headless agent learn command.")
 	} else if m.screen == screenAgentHome {
 		composerLabel = t.faint.Render(" AGENT VERDICT ")
 		verdict, verdictStyle := m.agentVerdict(t)
@@ -2138,8 +2166,10 @@ func (m *Model) View() tea.View {
 		if m.screen == screenAgentHome {
 			if m.agentChildOpen {
 				notice = "tab move   ctrl+enter run specialist   esc cancel   f1 help"
+			} else if m.agentLearnOpen {
+				notice = "tab move   ctrl+enter review evidence   esc cancel   f1 help"
 			} else {
-				notice = "r inspect   c check   g run   t tick   s specialist   p proposals   f1 help"
+				notice = "r inspect   c check   g run   s specialist   h learn evidence   p proposals   f1 help"
 			}
 		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
@@ -2347,6 +2377,8 @@ func (m *Model) applyTheme() {
 	inputStyles.Blurred = inputStyles.Focused
 	m.project.SetStyles(inputStyles)
 	m.agentChild.SetStyles(inputStyles)
+	m.agentLearnSkill.SetStyles(inputStyles)
+	m.agentLearnRun.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
 	m.skillQuery.SetStyles(inputStyles)
 	m.skillName.SetStyles(inputStyles)

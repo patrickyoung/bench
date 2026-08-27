@@ -290,15 +290,23 @@ func (m *Model) focusCurrent() tea.Cmd {
 		return nil
 	}
 	if m.screen == screenAgentHome {
-		if !m.agentChildOpen {
-			return nil
-		}
-		if m.agentChildFocus == 0 {
+		if m.agentChildOpen && m.agentChildFocus == 0 {
 			m.composer.Blur()
 			return m.agentChild.Focus()
 		}
-		m.agentChild.Blur()
-		return m.composer.Focus()
+		if m.agentChildOpen {
+			m.agentChild.Blur()
+			return m.composer.Focus()
+		}
+		if m.agentLearnOpen && m.agentLearnFocus == 0 {
+			m.agentLearnRun.Blur()
+			return m.agentLearnSkill.Focus()
+		}
+		if m.agentLearnOpen {
+			m.agentLearnSkill.Blur()
+			return m.agentLearnRun.Focus()
+		}
+		return nil
 	}
 	if m.screen == screenSkills {
 		m.composer.Blur()
