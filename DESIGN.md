@@ -279,8 +279,9 @@ design. Its experimental runtime form is the sibling `agent` filter's ordinary
 agent home: `AGENTS.md`, `GOAL.md`, optional `SOUL.md`, `HEARTBEAT.md`, and
 `MEMORY.md`, Brief skills, nested specialist homes, a toolbox, mutable
 `work/` and `state/`, executable `bin/check`/`bin/wake`, and controller-owned
-`.agent/runs/`. `agent show/check/run/tick/specialist/learn/history` compile that
-directory through Brief, Ply, Ask, Cage, and Hone. The complete boundary and research are in
+`.agent/runs/`. `agent show/check/run/tick/specialist/learn/history/amend`
+compile that directory through Brief, Ply, Ask, Cage, Hone, Trail, and May.
+The complete boundary and research are in
 `FILESYSTEM_AGENTS.md`. Draft remains how the system is designed and proved;
 the agent home is how an already-built digital worker is tuned and run.
 Headless `bench home [-C DIR] COMMAND...` is an attached process boundary over
@@ -292,8 +293,9 @@ offers only direct public operations: refresh, offline check, default-confined
 goal run, heartbeat tick, Trail history list, and Ask-backed history check.
 The UI renders stdout as result data, stderr as evidence, and exit status as
 the verdict; it does not parse session internals or treat displayed prose as
-success. Authority-widening flags and definition-changing learning remain
-headless until they have an explicit review interaction.
+success. Authority-widening flags, definition-changing learning, and
+May-gated amendments remain headless until they have explicit review
+interactions.
 
 ## Interaction model
 
@@ -416,10 +418,11 @@ and writes the brief skill. There is no TUI memory schema.
     and cooperative whole-tree interruption.
 13. **In progress:** validate the experimental sibling `agent` filter in real
     homes, expose every public verb through headless `bench home`, and provide
-    a dedicated interactive view for `show/check/run/tick/history`. Specialist
-    inputs, explicit learning, amendment review, and approval remain later UI
-    slices; they must still avoid importing Agent's parser, loop, scheduler,
-    evidence, or confinement policy.
+    a dedicated interactive view for `show/check/run/tick/history`. Headless
+    specialist runs, explicit learning, and exact May-gated definition
+    amendments are implemented. Their reviewed interactive forms remain later
+    UI slices; they must still avoid importing Agent's parser, loop, scheduler,
+    evidence, approval, or confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

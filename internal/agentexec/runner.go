@@ -53,6 +53,7 @@ type Runner struct {
 	HonePath  string
 	TrailPath string
 	AskPath   string
+	MayPath   string
 	WorkDir   string
 }
 
@@ -97,6 +98,7 @@ func (r Runner) toolEnv() []string {
 		{"AGENT_HONE", r.HonePath},
 		{"AGENT_TRAIL", r.TrailPath},
 		{"AGENT_ASK", r.AskPath},
+		{"AGENT_MAY", r.MayPath},
 	} {
 		if path := strings.TrimSpace(tool.path); path != "" {
 			env = append(env, tool.name+"="+path)

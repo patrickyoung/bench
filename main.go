@@ -179,7 +179,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Agent: agentexec.Runner{
 			Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
 			CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
-			AskPath: paths.ask, WorkDir: workspace,
+			AskPath: paths.ask, MayPath: paths.may, WorkDir: workspace,
 		},
 		Hone:          honeexec.Runner{Path: paths.hone, AskPath: paths.ask, BriefPath: paths.brief, WorkDir: workspace},
 		Brief:         briefexec.Runner{Binary: paths.brief, WorkDir: workspace},
@@ -241,7 +241,7 @@ func runHomeCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	outcome := (agentexec.Runner{
 		Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
 		CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
-		AskPath: paths.ask, WorkDir: work,
+		AskPath: paths.ask, MayPath: paths.may, WorkDir: work,
 	}).Run(ctx, fs.Args(), stdin, stdout, stderr)
 	if outcome.Err != nil {
 		return report(stderr, fmt.Errorf("agent: %w", outcome.Err))
@@ -953,15 +953,17 @@ func printHomeUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: bench home [-C dir] COMMAND [agent arguments...]
 
 Run the standalone agent executable with its public argv/stdin/stdout/stderr
-contract intact. Bench supplies the exact Ply, Brief, Cage, and Hone programs
-from the active suite. Use -- before an agent command that begins with a dash.
+contract intact. Bench supplies the exact Ask, Ply, Brief, Cage, Hone, Trail,
+and May programs from the active suite. Use -- before an agent command that
+begins with a dash.
 
 examples:
   bench home show support-chief
   bench home run -m provider/model support-chief
   bench home specialist support-chief researcher -- 'bounded question'
   bench home learn -into triage support-chief SESSION.jsonl
-  bench home history support-chief check`)
+  bench home history support-chief check
+  bench home amend support-chief tighten-checking.patch`)
 }
 
 func printHeadlessUsage(w io.Writer, mode string) {

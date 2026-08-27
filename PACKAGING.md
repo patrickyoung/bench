@@ -51,7 +51,8 @@ companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
 `BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values
 still win. The experimental headless `bench home` boundary likewise resolves
 `agent` from `BENCH_AGENT` and its history reader from `BENCH_TRAIL`, then the
-suite when present or ordinary `PATH`. Agent and Trail are not added to the
+suite when present or ordinary `PATH`; it also supplies the already-pinned May
+path for explicit definition amendments. Agent and Trail are not added to the
 release manifest until the independent Agent repository is published and both
 commits can be pinned as a tested set. Without the
 marker, a standalone or `go install` build retains the existing `PATH`

@@ -408,6 +408,8 @@ agent run [flags] [DIR] [-- input]  pursue GOAL.md until bin/check accepts
 agent tick [flags] [DIR]            use bin/wake before HEARTBEAT.md work
 agent specialist PARENT NAME [flags] run one direct child home and return stdout
 agent learn -into SKILL DIR SESSION  offer a verified recovery to hone
+agent history DIR [COMMAND ...]      browse scoped replay evidence through trail
+agent amend DIR PATCH                apply one exact human-approved definition diff
 ```
 
 The Unix result contract should match the family:
@@ -468,10 +470,16 @@ every action.
 ### Definition changes are amendments
 
 If the agent proposes a change to `AGENTS.md`, `SOUL.md`, `GOAL.md`,
-`HEARTBEAT.md`, `MEMORY.md`, a skill, a specialist, or `bin/check`, it writes a
-patch under `work/proposals/`. A person reviews and applies it outside the run.
-That keeps self-improvement transparent without letting one execution rewrite
-the constitution or judge that governs the next one.
+`PLAN.md`, `HEARTBEAT.md`, or `MEMORY.md`, it writes a conventional one-file
+unified diff under `work/proposals/`. The controller's explicit `agent amend`
+path parses and dry-runs that diff, binds the current definition and proposal
+hashes into one May request, and exits 75 while a person reviews it. An exact
+grant is single-use; retry rechecks the bound inputs, applies the patch,
+validates the whole home, rolls back on failure, and records a receipt under
+`.agent/amendments/`. Skill, specialist, and verifier changes remain ordinary
+manual reviews for now. This keeps self-improvement transparent without
+letting one execution rewrite the constitution or judge that governs the next
+one.
 
 ### A folder never carries ambient secrets
 
@@ -607,25 +615,30 @@ capability and truth, and the filesystem supplies composition and provenance.
 
 Prototype status on 27 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
-from Slice 3, and explicit Hone admission from Slice 4. Its offline process-boundary
-suite covers scaffold, validation, composition, private-context transport,
-authority flags, heartbeat behavior, specialist-home catalog validation,
-hard-link refusal, and exit preservation. A live disposable home also ran
+from Slice 3, and the history, learning, and reviewed-amendment headless paths
+from Slice 4. Its 96-check offline process-boundary suite covers scaffold,
+validation, composition, private-context transport, authority flags,
+heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
+history scoping, May parking and hash binding, approved application receipts,
+rollback, controller-capability scrubbing, and exit preservation. A live
+disposable home also ran
 red-to-green through installed Brief, Ply, Ask, and Cage; its accepted Ask
 session replayed exactly, definition/evidence write probes were denied, and a
-later quiet tick created no new session. Suite packaging, amendment review,
-history browsing, and the interactive Bench view remain future slices. Bench
+later quiet tick created no new session. A separate live run produced a valid
+one-file definition proposal without mutating authored context. Suite
+packaging and interactive specialist/learning/proposal review remain future
+slices. Bench
 now also exposes an attached `bench home [-C DIR] COMMAND...` boundary that
 passes literal arguments and streams to the public agent program, supplies the
-selected Ask/Ply/Brief/Cage/Hone/Trail executables, and preserves its exit status.
+selected Ask/Ply/Brief/Cage/Hone/Trail/May executables, and preserves its exit status.
 The standalone runtime now also composes Trail for scoped read-only
 `history ls/find/show/window/lineage/check`; replay checking remains Ask's
 verdict rather than a new agent-session parser.
 The first interactive Bench view is also present: `bench -C PARENT -home NAME`
 invokes public show/check/run/tick/history operations, keeps stdout, stderr,
 and exit verdicts visibly separate, and offers no implicit authority widening.
-Specialist forms, learning/amendment review, and approval UX remain future
-work.
+Specialist forms and interactive learning/amendment review remain future work;
+the exact approval and application flow is already available headlessly.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled
@@ -719,8 +732,8 @@ Publish a frozen corpus of representative homes and measure:
 5. Should an agent-local verified-memory skill always load, or should Brief
    select it like every other procedure? Compare retrieval precision and
    context cost.
-6. Which definition changes are common enough to deserve a first-class
-   proposal view in Bench rather than an ordinary patch under `work/`?
+6. What is the smallest useful proposal-review interaction in Bench that can
+   show the exact diff and May action without importing Git or Agent parsing?
 
 None of these blocks Slice 1. The first vertical slice produces the evidence
 needed to answer them.

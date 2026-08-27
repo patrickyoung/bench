@@ -122,9 +122,11 @@ complete flow offline with fake filters.
 
 `BENCH_AGENT` selects the standalone folder-agent executable used by
 `bench home`, and `BENCH_TRAIL` selects its read-only history browser. Bench
-passes its selected Ask, Ply, Brief, Cage, Hone, and Trail paths into that
-process; it does not parse or reimplement agent-home behavior. Trail remains a
-standalone `PATH` dependency until it and Agent are added to the pinned suite.
+passes its selected Ask, Ply, Brief, Cage, Hone, Trail, and May paths into that
+process; it does not parse or reimplement agent-home behavior. Agent scrubs
+May from model-run environments and resolves it only for the controller's
+explicit amendment command. Trail remains a standalone `PATH` dependency
+until it and Agent are added to the pinned suite.
 
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
@@ -623,6 +625,7 @@ agent run support-chief
 agent tick support-chief
 agent specialist support-chief researcher -- 'answer one bounded question'
 agent learn -into triage support-chief SESSION.jsonl
+agent amend support-chief tighten-checking.patch
 ```
 
 Bench exposes the same headless process boundary when it is useful to keep one
@@ -636,6 +639,7 @@ bench home specialist support-chief researcher -- 'answer one bounded question'
 bench home learn -into triage support-chief SESSION.jsonl
 bench home history support-chief
 bench home history support-chief check
+bench home amend support-chief tighten-checking.patch
 ```
 
 Everything after the agent command is literal argv, stdin remains attached,
@@ -661,7 +665,10 @@ The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and
 session, `bin/check` owns completion, `bin/wake` can suppress idle model calls,
 direct child homes keep separate evidence, Hone owns explicit verified
-learning, and Cage owns the default write/network boundary. The current
+learning, May owns exact human approval for one reviewed root-definition
+patch, and Cage owns the default write/network boundary. Approved amendments
+are revalidated, rolled back on failure, and receipted under
+`.agent/amendments/`. The current
 vertical slice is available through `bench home` and the dedicated `-home`
 view, but is not yet included in Bench's pinned suite. See
 [FILESYSTEM_AGENTS.md](FILESYSTEM_AGENTS.md) for the cross-system research,
