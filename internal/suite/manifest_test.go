@@ -54,3 +54,24 @@ func TestManifestRejectsUnsafeComponentFields(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestAcceptsFileComponentWithExecutableAsset(t *testing.T) {
+	m, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Components = append(m.Components, Component{
+		Name:        "agent",
+		Repository:  "https://github.com/example/agent.git",
+		Revision:    "0123456789abcdef0123456789abcdef01234567",
+		Version:     "0.1.0",
+		Kind:        "files",
+		Entry:       "bin/agent",
+		Assets:      []string{"bin/agent-action-shell"},
+		License:     "MIT",
+		LicenseFile: "LICENSE",
+	})
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

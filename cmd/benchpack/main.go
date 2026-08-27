@@ -181,7 +181,7 @@ func build(m suite.Manifest, o options) (string, error) {
 	if dirty {
 		installVersion += "-dirty"
 	}
-	if err := os.WriteFile(filepath.Join(root, "install.sh"), []byte(installScript(installVersion)), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "install.sh"), []byte(installScript(installVersion, componentNames(resolved.Components))), 0o755); err != nil {
 		return "", err
 	}
 	if err := smokeBundle(root, o); err != nil {
@@ -797,7 +797,15 @@ every component. `+"`SHA256SUMS`"+` covers every other shipped file.
 `, name, name)
 }
 
-func installScript(version string) string {
+func componentNames(components []suite.Component) []string {
+	names := make([]string, 0, len(components))
+	for _, component := range components {
+		names = append(names, component.Name)
+	}
+	return names
+}
+
+func installScript(version string, tools []string) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
 
@@ -809,7 +817,7 @@ case $prefix in /*) ;; *) prefix=$PWD/$prefix ;; esac
 lib=$prefix/lib/bench-suite
 dest=$lib/$version
 bindir=$prefix/bin
-tools='bench ask brief ply hone draft may cage'
+tools='%s'
 
 verify() {
 	dir=$1
@@ -871,7 +879,7 @@ echo "Bench suite $version installed in $dest"
 case :${PATH:-}: in *:"$bindir":*) ;; *)
 	echo "Add $bindir to PATH." >&2
 ;; esac
-`, version)
+`, version, strings.Join(tools, " "))
 }
 
 func report(w io.Writer, err error) int {

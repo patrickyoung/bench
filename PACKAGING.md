@@ -39,6 +39,13 @@ bench-suite-VERSION-GOOS-GOARCH/
   INSTALL.md
 ```
 
+The generated installer derives its public command links from the manifest;
+there is no second hard-coded command list to update. A `files` component may
+also carry executable assets beneath `bin/` beside its public entry point.
+Those companion programs remain private unless they are separate manifest
+components. This lets a script command resolve a trusted action adapter beside
+its real suite path without adding an accidental user-facing command.
+
 When `bin/bench` sees the valid `suite.json` marker above it, it resolves its
 companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
 `BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values

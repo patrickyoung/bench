@@ -53,6 +53,24 @@ func TestCopyTreeAndChecksums(t *testing.T) {
 	}
 }
 
+func TestCopyTreeAcceptsSingleExecutableAsset(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "agent-action-shell")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "bin", "agent-action-shell")
+	if err := copyTree(source, target); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Fatalf("mode=%v", info.Mode().Perm())
+	}
+}
+
 func TestExecutableSuffix(t *testing.T) {
 	if got := executable("bench", "windows"); got != "bench.exe" {
 		t.Fatalf("windows executable = %q", got)
@@ -63,9 +81,22 @@ func TestExecutableSuffix(t *testing.T) {
 }
 
 func TestInstallScriptLinksEveryRequiredSuiteCommand(t *testing.T) {
-	script := installScript("0.6.6")
-	if !strings.Contains(script, "tools='bench ask brief ply hone draft may cage'") {
+	m, err := suite.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := installScript("0.6.6", componentNames(m.Components))
+	want := "tools='" + strings.Join(componentNames(m.Components), " ") + "'"
+	if !strings.Contains(script, want) {
 		t.Fatalf("installer tool set is incomplete:\n%s", script)
+	}
+}
+
+func TestInstallScriptDerivesNewCommandsFromManifest(t *testing.T) {
+	components := []suite.Component{{Name: "bench"}, {Name: "agent"}}
+	script := installScript("0.7.0", componentNames(components))
+	if !strings.Contains(script, "tools='bench agent'") {
+		t.Fatalf("installer did not derive commands:\n%s", script)
 	}
 }
 

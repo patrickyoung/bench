@@ -252,7 +252,7 @@ These boundaries are what let later screens compose rather than accrete:
 - Approval and confinement are separate `may` and `cage` compositions, not booleans in UI
   state.
 
-## The agent project already has a format
+## Design projects and running agent homes have distinct formats
 
 `bench` will not invent an `agent.toml`. The durable project artifact is the
 `DESIGN.md` owned by `draft`: one human-readable agreement containing the
@@ -273,6 +273,16 @@ draft prove DIR             # mutate it; measure what the check detects
 states legible and interruptible, not to reproduce any of them. The stage line
 is consequently `Ask → Design → Build → Prove → Learn`, with every stage
 leaving an ordinary file or command behind.
+
+A built standing worker is a different lifecycle object from its build
+design. Its experimental runtime form is the sibling `agent` filter's ordinary
+agent home: `AGENTS.md`, `GOAL.md`, optional `SOUL.md`, `HEARTBEAT.md`, and
+`MEMORY.md`, Brief skills, nested specialist homes, a toolbox, mutable
+`work/` and `state/`, executable `bin/check`/`bin/wake`, and controller-owned
+`.agent/runs/`. `agent show/check/run/tick/specialist/learn` compile that
+directory through Brief, Ply, Ask, Cage, and Hone. The complete boundary and research are in
+`FILESYSTEM_AGENTS.md`. Draft remains how the system is designed and proved;
+the agent home is how an already-built digital worker is tuned and run.
 
 ## Interaction model
 
@@ -393,6 +403,9 @@ and writes the brief skill. There is no TUI memory schema.
     processes, with flat bounded fan-out, inherited model/tool/workspace
     context, private parent-scoped evidence, ordered failure-aware synthesis,
     and cooperative whole-tree interruption.
+13. Validate the experimental sibling `agent` filter in real homes, then add a
+    Bench view over its public `show/check/run/tick/specialist/learn` commands without importing
+    its parser, loop, scheduler, evidence, or confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

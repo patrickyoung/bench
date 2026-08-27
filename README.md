@@ -12,7 +12,9 @@ commands, results, and final answer occupy one explicit Ask session.
 **Task → Design → Build → Prove → Learn** is the promotion
 path for agent work: the project is draft's ordinary `DESIGN.md`; building and
 evaluation are `draft build/prove`; durable lessons are admitted by `hone` into
-an ordinary `brief` skill. `bench` is not a second model client, tool runtime,
+an ordinary `brief` skill. When the result is a standing digital worker, the
+experimental sibling `agent` filter gives that built worker a separate,
+folder-shaped runtime form. `bench` is not a second model client, tool runtime,
 evaluator, or memory store. It runs the installed filters and respects their
 stdout/stderr/exit-status contracts.
 
@@ -598,6 +600,31 @@ To add features later, edit the project's ordinary files or `DESIGN.md`, then
 reopen it with `bench -project DIR`. Bench reruns `draft check` and returns to
 the same Build → Prove → Learn loop. There is no project registry to migrate
 or synchronize.
+
+## From a checked design to a running folder agent
+
+Draft's `DESIGN.md` remains the build agreement. A worker intended to persist
+after that build can use the experimental sibling `agent` filter as its
+runtime link step:
+
+```sh
+agent new support-chief
+agent show support-chief
+agent check support-chief
+agent run support-chief
+agent tick support-chief
+agent specialist support-chief researcher -- 'answer one bounded question'
+agent learn -into triage support-chief SESSION.jsonl
+```
+
+The home keeps definition, mutable work/state, and controller evidence in
+separate directories. Brief owns its skills, Ply and Ask own its loop and
+session, `bin/check` owns completion, `bin/wake` can suppress idle model calls,
+direct child homes keep separate evidence, Hone owns explicit verified
+learning, and Cage owns the default write/network boundary. The current
+vertical slice is headless and is not yet included in Bench's pinned suite or TUI. See
+[FILESYSTEM_AGENTS.md](FILESYSTEM_AGENTS.md) for the cross-system research,
+security model, and delivery plan.
 
 See [DESIGN.md](DESIGN.md) for the product model and why the TUI remains a
 thin control plane over the filters.
