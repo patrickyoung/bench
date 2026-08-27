@@ -35,6 +35,7 @@ Requirements when running from source rather than a suite archive:
 - `hone` on `PATH` to admit lessons from verified build recoveries
 - `may` and `cage` on `PATH` for admitted exact-action approval and action-only
   confinement
+- `agent` on `PATH` for the experimental `bench home` folder-worker boundary
 
 Build a relocatable development suite from the sibling repositories with:
 
@@ -117,6 +118,10 @@ running from the bench checkout before installing `draft/bin/draft` on
 `BENCH_BRIEF` and `BENCH_PLY` select the executables used by the Skills
 workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
+
+`BENCH_AGENT` selects the standalone folder-agent executable used by
+`bench home`. Bench passes its selected Ply, Brief, Cage, and Hone paths into
+that process; it does not parse or reimplement agent-home behavior.
 
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
@@ -617,12 +622,30 @@ agent specialist support-chief researcher -- 'answer one bounded question'
 agent learn -into triage support-chief SESSION.jsonl
 ```
 
+Bench exposes the same headless process boundary when it is useful to keep one
+suite entry point:
+
+```sh
+bench home show support-chief
+bench home run -m provider/model support-chief
+bench home tick support-chief
+bench home specialist support-chief researcher -- 'answer one bounded question'
+bench home learn -into triage support-chief SESSION.jsonl
+```
+
+Everything after the agent command is literal argv, stdin remains attached,
+and the agent's stdout, stderr, and exit status pass through unchanged.
+`bench home` is therefore different from interactive `/agent`: `/agent`
+promotes a task into a Draft design, while `bench home` operates an already
+built folder worker.
+
 The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and
 session, `bin/check` owns completion, `bin/wake` can suppress idle model calls,
 direct child homes keep separate evidence, Hone owns explicit verified
 learning, and Cage owns the default write/network boundary. The current
-vertical slice is headless and is not yet included in Bench's pinned suite or TUI. See
+vertical slice is headless and available through `bench home`, but is not yet
+included in Bench's pinned suite or TUI. See
 [FILESYSTEM_AGENTS.md](FILESYSTEM_AGENTS.md) for the cross-system research,
 security model, and delivery plan.
 

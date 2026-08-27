@@ -776,6 +776,48 @@ func TestPlainBenchAutomaticallyComposesWhenPiped(t *testing.T) {
 	}
 }
 
+func TestHomeCLIIsTransparentAgentProcessBoundary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test fixture is a POSIX program")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fake-agent")
+	script := `#!/bin/sh
+set -eu
+printf '%s\n' "$@" > args
+printf '%s\n%s\n%s\n%s\n' "$AGENT_PLY" "$AGENT_BRIEF" "$AGENT_CAGE" "$AGENT_HONE" > tools
+cat > input
+printf 'agent-answer'
+printf 'agent-evidence' >&2
+exit 9
+`
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BENCH_AGENT", fixture)
+	t.Setenv("BENCH_PLY", "/suite/ply")
+	t.Setenv("BENCH_BRIEF", "/suite/brief")
+	t.Setenv("BENCH_CAGE", "/suite/cage")
+	t.Setenv("BENCH_HONE", "/suite/hone")
+	var stdout, stderr strings.Builder
+	code := run([]string{"home", "-C", dir, "run", "-q", "home with spaces", "--", "; $(literal)"}, strings.NewReader("piped bytes\n"), &stdout, &stderr)
+	if code != 9 || stdout.String() != "agent-answer" || stderr.String() != "agent-evidence" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil || string(args) != "run\n-q\nhome with spaces\n--\n; $(literal)\n" {
+		t.Fatalf("args=%q err=%v", args, err)
+	}
+	input, err := os.ReadFile(filepath.Join(dir, "input"))
+	if err != nil || string(input) != "piped bytes\n" {
+		t.Fatalf("input=%q err=%v", input, err)
+	}
+	tools, err := os.ReadFile(filepath.Join(dir, "tools"))
+	if err != nil || string(tools) != "/suite/ply\n/suite/brief\n/suite/cage\n/suite/hone\n" {
+		t.Fatalf("tools=%q err=%v", tools, err)
+	}
+}
+
 func TestCLIHelpAndUsageErrorsAreConventional(t *testing.T) {
 	var stdout, stderr strings.Builder
 	if code := run([]string{"help"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "bench run") || stderr.Len() != 0 {
@@ -785,6 +827,16 @@ func TestCLIHelpAndUsageErrorsAreConventional(t *testing.T) {
 	stderr.Reset()
 	if code := run([]string{"run", "-h"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "usage: bench run") {
 		t.Fatalf("run help code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"home", "-h"}, strings.NewReader(""), &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "usage: bench home") {
+		t.Fatalf("home help code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"home"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "agent command is required") {
+		t.Fatalf("home usage code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()

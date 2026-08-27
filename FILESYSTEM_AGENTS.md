@@ -614,7 +614,10 @@ hard-link refusal, and exit preservation. A live disposable home also ran
 red-to-green through installed Brief, Ply, Ask, and Cage; its accepted Ask
 session replayed exactly, definition/evidence write probes were denied, and a
 later quiet tick created no new session. Suite packaging, amendment review,
-history browsing, and the Bench view remain future slices.
+history browsing, and the interactive Bench view remain future slices. Bench
+now also exposes an attached `bench home [-C DIR] COMMAND...` boundary that
+passes literal arguments and streams to the public agent program, supplies the
+selected Ply/Brief/Cage/Hone executables, and preserves its exit status.
 
 The local `agent` repository is now committed and installs as
 `~/.local/bin/agent`. Benchpack's installer derives commands from the manifest,

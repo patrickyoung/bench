@@ -5,6 +5,7 @@ package filterexec
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,6 +36,20 @@ type Spec struct {
 	Dir   string
 	Env   []string
 	Stdin string
+}
+
+// AttachedSpec names one foreground filter invocation whose standard streams
+// remain attached to the caller. It is for transparent CLI compositions where
+// buffering stdin or translating output into events would change the public
+// process contract.
+type AttachedSpec struct {
+	Path   string
+	Args   []string
+	Dir    string
+	Env    []string
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // Outcome is the terminal process result.
@@ -88,6 +103,45 @@ func Execute(ctx context.Context, spec Spec, onChunk func(Stream, string)) Outco
 	}
 	waitErr := cmd.Wait()
 
+	code := 0
+	if waitErr != nil {
+		code = 1
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+	}
+	if ctx.Err() != nil {
+		waitErr = ctx.Err()
+	}
+	return Outcome{ExitCode: code, Err: waitErr}
+}
+
+// RunAttached executes one foreground filter without a shell and preserves
+// its standard streams and exit status. Cancellation interrupts the complete
+// process group on supported Unix systems, matching Execute.
+func RunAttached(ctx context.Context, spec AttachedSpec) Outcome {
+	cmd := exec.CommandContext(ctx, spec.Path, spec.Args...)
+	cmd.Dir = spec.Dir
+	cmd.Stdin = spec.Stdin
+	cmd.Stdout = spec.Stdout
+	cmd.Stderr = spec.Stderr
+	if len(spec.Env) > 0 {
+		cmd.Env = overlayEnv(os.Environ(), spec.Env)
+	}
+	configureProcess(cmd)
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return interruptProcess(cmd)
+	}
+	cmd.WaitDelay = 2 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		return Outcome{ExitCode: 1, Err: err}
+	}
+	waitErr := cmd.Wait()
 	code := 0
 	if waitErr != nil {
 		code = 1

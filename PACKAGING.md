@@ -49,7 +49,10 @@ its real suite path without adding an accidental user-facing command.
 When `bin/bench` sees the valid `suite.json` marker above it, it resolves its
 companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
 `BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values
-still win. Without the
+still win. The experimental headless `bench home` boundary likewise resolves
+`agent` from `BENCH_AGENT`, the suite when present, or ordinary `PATH`; agent
+is not added to the release manifest until its independent repository is
+published and can be pinned to a fetchable commit. Without the
 marker, a standalone or `go install` build retains the existing `PATH`
 behavior. This lets an application invoke a private `bin/bench` by absolute
 path without mutating the user's environment.

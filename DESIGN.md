@@ -283,6 +283,10 @@ agent home: `AGENTS.md`, `GOAL.md`, optional `SOUL.md`, `HEARTBEAT.md`, and
 directory through Brief, Ply, Ask, Cage, and Hone. The complete boundary and research are in
 `FILESYSTEM_AGENTS.md`. Draft remains how the system is designed and proved;
 the agent home is how an already-built digital worker is tuned and run.
+Headless `bench home [-C DIR] COMMAND...` is an attached process boundary over
+those public verbs: it supplies the suite's exact companions but preserves
+literal argv, stdin, stdout, stderr, and exit status. Interactive `/agent`
+retains its existing and distinct Draft-promotion meaning.
 
 ## Interaction model
 
@@ -403,9 +407,11 @@ and writes the brief skill. There is no TUI memory schema.
     processes, with flat bounded fan-out, inherited model/tool/workspace
     context, private parent-scoped evidence, ordered failure-aware synthesis,
     and cooperative whole-tree interruption.
-13. Validate the experimental sibling `agent` filter in real homes, then add a
-    Bench view over its public `show/check/run/tick/specialist/learn` commands without importing
-    its parser, loop, scheduler, evidence, or confinement policy.
+13. **In progress:** validate the experimental sibling `agent` filter in real
+    homes and expose its public `show/check/run/tick/specialist/learn` verbs
+    through the headless `bench home` process boundary. A later TUI view must
+    still avoid importing its parser, loop, scheduler, evidence, or
+    confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

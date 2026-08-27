@@ -18,6 +18,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/patrickyoung/bench/internal/agentexec"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/autoroute"
@@ -47,6 +48,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return runHeadless(args[0], args[1:], stdin, stdout, stderr)
 		case "contract":
 			return runContractCLI(args[1:], stdin, stdout, stderr)
+		case "home":
+			return runHomeCLI(args[1:], stdin, stdout, stderr)
 		case "tui":
 			forceTUI = true
 			args = args[1:]
@@ -186,6 +189,43 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(stderr, err)
 	}
 	return 0
+}
+
+// runHomeCLI is deliberately an attached pass-through. The standalone agent
+// owns every subcommand, agent-home rule, and exit code; Bench only selects the
+// working directory and exact suite companions.
+func runHomeCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("bench home", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var workspace string
+	fs.StringVar(&workspace, "C", "", "working directory (default: current directory)")
+	fs.Usage = func() { printHomeUsage(stderr) }
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "bench home: an agent command is required")
+		printHomeUsage(stderr)
+		return 2
+	}
+	work, err := resolveWorkspace(workspace)
+	if err != nil {
+		return report(stderr, err)
+	}
+	paths := filterPaths()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	outcome := (agentexec.Runner{
+		Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
+		CagePath: paths.cage, HonePath: paths.hone, WorkDir: work,
+	}).Run(ctx, fs.Args(), stdin, stdout, stderr)
+	if outcome.Err != nil {
+		return report(stderr, fmt.Errorf("agent: %w", outcome.Err))
+	}
+	return outcome.ExitCode
 }
 
 type tuiOptions struct {
@@ -552,14 +592,14 @@ func pathContains(root, target string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-type paths struct{ ask, ply, brief, draft, hone, may, cage string }
+type paths struct{ ask, ply, brief, draft, hone, may, cage, agent string }
 
 func filterPaths() paths {
 	return paths{
 		ask: toolPath("BENCH_ASK", "ask"), ply: toolPath("BENCH_PLY", "ply"),
 		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
 		hone: toolPath("BENCH_HONE", "hone"), may: toolPath("BENCH_MAY", "may"),
-		cage: toolPath("BENCH_CAGE", "cage"),
+		cage: toolPath("BENCH_CAGE", "cage"), agent: toolPath("BENCH_AGENT", "agent"),
 	}
 }
 
@@ -841,6 +881,7 @@ func printUsage(w io.Writer) {
   bench run [flags] goal         auto routes once; review/loop draft; quick runs now
   bench ask [flags] [message]    Ask only; stdin message/evidence
   bench contract ...             draft, revise, edit, admit, or rerun a contract
+  bench home [-C dir] COMMAND... run the standalone folder-agent executable
   bench version                  print the version
   bench help                     print this summary
 
@@ -873,11 +914,29 @@ Ctrl-Z suspends to the parent shell.
 Ask naturally for up to three independent read-heavy subagent jobs. Bench
 keeps their Ply sessions and evidence under $BENCH_DIR/subagents for inspection.
 
+bench home is distinct from interactive /agent: the former runs an
+already-built agent home; the latter promotes work into a Draft design.
+bench home passes every argument after COMMAND literally to agent.
+
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
-BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · NO_COLOR
+BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · BENCH_AGENT · NO_COLOR
 
 When stdin or stdout is not a terminal, plain bench behaves like bench run:
   git diff | bench -m provider/model 'review this patch'`)
+}
+
+func printHomeUsage(w io.Writer) {
+	fmt.Fprintln(w, `usage: bench home [-C dir] COMMAND [agent arguments...]
+
+Run the standalone agent executable with its public argv/stdin/stdout/stderr
+contract intact. Bench supplies the exact Ply, Brief, Cage, and Hone programs
+from the active suite. Use -- before an agent command that begins with a dash.
+
+examples:
+  bench home show support-chief
+  bench home run -m provider/model support-chief
+  bench home specialist support-chief researcher -- 'bounded question'
+  bench home learn -into triage support-chief SESSION.jsonl`)
 }
 
 func printHeadlessUsage(w io.Writer, mode string) {
