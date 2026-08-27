@@ -100,6 +100,22 @@ func TestInstallScriptDerivesNewCommandsFromManifest(t *testing.T) {
 	}
 }
 
+func TestComponentVersionIsIndependentOfSuiteVersion(t *testing.T) {
+	m := suite.Manifest{
+		Version: "9.0.0",
+		Components: []suite.Component{
+			{Name: "bench", Version: "1.2.3"},
+		},
+	}
+	got, err := componentVersion(m, "bench")
+	if err != nil || got != "1.2.3" {
+		t.Fatalf("componentVersion = %q, %v", got, err)
+	}
+	if _, err := componentVersion(m, "may"); err == nil {
+		t.Fatal("missing component version was accepted")
+	}
+}
+
 func TestTargetPartRejectsPaths(t *testing.T) {
 	for _, value := range []string{"amd64", "arm64", "386"} {
 		if !targetPart(value) {

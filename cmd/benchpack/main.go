@@ -462,6 +462,15 @@ func smokeBundle(root string, o options) error {
 	return nil
 }
 
+func componentVersion(m suite.Manifest, name string) (string, error) {
+	for _, component := range m.Components {
+		if component.Name == name {
+			return component.Version, nil
+		}
+	}
+	return "", fmt.Errorf("suite has no %s component", name)
+}
+
 func smokeInstall(root string, m suite.Manifest, o options) error {
 	if o.GOOS != runtime.GOOS || o.GOARCH != runtime.GOARCH {
 		return nil
@@ -481,24 +490,25 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 		}
 	}
 	bench := filepath.Join(prefix, "bin", "bench")
+	benchVersion, err := componentVersion(m, "bench")
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(bench, "version")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
 	output, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "bench "+m.Version {
-		return fmt.Errorf("installed Bench smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
+	if err != nil || strings.TrimSpace(string(output)) != "bench "+benchVersion {
+		return fmt.Errorf("installed Bench smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
 	}
-	mayVersion := ""
-	for _, component := range m.Components {
-		if component.Name == "may" {
-			mayVersion = component.Version
-			break
-		}
+	mayVersion, err := componentVersion(m, "may")
+	if err != nil {
+		return err
 	}
 	cmd = exec.Command(filepath.Join(prefix, "bin", "may"), "version")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
 	output, err = cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(output)) != "may "+mayVersion {
-		return fmt.Errorf("installed May smoke failed: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("installed May smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
 	}
 	blockedPrefix := filepath.Join(temp, "blocked-prefix")
 	blockedBench := filepath.Join(blockedPrefix, "bin", "bench")
