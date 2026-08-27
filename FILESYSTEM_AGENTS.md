@@ -409,6 +409,7 @@ agent tick [flags] [DIR]            use bin/wake before HEARTBEAT.md work
 agent specialist PARENT NAME [flags] run one direct child home and return stdout
 agent learn -into SKILL DIR SESSION  offer a verified recovery to hone
 agent history DIR [COMMAND ...]      browse scoped replay evidence through trail
+agent proposals DIR [PATCH]           inspect bounded patches and exact May actions
 agent amend DIR PATCH                apply one exact human-approved definition diff
 ```
 
@@ -476,7 +477,9 @@ path parses and dry-runs that diff, binds the current definition and proposal
 hashes into one May request, and exits 75 while a person reviews it. An exact
 grant is single-use; retry rechecks the bound inputs, applies the patch,
 validates the whole home, rolls back on failure, and records a receipt under
-`.agent/amendments/`. Skill, specialist, and verifier changes remain ordinary
+`.agent/amendments/`. `agent proposals` uses that same parser and action
+builder to show bounded literal diffs without invoking May or writing the
+home. Skill, specialist, and verifier changes remain ordinary
 manual reviews for now. This keeps self-improvement transparent without
 letting one execution rewrite the constitution or judge that governs the next
 one.
@@ -616,10 +619,11 @@ capability and truth, and the filesystem supplies composition and provenance.
 Prototype status on 27 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
 from Slice 3, and the history, learning, and reviewed-amendment headless paths
-from Slice 4. Its 96-check offline process-boundary suite covers scaffold,
+from Slice 4. Its 102-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
-history scoping, May parking and hash binding, approved application receipts,
+history scoping, bounded side-effect-free proposal review, May parking and
+hash binding, approved application receipts,
 rollback, controller-capability scrubbing, and exit preservation. A live
 disposable home also ran
 red-to-green through installed Brief, Ply, Ask, and Cage; its accepted Ask
@@ -637,8 +641,9 @@ verdict rather than a new agent-session parser.
 The first interactive Bench view is also present: `bench -C PARENT -home NAME`
 invokes public show/check/run/tick/history operations, keeps stdout, stderr,
 and exit verdicts visibly separate, and offers no implicit authority widening.
-Specialist forms and interactive learning/amendment review remain future work;
-the exact approval and application flow is already available headlessly.
+Specialist forms and interactive learning/amendment application remain future
+work; exact proposal bytes and approval actions are visible in the TUI, while
+approval and application remain explicit headless operations.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled

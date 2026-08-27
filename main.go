@@ -963,6 +963,7 @@ examples:
   bench home specialist support-chief researcher -- 'bounded question'
   bench home learn -into triage support-chief SESSION.jsonl
   bench home history support-chief check
+  bench home proposals support-chief
   bench home amend support-chief tighten-checking.patch`)
 }
 

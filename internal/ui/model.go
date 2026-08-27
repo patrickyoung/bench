@@ -1658,12 +1658,13 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "t", "run the cheap heartbeat gate", width),
 			helpRow(t, "l", "list replayable run history as Trail JSONL", width),
 			helpRow(t, "v", "ask Trail and Ask to replay-check every run", width),
+			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
 			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
 			helpRow(t, "esc", "interrupt, or close the agent-home view", width),
 			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
 			helpRow(t, "f1", "close this help", width), "",
-			t.muted.Render("Agent owns the home parser, loop, evidence, history, and confinement. Bench only invokes its public commands."),
-			t.code.Width(max(10, width-4)).Render("agent show " + m.agentHome + "\nagent history " + m.agentHome + " check"),
+			t.muted.Render("Agent owns the home parser, loop, evidence, history, approval, and confinement. Bench only invokes its public commands."),
+			t.code.Width(max(10, width-4)).Render("agent show " + m.agentHome + "\nagent proposals " + m.agentHome + "\nagent history " + m.agentHome + " check"),
 		}
 		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
 	}
@@ -1893,6 +1894,8 @@ func (m *Model) View() tea.View {
 			state = "valid"
 		case "history", "history-check":
 			state = "history"
+		case "proposals":
+			state = "reviewed"
 		default:
 			state = "complete"
 		}
@@ -2110,7 +2113,7 @@ func (m *Model) View() tea.View {
 	notice := m.notice
 	if notice == "" {
 		if m.screen == screenAgentHome {
-			notice = "r inspect   c check   g run goal   t tick   l history   v verify   f1 help"
+			notice = "r inspect   c check   g run   t tick   l history   v verify   p proposals   f1 help"
 		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
 		} else if m.screen == screenDesignForm {

@@ -290,7 +290,8 @@ literal argv, stdin, stdout, stderr, and exit status. Interactive `/agent`
 retains its existing and distinct Draft-promotion meaning.
 Interactive `bench -C PARENT -home NAME` starts from public `agent show` and
 offers only direct public operations: refresh, offline check, default-confined
-goal run, heartbeat tick, Trail history list, and Ask-backed history check.
+goal run, heartbeat tick, Trail history list, Ask-backed history check, and
+bounded read-only proposal review through `agent proposals`.
 The UI renders stdout as result data, stderr as evidence, and exit status as
 the verdict; it does not parse session internals or treat displayed prose as
 success. Authority-widening flags, definition-changing learning, and

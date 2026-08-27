@@ -26,7 +26,7 @@ func (m *Model) startAgentCommand(command string) (tea.Model, tea.Cmd) {
 	}
 	args := []string{}
 	switch command {
-	case "show", "check":
+	case "show", "check", "proposals":
 		args = []string{command, m.agentHome}
 	case "run", "tick":
 		args = []string{command}
@@ -106,6 +106,8 @@ func (m *Model) agentNegativeNotice() string {
 	switch m.agentCommand {
 	case "show", "check":
 		return "Agent home is invalid · inspect the evidence and repair its ordinary files"
+	case "proposals":
+		return "One or more proposals cannot be reviewed safely · inspect Agent's evidence"
 	case "run":
 		return "Not accepted · the home check still rejects the standing outcome"
 	case "history", "history-check":
@@ -142,6 +144,8 @@ func (m *Model) updateAgentHome(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		return m.startAgentCommand("history")
 	case "v":
 		return m.startAgentCommand("history-check")
+	case "p":
+		return m.startAgentCommand("proposals")
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -196,6 +200,8 @@ func (m *Model) renderAgentHome(width int) string {
 		label := "OUTPUT"
 		if strings.HasPrefix(m.agentCommand, "history") {
 			label = "HISTORY · JSONL"
+		} else if m.agentCommand == "proposals" {
+			label = "PROPOSALS · READ ONLY"
 		}
 		rows = append(rows, "", t.sessionLabel.Render(label), t.document.Width(max(16, width-5)).Render(output))
 	}
@@ -252,6 +258,8 @@ func (m *Model) agentVerdict(t theme) (string, lipgloss.Style) {
 			return "✓ REPLAY VERIFIED", t.success
 		case "history":
 			return "✓ HISTORY READ", t.success
+		case "proposals":
+			return "✓ PROPOSALS REVIEWED", t.success
 		}
 		return "✓ SUCCEEDED", t.success
 	}

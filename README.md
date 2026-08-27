@@ -625,6 +625,7 @@ agent run support-chief
 agent tick support-chief
 agent specialist support-chief researcher -- 'answer one bounded question'
 agent learn -into triage support-chief SESSION.jsonl
+agent proposals support-chief
 agent amend support-chief tighten-checking.patch
 ```
 
@@ -639,6 +640,7 @@ bench home specialist support-chief researcher -- 'answer one bounded question'
 bench home learn -into triage support-chief SESSION.jsonl
 bench home history support-chief
 bench home history support-chief check
+bench home proposals support-chief
 bench home amend support-chief tighten-checking.patch
 ```
 
@@ -656,10 +658,13 @@ bench -C "$PWD/agents" -home support-chief
 
 That screen begins with public `agent show`; `r` refreshes the compiled home,
 `c` runs the offline check, `g` pursues `GOAL.md`, `t` runs the cheap heartbeat
-gate, `l` lists Trail history, and `v` replay-checks it through Ask. Stdout,
+gate, `l` lists Trail history, `v` replay-checks it through Ask, and `p` shows
+the bounded literal patches and exact May actions through the read-only public
+`agent proposals` command. Stdout,
 stderr, and the executable exit verdict stay distinct. Network widening,
-unconfined runs, specialists, learning destinations, and session selection
-remain explicit headless commands rather than hidden TUI defaults.
+unconfined runs, specialists, learning destinations, session selection, and
+amendment application remain explicit headless commands rather than hidden
+TUI defaults.
 
 The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and

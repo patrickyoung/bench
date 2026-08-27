@@ -74,6 +74,18 @@ func TestAgentHomeActionsRemainPublicLiteralCommands(t *testing.T) {
 	}
 	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
 	m = updated.(*Model)
+	updated, _ = m.Update(key("p"))
+	m = updated.(*Model)
+	if got := agent.args[len(agent.args)-1]; !slices.Equal(got, []string{"proposals", home}) {
+		t.Fatalf("proposal review args = %#v", got)
+	}
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "agent-proposals/v1\ncount: 1\npatch-bytes:\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	if m.agentState != agentSucceeded || !strings.Contains(m.renderAgentHome(76), "PROPOSALS · READ ONLY") {
+		t.Fatalf("proposal result: state=%v body=%q", m.agentState, m.agentOutput)
+	}
 	updated, _ = m.Update(key("v"))
 	m = updated.(*Model)
 	if got := agent.args[len(agent.args)-1]; !slices.Equal(got, []string{"history", home, "check"}) {
