@@ -459,6 +459,40 @@ func smokeBundle(root string, o options) error {
 			return fmt.Errorf("bundled %s discovery smoke failed: exit=%v output=%q", probe.name, runErr, strings.TrimSpace(string(output)))
 		}
 	}
+
+	agentHome := filepath.Join(temp, "agent-home")
+	agent := filepath.Join(root, "bin", "agent")
+	cmd := exec.Command(agent, "new", agentHome, "suite smoke")
+	cmd.Env = env
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("bundled Agent scaffold smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(filepath.Join(agentHome, "bin", "check"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		return fmt.Errorf("prepare bundled Agent smoke home: %w", err)
+	}
+	for _, probe := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"check", []string{"home", "check", agentHome}, "valid agent home"},
+		{"zero-model run", []string{"home", "run", agentHome}, "nothing to do"},
+		{"Trail history", []string{"home", "history", agentHome}, "agent: history · home="},
+	} {
+		cmd := exec.Command(bench, probe.args...)
+		cmd.Env = env
+		output, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(output), probe.want) {
+			return fmt.Errorf("bundled Agent %s smoke failed: exit=%v output=%q", probe.name, err, strings.TrimSpace(string(output)))
+		}
+	}
+	runs, err := os.ReadDir(filepath.Join(agentHome, ".agent", "runs"))
+	if err != nil {
+		return fmt.Errorf("inspect bundled Agent smoke evidence: %w", err)
+	}
+	if len(runs) != 0 {
+		return fmt.Errorf("bundled Agent zero-model smoke created %d run artifact(s)", len(runs))
+	}
 	return nil
 }
 

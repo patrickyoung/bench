@@ -619,7 +619,7 @@ capability and truth, and the filesystem supplies composition and provenance.
 Prototype status on 27 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
 from Slice 3, and the history, learning, and reviewed-amendment headless paths
-from Slice 4. Its 116-check offline process-boundary suite covers scaffold,
+from Slice 4. Its 117-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
 history scoping, bounded side-effect-free proposal review, May parking and
@@ -663,13 +663,13 @@ a recursive specialist. Its network-free report measures definition/compiled
 bytes and verifies a minimal real Ask archive through Trail; model-quality and
 false-success studies still need separate tasks and an external oracle.
 
-The local `agent` repository is now committed and installs as
-`~/.local/bin/agent`. Benchpack's installer derives commands from the manifest,
-accepts a single executable companion asset, and the agent resolves that
-companion through its real path when invoked by an installation symlink. The
-remaining suite step is intentionally external: publish the independent
-repository, then pin that fetchable commit in `internal/suite/manifest.json`.
-The release manifest is not pointed at an unpublished or mutable source.
+The `agent` repository is public and exact Agent and Trail revisions are pinned
+in suite `0.7.0`. Benchpack's installer derives public commands from the
+manifest, carries `agent-action-shell` as a private executable asset, and Agent
+resolves that companion through its real path when invoked by an installation
+symlink. Native packaging exercises an installed zero-model Agent re-entry and
+Trail history lookup. A release still requires every pin to be fetchable and
+the clean fetched four-target matrix to pass.
 
 ### Slice 1: compile and run one home
 

@@ -36,6 +36,7 @@ Requirements when running from source rather than a suite archive:
 - `may` and `cage` on `PATH` for admitted exact-action approval and action-only
   confinement
 - `agent` on `PATH` for the experimental `bench home` folder-worker boundary
+- `trail` on `PATH` for that boundary's read-only run-history operations
 
 Build a relocatable development suite from the sibling repositories with:
 
@@ -45,7 +46,7 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-eight commands under `~/.local`. Pass `-prefix DIR` to change the destination.
+ten public commands under `~/.local`. Pass `-prefix DIR` to change the destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.
 

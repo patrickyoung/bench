@@ -462,14 +462,21 @@ func TestSuiteToolUsesOnlyACompleteMarkedBundle(t *testing.T) {
 	}
 }
 
-func TestVersionMatchesSuiteVersion(t *testing.T) {
+func TestVersionMatchesBenchComponentVersion(t *testing.T) {
 	m, err := suite.Current()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != m.Version {
-		t.Fatalf("bench version %q does not match suite %q", version, m.Version)
+	for _, component := range m.Components {
+		if component.Name != "bench" {
+			continue
+		}
+		if version != component.Version {
+			t.Fatalf("bench version %q does not match component %q", version, component.Version)
+		}
+		return
 	}
+	t.Fatal("suite manifest has no Bench component")
 }
 
 func TestHeadlessRunPreservesUnixStreamsAndArguments(t *testing.T) {

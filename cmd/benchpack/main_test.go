@@ -90,6 +90,9 @@ func TestInstallScriptLinksEveryRequiredSuiteCommand(t *testing.T) {
 	if !strings.Contains(script, want) {
 		t.Fatalf("installer tool set is incomplete:\n%s", script)
 	}
+	if strings.Contains(script, "agent-action-shell") {
+		t.Fatalf("installer exposed Agent's private action adapter:\n%s", script)
+	}
 }
 
 func TestInstallScriptDerivesNewCommandsFromManifest(t *testing.T) {

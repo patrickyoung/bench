@@ -89,7 +89,7 @@ jobs:
               src/bench/internal/suite/manifest.json)
             printf '%s/%s-%s\n' "$sources" "$1" "$revision"
           }
-          for component in ask brief ply hone; do
+          for component in ask brief ply hone trail; do
             (cd "$(component_dir "$component")" && go test ./...)
           done
           draft=$(component_dir draft)
@@ -124,6 +124,14 @@ jobs:
             sh bin/draft_test.sh
           )
           (cd "$(component_dir brief)" && go run . lint -strict "$draft_test/skills/draft")
+          agent=$(component_dir agent)
+          (
+            cd "$agent"
+            export PATH="$bundle/bin:$PATH"
+            sh -n bin/agent bin/agent-action-shell eval/run.sh
+            sh bin/agent_test.sh
+            sh eval/run.sh
+          )
       - name: Verify archive checksum
         shell: bash
         working-directory: ${{ runner.temp }}/dist
