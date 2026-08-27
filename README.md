@@ -625,6 +625,9 @@ agent run support-chief
 agent tick support-chief
 agent specialist support-chief researcher -- 'answer one bounded question'
 agent learn -into triage support-chief SESSION.jsonl
+agent learn -into triage -prepare recovery.json support-chief SESSION.jsonl
+agent learn -show recovery.json support-chief
+agent learn -admit recovery.json support-chief
 agent proposals support-chief
 agent amend support-chief tighten-checking.patch
 ```
@@ -638,6 +641,9 @@ bench home run -m provider/model support-chief
 bench home tick support-chief
 bench home specialist support-chief researcher -- 'answer one bounded question'
 bench home learn -into triage support-chief SESSION.jsonl
+bench home learn -into triage -prepare recovery.json support-chief SESSION.jsonl
+bench home learn -show recovery.json support-chief
+bench home learn -admit recovery.json support-chief
 bench home history support-chief
 bench home history support-chief check
 bench home proposals support-chief
@@ -662,22 +668,30 @@ gate, `l` lists Trail history, `v` replay-checks it through Ask, `p` shows the
 bounded literal patches and exact May actions through the read-only public
 `agent proposals` command, `s` opens a structured direct-specialist form, and
 `h` reviews one session's replay-verified learning evidence through public
-`agent learn -why` without calling a model or changing a skill. `a` opens an
-amendment form for one reviewed patch filename and invokes literal
-`agent amend HOME PATCH`.
+`agent learn -why` without calling a model or changing a skill. `n` prepares
+one user-named exact learning proposal from a destination skill and verified
+session, `o` reopens and validates that proposal without a model or write, and
+`u` replay-checks and admits its literal proposed `SKILL.md` bytes without
+another model call. `a` opens an amendment form for one reviewed patch filename
+and invokes literal `agent amend HOME PATCH`.
 The specialist form sends one portable child name and the caller-selected
 model as literal argv while the bounded task travels on attached stdin; the
 child keeps its own context, work, check, and evidence. Stdout, stderr, and the
 executable exit verdict stay distinct. Network widening, unconfined runs,
-generated lesson admission, and arbitrary session browsing remain explicit
-headless commands rather than hidden TUI defaults. Amendment submission never
-grants itself: exit 75 displays the exact May request as parked with the
-definition unchanged; decide its digest separately, then repeat the same form
-submission.
+and arbitrary session browsing remain explicit headless commands rather than
+hidden TUI defaults. Bench passes learning fields as literal Agent arguments;
+it does not parse, recreate, or weaken Hone's artifact contract. Preparation
+never overwrites an artifact or changes a skill. Admission rejects changed
+source evidence, changed wording evidence, stale destination bytes, changed
+paths, and any proposal whose rehashed result is not Hone's exact allowed
+append or scaffold delta. Amendment submission never grants itself: exit 75
+displays the exact May request as parked with the definition unchanged; decide
+its digest separately, then repeat the same form submission.
 Exit 3 remains declined, and only Agent's zero exit is shown as applied; the
 old compiled view is then cleared until `r` reloads it. Hone's `-N` can generate
-write-free wording but does not produce an exact artifact for a later write,
-so Bench does not mislabel it as reviewed admission.
+write-free wording directly, but reviewed admission uses the stricter
+`-prepare` / `show` / `admit` artifact path. A successful admission clears the
+old compiled view until `r` reloads the changed skill catalogue.
 
 The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and

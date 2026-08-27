@@ -619,18 +619,18 @@ capability and truth, and the filesystem supplies composition and provenance.
 Prototype status on 27 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
 from Slice 3, and the history, learning, and reviewed-amendment headless paths
-from Slice 4. Its 103-check offline process-boundary suite covers scaffold,
+from Slice 4. Its 116-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
 history scoping, bounded side-effect-free proposal review, May parking and
 hash binding, approved application receipts, rollback,
-controller-capability scrubbing, and exit preservation. A live disposable
+controller-capability scrubbing, exact prepared-learning admission, and exit
+preservation. A live disposable
 home also ran red-to-green through installed Brief, Ply, Ask, and Cage; its
 accepted Ask session replayed exactly, definition/evidence write probes were
 denied, and a later quiet tick created no new session. A separate live run
 produced a valid one-file definition proposal without mutating authored
-context. Suite packaging and exact generated-lesson admission remain future
-slices.
+context. Suite packaging remains a future slice.
 Bench now also exposes an attached `bench home [-C DIR] COMMAND...` boundary
 that
 passes literal arguments and streams to the public agent program, supplies the
@@ -646,14 +646,17 @@ literal argv and a bounded self-contained task on stdin to public
 `agent specialist`; it neither parses the child catalogue nor shares parent
 conversation state. A second form invokes public `agent learn -why` with one
 destination skill and home session, exposing replay-verified recovery evidence
-without a model call or skill write. A third form sends one literal reviewed
-patch name to public `agent amend`. It preserves May's parked exit 75 and
-declined exit 3, shows the unchanged command for a later retry, and reports
-success only after Agent revalidates, applies, checks, and receipts the granted
-bytes. Bench does not parse or recreate the proposal or approval envelope.
-Generated lesson admission remains future work. Hone `-N` generates fresh
-wording but does not yield an exact artifact that a later write consumes, so
-it is not treated as reviewed admission.
+without a model call or skill write. Adjacent prepare, open, and admit actions
+pass literal fields to public Agent commands. Preparation uses one model call
+to create a user-named, non-overwriting artifact while leaving the skill
+unchanged; opening validates and prints the literal final `SKILL.md` bytes;
+admission calls no model and requires both provenance replays, unchanged hashes
+and paths, a current destination, and Hone's exact allowed delta. The amendment
+form sends one literal reviewed patch name to public `agent amend`. It preserves
+May's parked exit 75 and declined exit 3, shows the unchanged command for a
+later retry, and reports success only after Agent revalidates, applies, checks,
+and receipts the granted bytes. Bench does not parse or recreate either the
+learning or approval envelope.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled

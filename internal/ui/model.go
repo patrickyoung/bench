@@ -138,11 +138,14 @@ type Model struct {
 	agentChild      textinput.Model
 	agentLearnSkill textinput.Model
 	agentLearnRun   textinput.Model
-	agentAmend      textinput.Model
-	skill           textinput.Model
-	skillQuery      textinput.Model
-	skillName       textinput.Model
-	skillDirectory  textinput.Model
+
+	agentLearnProposal textinput.Model
+
+	agentAmend     textinput.Model
+	skill          textinput.Model
+	skillQuery     textinput.Model
+	skillName      textinput.Model
+	skillDirectory textinput.Model
 	// Keep the heavyweight secondary editor indirect so the event-loop object
 	// stays lean while it is passed through the tea.Model interface.
 	skillSource       *textarea.Model
@@ -204,8 +207,12 @@ type Model struct {
 	agentLearnFocus   int
 	agentLearnName    string
 	agentLearnSession string
-	agentAmendOpen    bool
-	agentAmendName    string
+
+	agentLearnProposalName string
+	agentLearnMode         agentLearnMode
+
+	agentAmendOpen bool
+	agentAmendName string
 
 	width          int
 	height         int
@@ -304,6 +311,15 @@ const (
 	agentInterrupted
 )
 
+type agentLearnMode uint8
+
+const (
+	agentLearnEvidence agentLearnMode = iota
+	agentLearnPrepare
+	agentLearnShow
+	agentLearnAdmit
+)
+
 type buildState uint8
 
 const (
@@ -393,6 +409,11 @@ func New(cfg Config) *Model {
 	agentLearnRun.Prompt = ""
 	agentLearnRun.CharLimit = 1024
 	agentLearnRun.SetWidth(68)
+	agentLearnProposal := textinput.New()
+	agentLearnProposal.Placeholder = "recovery.json"
+	agentLearnProposal.Prompt = ""
+	agentLearnProposal.CharLimit = 255
+	agentLearnProposal.SetWidth(68)
 	agentAmend := textinput.New()
 	agentAmend.Placeholder = "tighten-checking.patch"
 	agentAmend.Prompt = ""
@@ -460,19 +481,22 @@ func New(cfg Config) *Model {
 		agentChild:      agentChild,
 		agentLearnSkill: agentLearnSkill,
 		agentLearnRun:   agentLearnRun,
-		agentAmend:      agentAmend,
-		skill:           skill,
-		skillQuery:      skillQuery,
-		skillName:       skillName,
-		skillDirectory:  skillDirectory,
-		skillSource:     &skillSource,
-		viewport:        view,
-		sessions:        cfg.Sessions,
-		activeSkills:    append([]string(nil), cfg.ActiveSkills...),
-		resume:          cfg.Resume,
-		width:           80,
-		height:          24,
-		dark:            true,
+
+		agentLearnProposal: agentLearnProposal,
+
+		agentAmend:     agentAmend,
+		skill:          skill,
+		skillQuery:     skillQuery,
+		skillName:      skillName,
+		skillDirectory: skillDirectory,
+		skillSource:    &skillSource,
+		viewport:       view,
+		sessions:       cfg.Sessions,
+		activeSkills:   append([]string(nil), cfg.ActiveSkills...),
+		resume:         cfg.Resume,
+		width:          80,
+		height:         24,
+		dark:           true,
 	}
 	if m.newSession == "" {
 		m.newSession = m.session
@@ -593,6 +617,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentChild.Blur()
 				m.agentLearnSkill.Blur()
 				m.agentLearnRun.Blur()
+				m.agentLearnProposal.Blur()
 				m.agentAmend.Blur()
 				m.skillQuery.Blur()
 				m.skillName.Blur()
@@ -1393,6 +1418,7 @@ func (m *Model) resize() {
 	m.agentChild.SetWidth(w - 6)
 	m.agentLearnSkill.SetWidth(w - 6)
 	m.agentLearnRun.SetWidth(w - 6)
+	m.agentLearnProposal.SetWidth(w - 6)
 	m.agentAmend.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
 	m.skillQuery.SetWidth(w - 6)
@@ -1701,7 +1727,14 @@ func (m *Model) renderHelp(width int) string {
 		if m.agentChildOpen {
 			escapeHelp = "cancel the specialist form without invoking a child"
 		} else if m.agentLearnOpen {
-			escapeHelp = "cancel the evidence review without learning"
+			switch m.agentLearnMode {
+			case agentLearnPrepare:
+				escapeHelp = "cancel before any proposal or skill is written"
+			case agentLearnAdmit:
+				escapeHelp = "cancel before the reviewed lesson is admitted"
+			default:
+				escapeHelp = "cancel the evidence review without learning"
+			}
 		} else if m.agentAmendOpen {
 			escapeHelp = "cancel the amendment form without invoking Agent or May"
 		}
@@ -1716,6 +1749,9 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
 			helpRow(t, "s", "open a bounded specialist name and task form", width),
 			helpRow(t, "h", "review one session's verified learning evidence via Hone", width),
+			helpRow(t, "n", "prepare exact proposed skill bytes from one recovery", width),
+			helpRow(t, "o", "open one exact learning proposal read-only", width),
+			helpRow(t, "u", "admit one reviewed proposal without another model call", width),
 			helpRow(t, "a", "submit one exact reviewed patch through Agent and May", width),
 			helpRow(t, "tab", "move between fields in the active form", width),
 			helpRow(t, "ctrl+enter", "submit the active form (ctrl+s fallback)", width),
@@ -1956,6 +1992,12 @@ func (m *Model) View() tea.View {
 			state = "history"
 		case "proposals":
 			state = "reviewed"
+		case "learn-prepare":
+			state = "prepared"
+		case "learn-show":
+			state = "reviewed"
+		case "learn-admit":
+			state = "admitted"
 		default:
 			state = "complete"
 		}
@@ -2075,8 +2117,20 @@ func (m *Model) View() tea.View {
 		composerLabel = t.sessionLabel.Render(" SPECIALIST TASK ")
 		composerContent = m.composer.View()
 	} else if m.screen == screenAgentHome && m.agentLearnOpen {
-		composerLabel = t.sessionLabel.Render(" VERIFIED LEARNING EVIDENCE ")
-		composerContent = t.muted.Render("Model-free review only. Skill admission remains an explicit headless agent learn command.")
+		switch m.agentLearnMode {
+		case agentLearnPrepare:
+			composerLabel = t.sessionLabel.Render(" EXACT LEARNING PROPOSAL ")
+			composerContent = t.muted.Render("One model call words the proposal. The skill remains unchanged until a separate exact admission.")
+		case agentLearnShow:
+			composerLabel = t.sessionLabel.Render(" EXACT LEARNING PROPOSAL ")
+			composerContent = t.muted.Render("Read-only artifact validation and literal SKILL.md bytes; no model or write.")
+		case agentLearnAdmit:
+			composerLabel = t.sessionLabel.Render(" REVIEWED LEARNING ADMISSION ")
+			composerContent = t.muted.Render("No model call. Changed evidence, wording, destination, or proposal bytes are refused.")
+		default:
+			composerLabel = t.sessionLabel.Render(" VERIFIED LEARNING EVIDENCE ")
+			composerContent = t.muted.Render("Replay-verified, model-free evidence review. No proposal or skill write.")
+		}
 	} else if m.screen == screenAgentHome && m.agentAmendOpen {
 		composerLabel = t.sessionLabel.Render(" MAY-GATED AMENDMENT ")
 		composerContent = t.muted.Render("The first submit parks the exact action. After a separate May decision, rerun the identical patch name to apply it.")
@@ -2192,11 +2246,19 @@ func (m *Model) View() tea.View {
 			if m.agentChildOpen {
 				notice = "tab move   ctrl+enter run specialist   esc cancel   f1 help"
 			} else if m.agentLearnOpen {
-				notice = "tab move   ctrl+enter review evidence   esc cancel   f1 help"
+				action := "review evidence"
+				if m.agentLearnMode == agentLearnPrepare {
+					action = "prepare exact lesson"
+				} else if m.agentLearnMode == agentLearnShow {
+					action = "open exact lesson"
+				} else if m.agentLearnMode == agentLearnAdmit {
+					action = "admit reviewed lesson"
+				}
+				notice = "tab move   ctrl+enter " + action + "   esc cancel   f1 help"
 			} else if m.agentAmendOpen {
 				notice = "ctrl+enter submit exact amendment   esc cancel   f1 help"
 			} else {
-				notice = "r inspect   c check   g run   s specialist   h learn   p proposals   a amend   f1 help"
+				notice = "r inspect   g run   h evidence   n prepare   o open   u admit   a amend   f1 help"
 			}
 		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
@@ -2406,6 +2468,7 @@ func (m *Model) applyTheme() {
 	m.agentChild.SetStyles(inputStyles)
 	m.agentLearnSkill.SetStyles(inputStyles)
 	m.agentLearnRun.SetStyles(inputStyles)
+	m.agentLearnProposal.SetStyles(inputStyles)
 	m.agentAmend.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
 	m.skillQuery.SetStyles(inputStyles)

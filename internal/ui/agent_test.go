@@ -257,6 +257,129 @@ func TestAgentLearningReviewPreservesNothingToLearnVerdict(t *testing.T) {
 	}
 }
 
+func TestAgentExactLearningPrepareShowAndAdmit(t *testing.T) {
+	agent := &fakeAgent{}
+	home := "/work/home with spaces"
+	m := New(Config{Workspace: "/work", Home: home, Agent: agent, Model: "provider/model"})
+
+	updated, _ := m.Update(key("n"))
+	m = updated.(*Model)
+	if !m.agentLearnOpen || m.agentLearnMode != agentLearnPrepare || m.agentLearnFocus != 0 || !m.agentLearnSkill.Focused() {
+		t.Fatalf("prepare form open=%v mode=%v focus=%d skill-focused=%v", m.agentLearnOpen, m.agentLearnMode, m.agentLearnFocus, m.agentLearnSkill.Focused())
+	}
+	updated, _ = m.Update(key("tab"))
+	m = updated.(*Model)
+	if m.agentLearnFocus != 1 || !m.agentLearnRun.Focused() {
+		t.Fatalf("prepare first tab focus=%d run-focused=%v", m.agentLearnFocus, m.agentLearnRun.Focused())
+	}
+	updated, _ = m.Update(key("tab"))
+	m = updated.(*Model)
+	if m.agentLearnFocus != 2 || !m.agentLearnProposal.Focused() {
+		t.Fatalf("prepare second tab focus=%d proposal-focused=%v", m.agentLearnFocus, m.agentLearnProposal.Focused())
+	}
+	updated, _ = m.Update(key("tab"))
+	m = updated.(*Model)
+	if m.agentLearnFocus != 0 || !m.agentLearnSkill.Focused() {
+		t.Fatalf("prepare wrapped tab focus=%d skill-focused=%v", m.agentLearnFocus, m.agentLearnSkill.Focused())
+	}
+	updated, _ = m.Update(key("shift+tab"))
+	m = updated.(*Model)
+	if m.agentLearnFocus != 2 || !m.agentLearnProposal.Focused() {
+		t.Fatalf("prepare reverse tab focus=%d proposal-focused=%v", m.agentLearnFocus, m.agentLearnProposal.Focused())
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "destination skill") || !strings.Contains(m.notice, "exact learning proposal") {
+		t.Fatalf("empty prepare args=%#v notice=%q", agent.args, m.notice)
+	}
+	m.agentLearnSkill.SetValue("triage")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "replayable session") {
+		t.Fatalf("empty prepare session args=%#v notice=%q", agent.args, m.notice)
+	}
+	m.agentLearnRun.SetValue("recovery with spaces.jsonl")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, ".json learning proposal") {
+		t.Fatalf("empty prepare proposal args=%#v notice=%q", agent.args, m.notice)
+	}
+	m.agentLearnProposal.SetValue("recovery.json")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	wantPrepare := []string{"learn", "-into", "triage", "-m", "provider/model", "-prepare", "recovery.json", home, "recovery with spaces.jsonl"}
+	if len(agent.args) != 1 || !slices.Equal(agent.args[0], wantPrepare) || agent.stdin[0] != "" {
+		t.Fatalf("prepare args=%#v stdin=%#v want=%#v", agent.args, agent.stdin, wantPrepare)
+	}
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "hone.proposal/v1\nafter-sha256: exact\nskill-bytes:\n# triage\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	view := m.renderAgentHome(76)
+	if m.agentState != agentSucceeded || !strings.Contains(view, "EXACT LEARNING PROPOSAL · SKILL UNCHANGED") || !strings.Contains(view, "EXACT LESSON PREPARED") {
+		t.Fatalf("prepared learning state=%v view=%q", m.agentState, view)
+	}
+	lastCommand := m.agentCommandDisplay()
+	updated, _ = m.Update(key("n"))
+	m = updated.(*Model)
+	m.agentLearnSkill.SetValue("changed")
+	m.agentLearnRun.SetValue("changed.jsonl")
+	m.agentLearnProposal.SetValue("changed.json")
+	if got := m.agentCommandDisplay(); got != lastCommand {
+		t.Fatalf("editing a new preparation changed prior command display: got %q want %q", got, lastCommand)
+	}
+	updated, _ = m.Update(key("esc"))
+	m = updated.(*Model)
+
+	updated, _ = m.Update(key("o"))
+	m = updated.(*Model)
+	if m.agentLearnMode != agentLearnShow || !m.agentLearnProposal.Focused() || m.agentLearnProposal.Value() != "recovery.json" {
+		t.Fatalf("show form mode=%v focused=%v value=%q", m.agentLearnMode, m.agentLearnProposal.Focused(), m.agentLearnProposal.Value())
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	wantShow := []string{"learn", "-show", "recovery.json", home}
+	if len(agent.args) != 2 || !slices.Equal(agent.args[1], wantShow) {
+		t.Fatalf("show args=%#v want=%#v", agent.args, wantShow)
+	}
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "skill-bytes:\n# triage\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	if !strings.Contains(m.renderAgentHome(76), "EXACT LESSON REVIEWED · READ ONLY") {
+		t.Fatalf("show verdict=%q", m.renderAgentHome(76))
+	}
+
+	updated, _ = m.Update(key("u"))
+	m = updated.(*Model)
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	wantAdmit := []string{"learn", "-admit", "recovery.json", home}
+	if len(agent.args) != 3 || !slices.Equal(agent.args[2], wantAdmit) {
+		t.Fatalf("admit args=%#v want=%#v", agent.args, wantAdmit)
+	}
+	m.agentDefinition = "stale compiled skill catalogue"
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "/work/skills/triage/SKILL.md: 1 reviewed lesson admitted\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	if m.agentState != agentSucceeded || m.agentDefinition != "" || !strings.Contains(m.notice, "press r") || !strings.Contains(m.renderAgentHome(76), "REVIEWED LESSON ADMITTED") {
+		t.Fatalf("admit state=%v definition=%q notice=%q view=%q", m.agentState, m.agentDefinition, m.notice, m.renderAgentHome(76))
+	}
+}
+
+func TestAgentExactLearningAdmissionPreservesNothingToAdmit(t *testing.T) {
+	m := New(Config{Workspace: "/work", Home: "/work/chief", Agent: &fakeAgent{}})
+	m.agentLearnProposalName = "review.json"
+	updated, _ := m.startAgentCommand("learn-admit")
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 1})
+	m = updated.(*Model)
+	if m.agentState != agentNegative || !strings.Contains(m.notice, "Nothing was admitted") {
+		t.Fatalf("admit negative state=%v notice=%q", m.agentState, m.notice)
+	}
+}
+
 func TestAgentAmendmentFormPreservesExactMayStates(t *testing.T) {
 	agent := &fakeAgent{}
 	home := "/work/home with spaces"
@@ -369,6 +492,18 @@ func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 	if !strings.Contains(m.View().Content, "DESTINATION SKILL") || !strings.Contains(m.View().Content, "VERIFIED LEARNING EVIDENCE") {
 		t.Fatalf("learning form missing: %q", m.View().Content)
+	}
+	updated, _ = m.closeAgentLearnForm()
+	m = updated.(*Model)
+	updated, _ = m.Update(key("n"))
+	m = updated.(*Model)
+	m.agentLearnSkill.SetValue("triage")
+	m.agentLearnRun.SetValue("recovery.jsonl")
+	m.agentLearnProposal.SetValue("recovery.json")
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if !strings.Contains(m.View().Content, "LEARNING PROPOSAL FILE") || !strings.Contains(m.View().Content, "EXACT LEARNING PROPOSAL") {
+		t.Fatalf("learning proposal form missing: %q", m.View().Content)
 	}
 	updated, _ = m.closeAgentLearnForm()
 	m = updated.(*Model)

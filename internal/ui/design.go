@@ -298,13 +298,20 @@ func (m *Model) focusCurrent() tea.Cmd {
 			m.agentChild.Blur()
 			return m.composer.Focus()
 		}
-		if m.agentLearnOpen && m.agentLearnFocus == 0 {
-			m.agentLearnRun.Blur()
-			return m.agentLearnSkill.Focus()
-		}
 		if m.agentLearnOpen {
 			m.agentLearnSkill.Blur()
-			return m.agentLearnRun.Focus()
+			m.agentLearnRun.Blur()
+			m.agentLearnProposal.Blur()
+			switch {
+			case m.agentLearnMode == agentLearnShow || m.agentLearnMode == agentLearnAdmit:
+				return m.agentLearnProposal.Focus()
+			case m.agentLearnFocus == 0:
+				return m.agentLearnSkill.Focus()
+			case m.agentLearnFocus == 1:
+				return m.agentLearnRun.Focus()
+			default:
+				return m.agentLearnProposal.Focus()
+			}
 		}
 		if m.agentAmendOpen {
 			return m.agentAmend.Focus()
