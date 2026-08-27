@@ -13,9 +13,35 @@ import (
 	"github.com/patrickyoung/bench/internal/filterexec"
 )
 
+type Event = filterexec.Event
+
+const (
+	Stdout = filterexec.Stdout
+	Stderr = filterexec.Stderr
+)
+
 type Outcome struct {
 	ExitCode int
 	Err      error
+}
+
+// Start runs one public agent command asynchronously for an interactive
+// controller. Arguments remain literal and the standalone executable keeps
+// ownership of every command's meaning.
+func (r Runner) Start(ctx context.Context, args []string, stdin string) <-chan Event {
+	if len(args) == 0 {
+		events := make(chan Event, 1)
+		events <- Event{Done: true, ExitCode: 2, Err: errors.New("agent command is empty")}
+		close(events)
+		return events
+	}
+	return filterexec.Start(ctx, filterexec.Spec{
+		Path:  r.path(),
+		Args:  append([]string(nil), args...),
+		Dir:   r.WorkDir,
+		Env:   r.toolEnv(),
+		Stdin: stdin,
+	})
 }
 
 // Runner invokes an installed agent program directly, without a shell.

@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/patrickyoung/bench/internal/agentexec"
 	"github.com/patrickyoung/bench/internal/askexec"
 	"github.com/patrickyoung/bench/internal/autonomy"
 	"github.com/patrickyoung/bench/internal/autoroute"
@@ -63,6 +64,7 @@ type Config struct {
 	Task            plyexec.Worker
 	Contracts       contractexec.Negotiator
 	Draft           draftexec.Client
+	Agent           agentClient
 	Hone            honeexec.Client
 	Brief           briefexec.Client
 	Ply             plyexec.Client
@@ -75,6 +77,7 @@ type Config struct {
 	Workspace       string
 	DataDir         string
 	Project         string
+	Home            string
 	InitialPrompt   string
 	Toolbox         string
 	ActiveSkills    []string
@@ -95,6 +98,7 @@ type Model struct {
 	task              plyexec.Worker
 	contracts         contractexec.Negotiator
 	draft             draftexec.Client
+	agent             agentClient
 	hone              honeexec.Client
 	brief             briefexec.Client
 	ply               plyexec.Client
@@ -181,6 +185,13 @@ type Model struct {
 	skillRunState   skillRunState
 	skillRunSession string
 	activeSkills    []string
+	agentHome       string
+	agentDefinition string
+	agentOutput     string
+	agentActivity   string
+	agentCommand    string
+	agentExitCode   int
+	agentState      agentState
 
 	width          int
 	height         int
@@ -196,6 +207,7 @@ type Model struct {
 	cancel         context.CancelFunc
 	events         <-chan askexec.Event
 	draftEvents    <-chan draftexec.Event
+	agentEvents    <-chan agentexec.Event
 	honeEvents     <-chan honeexec.Event
 	briefEvents    <-chan briefexec.Event
 	plyEvents      <-chan plyexec.Event
@@ -208,7 +220,9 @@ type processEvent askexec.Event
 type tickMsg time.Time
 type beginReplayMsg struct{}
 type beginProjectMsg struct{}
+type beginAgentHomeMsg struct{}
 type draftProcessEvent draftexec.Event
+type agentProcessEvent agentexec.Event
 type honeProcessEvent honeexec.Event
 type briefProcessEvent briefexec.Event
 type plyProcessEvent plyexec.Event
@@ -220,6 +234,10 @@ type askClient interface {
 	askexec.Replayer
 }
 
+type agentClient interface {
+	Start(context.Context, []string, string) <-chan agentexec.Event
+}
+
 type job uint8
 
 const (
@@ -229,6 +247,7 @@ const (
 	jobDraftCheck
 	jobDraftBuild
 	jobDraftProve
+	jobAgent
 	jobHone
 	jobBriefList
 	jobBriefPath
@@ -256,6 +275,18 @@ const (
 	screenSkillForm
 	screenSkillRun
 	screenContract
+	screenAgentHome
+)
+
+type agentState uint8
+
+const (
+	agentUnknown agentState = iota
+	agentRunning
+	agentSucceeded
+	agentNegative
+	agentBroken
+	agentInterrupted
 )
 
 type buildState uint8
@@ -371,6 +402,7 @@ func New(cfg Config) *Model {
 		task:            cfg.Task,
 		contracts:       cfg.Contracts,
 		draft:           cfg.Draft,
+		agent:           cfg.Agent,
 		hone:            cfg.Hone,
 		brief:           cfg.Brief,
 		ply:             cfg.Ply,
@@ -413,6 +445,11 @@ func New(cfg Config) *Model {
 		m.screen = screenDesignReview
 		m.picking = false
 	}
+	if cfg.Home != "" {
+		m.agentHome = cfg.Home
+		m.screen = screenAgentHome
+		m.picking = false
+	}
 	m.applyTheme()
 	m.syncContent()
 	return &m
@@ -421,6 +458,9 @@ func New(cfg Config) *Model {
 func (m *Model) Init() tea.Cmd {
 	if m.designDir != "" && m.screen == screenDesignReview {
 		return func() tea.Msg { return beginProjectMsg{} }
+	}
+	if m.agentHome != "" && m.screen == screenAgentHome {
+		return func() tea.Msg { return beginAgentHomeMsg{} }
 	}
 	if m.resume {
 		return func() tea.Msg { return beginReplayMsg{} }
@@ -446,10 +486,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startReplay(m.session)
 	case beginProjectMsg:
 		return m.startDraftCheck()
+	case beginAgentHomeMsg:
+		return m.startAgentCommand("show")
 	case processEvent:
 		return m.updateProcess(askexec.Event(msg))
 	case draftProcessEvent:
 		return m.updateDraftProcess(draftexec.Event(msg))
+	case agentProcessEvent:
+		return m.updateAgentProcess(agentexec.Event(msg))
 	case honeProcessEvent:
 		return m.updateLearnProcess(honeexec.Event(msg))
 	case briefProcessEvent:
@@ -537,8 +581,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncContent()
 			return m, tea.Suspend
 		}
-		if key == "f2" && !m.running && !m.picking && !isSkillScreen(m.screen) {
+		if key == "f2" && !m.running && !m.picking && !isSkillScreen(m.screen) && m.screen != screenAgentHome {
 			return m.openSkills()
+		}
+		if m.screen == screenAgentHome {
+			return m.updateAgentHome(msg, key)
 		}
 		if isSkillScreen(m.screen) {
 			return m.updateSkills(msg, key)
@@ -1231,6 +1278,8 @@ func (m *Model) interrupt() {
 			name = "ask"
 		case jobDraftNew, jobDraftCheck, jobDraftBuild, jobDraftProve:
 			name = "draft"
+		case jobAgent:
+			name = "agent"
 		case jobHone:
 			name = "hone"
 		case jobBriefList, jobBriefPath, jobBriefCat, jobBriefFiles, jobBriefLint, jobBriefNew:
@@ -1315,6 +1364,8 @@ func (m *Model) syncContent() {
 	var content string
 	if m.showHelp {
 		content = m.renderHelp(width)
+	} else if m.screen == screenAgentHome {
+		content = m.renderAgentHome(width)
 	} else if m.screen == screenDesignForm {
 		content = m.renderDesignForm(width)
 	} else if m.screen == screenDesignReview {
@@ -1366,7 +1417,7 @@ func (m *Model) syncContent() {
 		}
 		return
 	}
-	if m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn || m.screen == screenSkillRun {
+	if m.screen == screenAgentHome || m.screen == screenBuild || m.screen == screenProve || m.screen == screenLearn || m.screen == screenSkillRun {
 		if wasBottom {
 			m.viewport.GotoBottom()
 		}
@@ -1598,6 +1649,24 @@ func formatBytes(n int64) string {
 
 func (m *Model) renderHelp(width int) string {
 	t := makeTheme(m.dark)
+	if m.screen == screenAgentHome {
+		rows := []string{
+			t.hero.Render("Agent home keyboard"), "",
+			helpRow(t, "r", "refresh the exact compiled home with agent show", width),
+			helpRow(t, "c", "validate the home offline with agent check", width),
+			helpRow(t, "g", "pursue GOAL.md through the default confined run", width),
+			helpRow(t, "t", "run the cheap heartbeat gate", width),
+			helpRow(t, "l", "list replayable run history as Trail JSONL", width),
+			helpRow(t, "v", "ask Trail and Ask to replay-check every run", width),
+			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
+			helpRow(t, "esc", "interrupt, or close the agent-home view", width),
+			helpRow(t, "ctrl+c", "interrupt; press again when idle to quit", width),
+			helpRow(t, "f1", "close this help", width), "",
+			t.muted.Render("Agent owns the home parser, loop, evidence, history, and confinement. Bench only invokes its public commands."),
+			t.code.Width(max(10, width-4)).Render("agent show " + m.agentHome + "\nagent history " + m.agentHome + " check"),
+		}
+		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(rows, "\n"))
+	}
 	if m.screen == screenContract {
 		rows := []string{
 			t.hero.Render("Contract review keyboard"), "",
@@ -1799,7 +1868,9 @@ func (m *Model) View() tea.View {
 	if !m.taskMode {
 		section = "ask"
 	}
-	if m.screen == screenDesignForm || m.screen == screenDesignReview {
+	if m.screen == screenAgentHome {
+		section = "agent home"
+	} else if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		section = "design"
 	} else if m.screen == screenBuild {
 		section = "build"
@@ -1812,7 +1883,26 @@ func (m *Model) View() tea.View {
 	} else if m.screen == screenContract {
 		section = "contract"
 	}
-	if m.screen == screenDesignForm && m.running {
+	if m.screen == screenAgentHome && m.running {
+		state = "running"
+	} else if m.screen == screenAgentHome && m.agentState == agentSucceeded {
+		switch m.agentCommand {
+		case "run":
+			state = "accepted"
+		case "show", "check":
+			state = "valid"
+		case "history", "history-check":
+			state = "history"
+		default:
+			state = "complete"
+		}
+	} else if m.screen == screenAgentHome && m.agentState == agentNegative {
+		state = "not accepted"
+	} else if m.screen == screenAgentHome && m.agentState == agentBroken {
+		state = "broken"
+	} else if m.screen == screenAgentHome {
+		state = "inspect"
+	} else if m.screen == screenDesignForm && m.running {
 		state = "drafting"
 	} else if m.screen == screenDesignForm {
 		state = "shape"
@@ -1916,6 +2006,20 @@ func (m *Model) View() tea.View {
 		if m.running {
 			composerContent = t.muted.Render("The read-only compiler is revising the proposal. Ply has not started.")
 		}
+	} else if m.screen == screenAgentHome {
+		composerLabel = t.faint.Render(" AGENT VERDICT ")
+		verdict, verdictStyle := m.agentVerdict(t)
+		detail := "Agent has not inspected this home yet."
+		if m.agentState == agentRunning {
+			detail = "The standalone agent command owns this operation and its evidence."
+		} else if m.agentState == agentSucceeded {
+			detail = "The public command exited zero; inspect its exact output above."
+		} else if m.agentState == agentNegative {
+			detail = "Exit one is a usable negative verdict, not controller success."
+		} else if m.agentState == agentBroken {
+			detail = "The agent command could not produce a trustworthy result."
+		}
+		composerContent = verdictStyle.Render(verdict) + "\n" + t.muted.Render(detail)
 	} else if m.screen == screenDesignForm {
 		composerLabel = t.faint.Render(" AGENT REQUIREMENTS ")
 		if m.formFocus == 1 && !m.running {
@@ -2005,7 +2109,9 @@ func (m *Model) View() tea.View {
 	composer := t.composer.Width(max(20, w-4)).Height(m.composer.Height()).Render(composerContent)
 	notice := m.notice
 	if notice == "" {
-		if m.screen == screenContract {
+		if m.screen == screenAgentHome {
+			notice = "r inspect   c check   g run goal   t tick   l history   v verify   f1 help"
+		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
 		} else if m.screen == screenDesignForm {
 			notice = "tab move   ctrl+enter draft   esc work   f2 skills   f1 help"
@@ -2035,6 +2141,8 @@ func (m *Model) View() tea.View {
 	rightContext := filepath.Base(m.session) + "  ·  " + m.modelDisplay()
 	if m.screen == screenContract {
 		rightContext = filepath.Base(m.contractStore.DraftPath())
+	} else if m.screen == screenAgentHome {
+		rightContext = filepath.Base(m.agentHome) + "  ·  " + m.agentCommand
 	} else if m.screen == screenDesignForm || m.screen == screenDesignReview {
 		rightContext = filepath.Base(m.designDir)
 		if rightContext == "." || rightContext == "" {
@@ -2225,7 +2333,10 @@ func lastUsefulLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
-			return ansi.TruncateLeft(line, 120, "…")
+			if lipgloss.Width(line) > 120 {
+				return ansi.TruncateLeft(line, 120, "…")
+			}
+			return line
 		}
 	}
 	return ""

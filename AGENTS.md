@@ -129,3 +129,8 @@ evidence and exit-status verdicts. The Skills workbench likewise composes
 lint as the only refinement verdict. Further task, build, evaluation, and
 learning features belong here only as real compositions of existing filters,
 added one verified vertical slice at a time.
+The experimental `-home` view follows the same rule: it invokes the public
+Agent executable, begins from `agent show`, and keeps stdout data, stderr
+evidence, and exit verdicts distinct. Bench must not parse an agent home or
+Ask session, infer success from rendered text, silently widen Cage/network
+authority, or turn learning and definition amendments into one-key writes.

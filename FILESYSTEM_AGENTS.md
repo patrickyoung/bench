@@ -621,6 +621,11 @@ selected Ask/Ply/Brief/Cage/Hone/Trail executables, and preserves its exit statu
 The standalone runtime now also composes Trail for scoped read-only
 `history ls/find/show/window/lineage/check`; replay checking remains Ask's
 verdict rather than a new agent-session parser.
+The first interactive Bench view is also present: `bench -C PARENT -home NAME`
+invokes public show/check/run/tick/history operations, keeps stdout, stderr,
+and exit verdicts visibly separate, and offers no implicit authority widening.
+Specialist forms, learning/amendment review, and approval UX remain future
+work.
 
 The local `agent` repository is now committed and installs as
 `~/.local/bin/agent`. Benchpack's installer derives commands from the manifest,

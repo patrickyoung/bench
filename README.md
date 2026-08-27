@@ -55,6 +55,7 @@ go run . -m openai-codex/your-model 'Find the failing test and fix it.'
 go run . -f 20260820-154753-32d9f393
 go run . -n
 go run . -project path/to/existing-agent
+go run . -C path/to/agent-parent -home built-agent
 git diff | bench 'review this patch'
 ```
 
@@ -643,13 +644,26 @@ and the agent's stdout, stderr, and exit status pass through unchanged.
 promotes a task into a Draft design, while `bench home` operates an already
 built folder worker.
 
+An existing home can also open as a dedicated interactive view:
+
+```sh
+bench -C "$PWD/agents" -home support-chief
+```
+
+That screen begins with public `agent show`; `r` refreshes the compiled home,
+`c` runs the offline check, `g` pursues `GOAL.md`, `t` runs the cheap heartbeat
+gate, `l` lists Trail history, and `v` replay-checks it through Ask. Stdout,
+stderr, and the executable exit verdict stay distinct. Network widening,
+unconfined runs, specialists, learning destinations, and session selection
+remain explicit headless commands rather than hidden TUI defaults.
+
 The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and
 session, `bin/check` owns completion, `bin/wake` can suppress idle model calls,
 direct child homes keep separate evidence, Hone owns explicit verified
 learning, and Cage owns the default write/network boundary. The current
-vertical slice is headless and available through `bench home`, but is not yet
-included in Bench's pinned suite or TUI. See
+vertical slice is available through `bench home` and the dedicated `-home`
+view, but is not yet included in Bench's pinned suite. See
 [FILESYSTEM_AGENTS.md](FILESYSTEM_AGENTS.md) for the cross-system research,
 security model, and delivery plan.
 

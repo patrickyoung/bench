@@ -842,6 +842,11 @@ func TestCLIHelpAndUsageErrorsAreConventional(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
+	if code := run([]string{"tui", "-home", "worker", "-project", "design"}, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "cannot be used together") {
+		t.Fatalf("home/project conflict code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 	if code := run([]string{"run"}, strings.NewReader("evidence"), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "goal is required") {
 		t.Fatalf("usage code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

@@ -287,6 +287,13 @@ Headless `bench home [-C DIR] COMMAND...` is an attached process boundary over
 those public verbs: it supplies the selected companions but preserves
 literal argv, stdin, stdout, stderr, and exit status. Interactive `/agent`
 retains its existing and distinct Draft-promotion meaning.
+Interactive `bench -C PARENT -home NAME` starts from public `agent show` and
+offers only direct public operations: refresh, offline check, default-confined
+goal run, heartbeat tick, Trail history list, and Ask-backed history check.
+The UI renders stdout as result data, stderr as evidence, and exit status as
+the verdict; it does not parse session internals or treat displayed prose as
+success. Authority-widening flags and definition-changing learning remain
+headless until they have an explicit review interaction.
 
 ## Interaction model
 
@@ -408,10 +415,11 @@ and writes the brief skill. There is no TUI memory schema.
     context, private parent-scoped evidence, ordered failure-aware synthesis,
     and cooperative whole-tree interruption.
 13. **In progress:** validate the experimental sibling `agent` filter in real
-    homes and expose its public `show/check/run/tick/specialist/learn/history` verbs
-    through the headless `bench home` process boundary. A later TUI view must
-    still avoid importing its parser, loop, scheduler, evidence, or
-    confinement policy.
+    homes, expose every public verb through headless `bench home`, and provide
+    a dedicated interactive view for `show/check/run/tick/history`. Specialist
+    inputs, explicit learning, amendment review, and approval remain later UI
+    slices; they must still avoid importing Agent's parser, loop, scheduler,
+    evidence, or confinement policy.
 
 At every stage, deleting the TUI must leave a usable directory of files and
 commands.

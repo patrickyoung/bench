@@ -82,6 +82,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.startNew, "n", false, "start new instead of showing saved sessions")
 	fs.BoolVar(&o.startNew, "new", false, "start new instead of showing saved sessions")
 	fs.StringVar(&o.project, "project", "", "open an existing agent project")
+	fs.StringVar(&o.home, "home", "", "open an existing built agent home")
 	addTaskFlags(fs, &o.task)
 	fs.Usage = func() { printUsage(stderr) }
 	if err := fs.Parse(args); err != nil {
@@ -104,8 +105,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !o.toolbox.set && !o.shell {
 		o.toolbox.value = strings.TrimSpace(os.Getenv("BENCH_TOOLS"))
 	}
-	if o.startNew && (o.resume != "" || o.project != "") || o.resume != "" && o.project != "" {
-		fmt.Fprintln(stderr, "bench: -new, -session, and -project cannot be used together")
+	selectedEntry := 0
+	for _, selected := range []bool{o.startNew, o.resume != "", o.project != "", o.home != ""} {
+		if selected {
+			selectedEntry++
+		}
+	}
+	if selectedEntry > 1 {
+		fmt.Fprintln(stderr, "bench: -new, -session, -project, and -home cannot be used together")
 		return 2
 	}
 
@@ -125,12 +132,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(stderr, err)
 	}
 	initial := strings.Join(fs.Args(), " ")
-	if o.project != "" && initial != "" {
-		return report(stderr, errors.New("initial task cannot be combined with -project"))
+	if (o.project != "" || o.home != "") && initial != "" {
+		return report(stderr, errors.New("initial task cannot be combined with -project or -home"))
 	}
 	projectDir := ""
 	if o.project != "" {
 		projectDir, err = ui.ProjectPath(workspace, o.project)
+		if err != nil {
+			return report(stderr, err)
+		}
+	}
+	homeDir := ""
+	if o.home != "" {
+		homeDir, err = ui.HomePath(workspace, o.home)
 		if err != nil {
 			return report(stderr, err)
 		}
@@ -162,6 +176,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			Path: paths.draft, AskPath: paths.ask, BriefPath: paths.brief,
 			PlyPath: paths.ply, HonePath: paths.hone, WorkDir: workspace,
 		},
+		Agent: agentexec.Runner{
+			Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
+			CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
+			AskPath: paths.ask, WorkDir: workspace,
+		},
 		Hone:          honeexec.Runner{Path: paths.hone, AskPath: paths.ask, BriefPath: paths.brief, WorkDir: workspace},
 		Brief:         briefexec.Runner{Binary: paths.brief, WorkDir: workspace},
 		Ply:           plyRunner,
@@ -174,6 +193,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Workspace:     workspace,
 		DataDir:       root,
 		Project:       projectDir,
+		Home:          homeDir,
 		InitialPrompt: initial,
 		Toolbox:       o.toolbox.value,
 		ActiveSkills:  append([]string(nil), o.skills...),
@@ -230,11 +250,11 @@ func runHomeCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 type tuiOptions struct {
-	model, workspace, resume, project string
-	toolbox                           trackedString
-	skills                            stringList
-	shell, startNew                   bool
-	task                              taskFlags
+	model, workspace, resume, project, home string
+	toolbox                                 trackedString
+	skills                                  stringList
+	shell, startNew                         bool
+	task                                    taskFlags
 }
 
 func runHeadless(mode string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -896,6 +916,7 @@ Interactive flags:
   -f session          verify and resume a named session (-session)
   -n                   start a fresh session without the picker (-new)
   -project dir        open and check an existing agent project
+  -home dir           inspect and operate an existing built agent home
   -mode auto|quick|review|loop  delegate routing, or choose immediate, reviewed, or verifier-pursuit work
   -contract           compatibility alias for review/quick
   -check command      literal verifier for the next open work outcome
