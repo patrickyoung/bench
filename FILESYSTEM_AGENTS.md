@@ -617,7 +617,10 @@ later quiet tick created no new session. Suite packaging, amendment review,
 history browsing, and the interactive Bench view remain future slices. Bench
 now also exposes an attached `bench home [-C DIR] COMMAND...` boundary that
 passes literal arguments and streams to the public agent program, supplies the
-selected Ply/Brief/Cage/Hone executables, and preserves its exit status.
+selected Ask/Ply/Brief/Cage/Hone/Trail executables, and preserves its exit status.
+The standalone runtime now also composes Trail for scoped read-only
+`history ls/find/show/window/lineage/check`; replay checking remains Ask's
+verdict rather than a new agent-session parser.
 
 The local `agent` repository is now committed and installs as
 `~/.local/bin/agent`. Benchpack's installer derives commands from the manifest,

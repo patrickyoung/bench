@@ -20,7 +20,7 @@ set -eu
 [ "$#" -eq 3 ]
 [ "$1" = run ]
 printf '%s\n%s\n' "$2" "$3" > argv
-printf '%s\n%s\n%s\n%s\n' "$AGENT_PLY" "$AGENT_BRIEF" "$AGENT_CAGE" "$AGENT_HONE" > tools
+printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$AGENT_PLY" "$AGENT_BRIEF" "$AGENT_CAGE" "$AGENT_HONE" "$AGENT_TRAIL" "$AGENT_ASK" > tools
 cat > stdin
 printf 'answer'
 printf 'evidence' >&2
@@ -34,6 +34,7 @@ exit 7
 		Path: fixture, WorkDir: dir,
 		PlyPath: "/suite/ply", BriefPath: "/suite/brief",
 		CagePath: "/suite/cage", HonePath: "/suite/hone",
+		TrailPath: "/suite/trail", AskPath: "/suite/ask",
 	}
 	outcome := runner.Run(context.Background(), []string{"run", "home with spaces", "; $(literal)"}, strings.NewReader("input bytes\n"), &stdout, &stderr)
 	if outcome.Err != nil || outcome.ExitCode != 7 {
@@ -51,7 +52,7 @@ exit 7
 		t.Fatalf("stdin=%q err=%v", input, err)
 	}
 	tools, err := os.ReadFile(filepath.Join(dir, "tools"))
-	if err != nil || string(tools) != "/suite/ply\n/suite/brief\n/suite/cage\n/suite/hone\n" {
+	if err != nil || string(tools) != "/suite/ply\n/suite/brief\n/suite/cage\n/suite/hone\n/suite/trail\n/suite/ask\n" {
 		t.Fatalf("tools=%q err=%v", tools, err)
 	}
 }

@@ -785,7 +785,7 @@ func TestHomeCLIIsTransparentAgentProcessBoundary(t *testing.T) {
 	script := `#!/bin/sh
 set -eu
 printf '%s\n' "$@" > args
-printf '%s\n%s\n%s\n%s\n' "$AGENT_PLY" "$AGENT_BRIEF" "$AGENT_CAGE" "$AGENT_HONE" > tools
+printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$AGENT_PLY" "$AGENT_BRIEF" "$AGENT_CAGE" "$AGENT_HONE" "$AGENT_TRAIL" "$AGENT_ASK" > tools
 cat > input
 printf 'agent-answer'
 printf 'agent-evidence' >&2
@@ -799,6 +799,8 @@ exit 9
 	t.Setenv("BENCH_BRIEF", "/suite/brief")
 	t.Setenv("BENCH_CAGE", "/suite/cage")
 	t.Setenv("BENCH_HONE", "/suite/hone")
+	t.Setenv("BENCH_TRAIL", "/suite/trail")
+	t.Setenv("BENCH_ASK", "/suite/ask")
 	var stdout, stderr strings.Builder
 	code := run([]string{"home", "-C", dir, "run", "-q", "home with spaces", "--", "; $(literal)"}, strings.NewReader("piped bytes\n"), &stdout, &stderr)
 	if code != 9 || stdout.String() != "agent-answer" || stderr.String() != "agent-evidence" {
@@ -813,7 +815,7 @@ exit 9
 		t.Fatalf("input=%q err=%v", input, err)
 	}
 	tools, err := os.ReadFile(filepath.Join(dir, "tools"))
-	if err != nil || string(tools) != "/suite/ply\n/suite/brief\n/suite/cage\n/suite/hone\n" {
+	if err != nil || string(tools) != "/suite/ply\n/suite/brief\n/suite/cage\n/suite/hone\n/suite/trail\n/suite/ask\n" {
 		t.Fatalf("tools=%q err=%v", tools, err)
 	}
 }

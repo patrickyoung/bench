@@ -279,12 +279,12 @@ design. Its experimental runtime form is the sibling `agent` filter's ordinary
 agent home: `AGENTS.md`, `GOAL.md`, optional `SOUL.md`, `HEARTBEAT.md`, and
 `MEMORY.md`, Brief skills, nested specialist homes, a toolbox, mutable
 `work/` and `state/`, executable `bin/check`/`bin/wake`, and controller-owned
-`.agent/runs/`. `agent show/check/run/tick/specialist/learn` compile that
+`.agent/runs/`. `agent show/check/run/tick/specialist/learn/history` compile that
 directory through Brief, Ply, Ask, Cage, and Hone. The complete boundary and research are in
 `FILESYSTEM_AGENTS.md`. Draft remains how the system is designed and proved;
 the agent home is how an already-built digital worker is tuned and run.
 Headless `bench home [-C DIR] COMMAND...` is an attached process boundary over
-those public verbs: it supplies the suite's exact companions but preserves
+those public verbs: it supplies the selected companions but preserves
 literal argv, stdin, stdout, stderr, and exit status. Interactive `/agent`
 retains its existing and distinct Draft-promotion meaning.
 
@@ -408,7 +408,7 @@ and writes the brief skill. There is no TUI memory schema.
     context, private parent-scoped evidence, ordered failure-aware synthesis,
     and cooperative whole-tree interruption.
 13. **In progress:** validate the experimental sibling `agent` filter in real
-    homes and expose its public `show/check/run/tick/specialist/learn` verbs
+    homes and expose its public `show/check/run/tick/specialist/learn/history` verbs
     through the headless `bench home` process boundary. A later TUI view must
     still avoid importing its parser, loop, scheduler, evidence, or
     confinement policy.

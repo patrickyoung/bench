@@ -120,8 +120,10 @@ workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
 
 `BENCH_AGENT` selects the standalone folder-agent executable used by
-`bench home`. Bench passes its selected Ply, Brief, Cage, and Hone paths into
-that process; it does not parse or reimplement agent-home behavior.
+`bench home`, and `BENCH_TRAIL` selects its read-only history browser. Bench
+passes its selected Ask, Ply, Brief, Cage, Hone, and Trail paths into that
+process; it does not parse or reimplement agent-home behavior. Trail remains a
+standalone `PATH` dependency until it and Agent are added to the pinned suite.
 
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
@@ -631,6 +633,8 @@ bench home run -m provider/model support-chief
 bench home tick support-chief
 bench home specialist support-chief researcher -- 'answer one bounded question'
 bench home learn -into triage support-chief SESSION.jsonl
+bench home history support-chief
+bench home history support-chief check
 ```
 
 Everything after the agent command is literal argv, stdin remains attached,

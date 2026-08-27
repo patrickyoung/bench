@@ -220,7 +220,8 @@ func runHomeCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	defer stop()
 	outcome := (agentexec.Runner{
 		Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
-		CagePath: paths.cage, HonePath: paths.hone, WorkDir: work,
+		CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
+		AskPath: paths.ask, WorkDir: work,
 	}).Run(ctx, fs.Args(), stdin, stdout, stderr)
 	if outcome.Err != nil {
 		return report(stderr, fmt.Errorf("agent: %w", outcome.Err))
@@ -592,7 +593,7 @@ func pathContains(root, target string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-type paths struct{ ask, ply, brief, draft, hone, may, cage, agent string }
+type paths struct{ ask, ply, brief, draft, hone, may, cage, agent, trail string }
 
 func filterPaths() paths {
 	return paths{
@@ -600,6 +601,7 @@ func filterPaths() paths {
 		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
 		hone: toolPath("BENCH_HONE", "hone"), may: toolPath("BENCH_MAY", "may"),
 		cage: toolPath("BENCH_CAGE", "cage"), agent: toolPath("BENCH_AGENT", "agent"),
+		trail: toolPath("BENCH_TRAIL", "trail"),
 	}
 }
 
@@ -919,7 +921,8 @@ already-built agent home; the latter promotes work into a Draft design.
 bench home passes every argument after COMMAND literally to agent.
 
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
-BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · BENCH_AGENT · NO_COLOR
+BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · BENCH_AGENT ·
+BENCH_TRAIL · NO_COLOR
 
 When stdin or stdout is not a terminal, plain bench behaves like bench run:
   git diff | bench -m provider/model 'review this patch'`)
@@ -936,7 +939,8 @@ examples:
   bench home show support-chief
   bench home run -m provider/model support-chief
   bench home specialist support-chief researcher -- 'bounded question'
-  bench home learn -into triage support-chief SESSION.jsonl`)
+  bench home learn -into triage support-chief SESSION.jsonl
+  bench home history support-chief check`)
 }
 
 func printHeadlessUsage(w io.Writer, mode string) {
