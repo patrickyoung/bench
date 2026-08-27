@@ -257,6 +257,79 @@ func TestAgentLearningReviewPreservesNothingToLearnVerdict(t *testing.T) {
 	}
 }
 
+func TestAgentAmendmentFormPreservesExactMayStates(t *testing.T) {
+	agent := &fakeAgent{}
+	home := "/work/home with spaces"
+	m := New(Config{Workspace: "/work", Home: home, Agent: agent})
+
+	updated, _ := m.Update(key("a"))
+	m = updated.(*Model)
+	if !m.agentAmendOpen || !m.agentAmend.Focused() {
+		t.Fatalf("amend form open=%v focused=%v", m.agentAmendOpen, m.agentAmend.Focused())
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 0 || !strings.Contains(m.notice, "reviewed .patch") {
+		t.Fatalf("empty amendment submitted args=%#v notice=%q", agent.args, m.notice)
+	}
+
+	m.agentAmend.SetValue("tighten-checking.patch")
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	want := []string{"amend", home, "tighten-checking.patch"}
+	if len(agent.args) != 1 || !slices.Equal(agent.args[0], want) || agent.stdin[0] != "" {
+		t.Fatalf("amend args=%#v stdin=%#v want=%#v", agent.args, agent.stdin, want)
+	}
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stdout, Text: "{\"digest\":\"sha256:exact\",\"verdict\":\"parked\"}\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 75})
+	m = updated.(*Model)
+	view := m.renderAgentHome(76)
+	if m.agentState != agentApprovalPending || !strings.Contains(view, "AMENDMENT APPROVAL / RESULT") || !strings.Contains(view, "APPROVAL PARKED") || !strings.Contains(m.notice, "definition is unchanged") {
+		t.Fatalf("parked amendment state=%v notice=%q view=%q", m.agentState, m.notice, view)
+	}
+
+	lastCommand := m.agentCommandDisplay()
+	updated, _ = m.Update(key("a"))
+	m = updated.(*Model)
+	m.agentAmend.SetValue("different.patch")
+	if got := m.agentCommandDisplay(); got != lastCommand {
+		t.Fatalf("editing a new amendment changed prior command display: got %q want %q", got, lastCommand)
+	}
+	updated, _ = m.Update(key("esc"))
+	m = updated.(*Model)
+	updated, _ = m.Update(key("a"))
+	m = updated.(*Model)
+	if got := m.agentAmend.Value(); got != "tighten-checking.patch" {
+		t.Fatalf("parked amendment retry value=%q", got)
+	}
+	updated, _ = m.Update(key("ctrl+enter"))
+	m = updated.(*Model)
+	if len(agent.args) != 2 || !slices.Equal(agent.args[1], want) {
+		t.Fatalf("amend retry args=%#v want=%#v", agent.args, want)
+	}
+	m.agentDefinition = "stale compiled home"
+	updated, _ = m.Update(agentProcessEvent{Stream: agentexec.Stderr, Text: "agent: amended GOAL.md · evidence=receipt\n"})
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 0})
+	m = updated.(*Model)
+	if m.agentState != agentSucceeded || m.agentDefinition != "" || !strings.Contains(m.notice, "press r") || !strings.Contains(m.renderAgentHome(76), "AMENDMENT APPLIED") {
+		t.Fatalf("applied amendment state=%v definition=%q notice=%q view=%q", m.agentState, m.agentDefinition, m.notice, m.renderAgentHome(76))
+	}
+}
+
+func TestAgentAmendmentPreservesMayDecline(t *testing.T) {
+	m := New(Config{Workspace: "/work", Home: "/work/chief", Agent: &fakeAgent{}})
+	m.agentAmendName = "proposal.patch"
+	updated, _ := m.startAgentCommand("amend")
+	m = updated.(*Model)
+	updated, _ = m.Update(agentProcessEvent{Done: true, ExitCode: 3})
+	m = updated.(*Model)
+	if m.agentState != agentNegative || !strings.Contains(m.notice, "declined") || !strings.Contains(m.renderAgentHome(76), "AMENDMENT DECLINED") {
+		t.Fatalf("declined amendment state=%v notice=%q view=%q", m.agentState, m.notice, m.renderAgentHome(76))
+	}
+}
+
 func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	home := filepath.Join("/work", "support-chief")
 	m := New(Config{Workspace: "/work", Home: home, Agent: &fakeAgent{}})
@@ -296,5 +369,15 @@ func TestAgentHomeScreenFitsEightyByTwentyFour(t *testing.T) {
 	assertTerminalBounds(t, m.View().Content, 80, 24)
 	if !strings.Contains(m.View().Content, "DESTINATION SKILL") || !strings.Contains(m.View().Content, "VERIFIED LEARNING EVIDENCE") {
 		t.Fatalf("learning form missing: %q", m.View().Content)
+	}
+	updated, _ = m.closeAgentLearnForm()
+	m = updated.(*Model)
+	updated, _ = m.Update(key("a"))
+	m = updated.(*Model)
+	m.agentAmend.SetValue("tighten-checking.patch")
+	m.syncContent()
+	assertTerminalBounds(t, m.View().Content, 80, 24)
+	if !strings.Contains(m.View().Content, "REVIEWED PATCH FILE") || !strings.Contains(m.View().Content, "MAY-GATED AMENDMENT") {
+		t.Fatalf("amendment form missing: %q", m.View().Content)
 	}
 }

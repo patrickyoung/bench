@@ -662,15 +662,22 @@ gate, `l` lists Trail history, `v` replay-checks it through Ask, `p` shows the
 bounded literal patches and exact May actions through the read-only public
 `agent proposals` command, `s` opens a structured direct-specialist form, and
 `h` reviews one session's replay-verified learning evidence through public
-`agent learn -why` without calling a model or changing a skill.
-That form sends one portable child name and the caller-selected model as
-literal argv while the bounded task travels on attached stdin; the child keeps
-its own context, work, check, and evidence. Stdout, stderr, and the executable
-exit verdict stay distinct. Network widening, unconfined runs, generated
-lesson admission, arbitrary session browsing, and amendment application remain
-explicit headless commands rather than hidden TUI defaults. Hone's `-N` can
-generate write-free wording but does not produce an exact artifact for a later
-write, so Bench does not mislabel it as reviewed admission.
+`agent learn -why` without calling a model or changing a skill. `a` opens an
+amendment form for one reviewed patch filename and invokes literal
+`agent amend HOME PATCH`.
+The specialist form sends one portable child name and the caller-selected
+model as literal argv while the bounded task travels on attached stdin; the
+child keeps its own context, work, check, and evidence. Stdout, stderr, and the
+executable exit verdict stay distinct. Network widening, unconfined runs,
+generated lesson admission, and arbitrary session browsing remain explicit
+headless commands rather than hidden TUI defaults. Amendment submission never
+grants itself: exit 75 displays the exact May request as parked with the
+definition unchanged; decide its digest separately, then repeat the same form
+submission.
+Exit 3 remains declined, and only Agent's zero exit is shown as applied; the
+old compiled view is then cleared until `r` reloads it. Hone's `-N` can generate
+write-free wording but does not produce an exact artifact for a later write,
+so Bench does not mislabel it as reviewed admission.
 
 The home keeps definition, mutable work/state, and controller evidence in
 separate directories. Brief owns its skills, Ply and Ask own its loop and

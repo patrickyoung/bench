@@ -138,6 +138,7 @@ type Model struct {
 	agentChild      textinput.Model
 	agentLearnSkill textinput.Model
 	agentLearnRun   textinput.Model
+	agentAmend      textinput.Model
 	skill           textinput.Model
 	skillQuery      textinput.Model
 	skillName       textinput.Model
@@ -203,6 +204,8 @@ type Model struct {
 	agentLearnFocus   int
 	agentLearnName    string
 	agentLearnSession string
+	agentAmendOpen    bool
+	agentAmendName    string
 
 	width          int
 	height         int
@@ -296,6 +299,7 @@ const (
 	agentRunning
 	agentSucceeded
 	agentNegative
+	agentApprovalPending
 	agentBroken
 	agentInterrupted
 )
@@ -389,6 +393,11 @@ func New(cfg Config) *Model {
 	agentLearnRun.Prompt = ""
 	agentLearnRun.CharLimit = 1024
 	agentLearnRun.SetWidth(68)
+	agentAmend := textinput.New()
+	agentAmend.Placeholder = "tighten-checking.patch"
+	agentAmend.Prompt = ""
+	agentAmend.CharLimit = 255
+	agentAmend.SetWidth(68)
 	skill := textinput.New()
 	skill.Placeholder = "agent-house"
 	skill.Prompt = ""
@@ -451,6 +460,7 @@ func New(cfg Config) *Model {
 		agentChild:      agentChild,
 		agentLearnSkill: agentLearnSkill,
 		agentLearnRun:   agentLearnRun,
+		agentAmend:      agentAmend,
 		skill:           skill,
 		skillQuery:      skillQuery,
 		skillName:       skillName,
@@ -583,6 +593,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentChild.Blur()
 				m.agentLearnSkill.Blur()
 				m.agentLearnRun.Blur()
+				m.agentAmend.Blur()
 				m.skillQuery.Blur()
 				m.skillName.Blur()
 				m.skillDirectory.Blur()
@@ -1382,6 +1393,7 @@ func (m *Model) resize() {
 	m.agentChild.SetWidth(w - 6)
 	m.agentLearnSkill.SetWidth(w - 6)
 	m.agentLearnRun.SetWidth(w - 6)
+	m.agentAmend.SetWidth(w - 6)
 	m.skill.SetWidth(w - 6)
 	m.skillQuery.SetWidth(w - 6)
 	m.skillName.SetWidth(w - 6)
@@ -1690,6 +1702,8 @@ func (m *Model) renderHelp(width int) string {
 			escapeHelp = "cancel the specialist form without invoking a child"
 		} else if m.agentLearnOpen {
 			escapeHelp = "cancel the evidence review without learning"
+		} else if m.agentAmendOpen {
+			escapeHelp = "cancel the amendment form without invoking Agent or May"
 		}
 		rows := []string{
 			t.hero.Render("Agent home keyboard"), "",
@@ -1702,6 +1716,7 @@ func (m *Model) renderHelp(width int) string {
 			helpRow(t, "p", "review proposal bytes and exact May actions without writes", width),
 			helpRow(t, "s", "open a bounded specialist name and task form", width),
 			helpRow(t, "h", "review one session's verified learning evidence via Hone", width),
+			helpRow(t, "a", "submit one exact reviewed patch through Agent and May", width),
 			helpRow(t, "tab", "move between fields in the active form", width),
 			helpRow(t, "ctrl+enter", "submit the active form (ctrl+s fallback)", width),
 			helpRow(t, "pgup / pgdown", "scroll compiled context and evidence", width),
@@ -1946,6 +1961,8 @@ func (m *Model) View() tea.View {
 		}
 	} else if m.screen == screenAgentHome && m.agentState == agentNegative {
 		state = "not accepted"
+	} else if m.screen == screenAgentHome && m.agentState == agentApprovalPending {
+		state = "approval parked"
 	} else if m.screen == screenAgentHome && m.agentState == agentBroken {
 		state = "broken"
 	} else if m.screen == screenAgentHome {
@@ -2060,6 +2077,9 @@ func (m *Model) View() tea.View {
 	} else if m.screen == screenAgentHome && m.agentLearnOpen {
 		composerLabel = t.sessionLabel.Render(" VERIFIED LEARNING EVIDENCE ")
 		composerContent = t.muted.Render("Model-free review only. Skill admission remains an explicit headless agent learn command.")
+	} else if m.screen == screenAgentHome && m.agentAmendOpen {
+		composerLabel = t.sessionLabel.Render(" MAY-GATED AMENDMENT ")
+		composerContent = t.muted.Render("The first submit parks the exact action. After a separate May decision, rerun the identical patch name to apply it.")
 	} else if m.screen == screenAgentHome {
 		composerLabel = t.faint.Render(" AGENT VERDICT ")
 		verdict, verdictStyle := m.agentVerdict(t)
@@ -2069,7 +2089,12 @@ func (m *Model) View() tea.View {
 		} else if m.agentState == agentSucceeded {
 			detail = "The public command exited zero; inspect its exact output above."
 		} else if m.agentState == agentNegative {
-			detail = "Exit one is a usable negative verdict, not controller success."
+			detail = "A negative exit is a usable verdict, not controller success."
+			if m.agentCommand == "amend" && m.agentExitCode == 3 {
+				detail = "May declined this exact amendment; the definition is unchanged."
+			}
+		} else if m.agentState == agentApprovalPending {
+			detail = "May parked the exact action; the definition is unchanged. Decide its digest separately, then retry the identical command."
 		} else if m.agentState == agentBroken {
 			detail = "The agent command could not produce a trustworthy result."
 		}
@@ -2168,8 +2193,10 @@ func (m *Model) View() tea.View {
 				notice = "tab move   ctrl+enter run specialist   esc cancel   f1 help"
 			} else if m.agentLearnOpen {
 				notice = "tab move   ctrl+enter review evidence   esc cancel   f1 help"
+			} else if m.agentAmendOpen {
+				notice = "ctrl+enter submit exact amendment   esc cancel   f1 help"
 			} else {
-				notice = "r inspect   c check   g run   s specialist   h learn evidence   p proposals   f1 help"
+				notice = "r inspect   c check   g run   s specialist   h learn   p proposals   a amend   f1 help"
 			}
 		} else if m.screen == screenContract {
 			notice = "type revise   e edit JSON   a audit   ctrl+s accept/run   esc keep   f1 help"
@@ -2379,6 +2406,7 @@ func (m *Model) applyTheme() {
 	m.agentChild.SetStyles(inputStyles)
 	m.agentLearnSkill.SetStyles(inputStyles)
 	m.agentLearnRun.SetStyles(inputStyles)
+	m.agentAmend.SetStyles(inputStyles)
 	m.skill.SetStyles(inputStyles)
 	m.skillQuery.SetStyles(inputStyles)
 	m.skillName.SetStyles(inputStyles)

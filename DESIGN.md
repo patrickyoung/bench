@@ -297,12 +297,14 @@ specialist form collects one child name and bounded task, then invokes public
 uses attached stdin, and the child owns every home and execution rule. A
 separate structured form invokes `agent learn -why` for one destination skill
 and home session; it shows only replay-verified recovery evidence and cannot
-call a model or write the skill.
+call a model or write the skill. A third form passes one literal reviewed patch
+name to public `agent amend`: exit 75 remains an approval-parked verdict, exit
+3 remains a decline, and only an identical retry after May grants the exact
+action can apply and receipt the definition change.
 The UI renders stdout as result data, stderr as evidence, and exit status as
 the verdict; it does not parse session internals or treat displayed prose as
-success. Authority-widening flags, definition-changing learning, and
-May-gated amendments remain headless until they have explicit review
-interactions.
+success. Authority-widening flags and definition-changing learning remain
+headless until they have exact review interactions.
 
 ## Interaction model
 
@@ -429,8 +431,10 @@ and writes the brief skill. There is no TUI memory schema.
     specialist runs, explicit learning, and exact May-gated definition
     amendments are implemented. The TUI now has bounded read-only proposal
     review, a structured direct-specialist form, and model-free verified
-    learning-evidence review. Generated lesson admission and amendment
-    application remain later UI slices; they must still avoid
+    learning-evidence review. The TUI also submits one literal reviewed patch
+    through Agent's exact May-gated amendment path without parsing its
+    envelope. Generated lesson admission remains a later UI slice; it must
+    still avoid
     importing Agent's parser, loop, scheduler, evidence, approval, or
     confinement policy.
 

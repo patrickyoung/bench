@@ -306,6 +306,9 @@ func (m *Model) focusCurrent() tea.Cmd {
 			m.agentLearnSkill.Blur()
 			return m.agentLearnRun.Focus()
 		}
+		if m.agentAmendOpen {
+			return m.agentAmend.Focus()
+		}
 		return nil
 	}
 	if m.screen == screenSkills {

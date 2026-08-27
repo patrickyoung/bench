@@ -629,8 +629,8 @@ home also ran red-to-green through installed Brief, Ply, Ask, and Cage; its
 accepted Ask session replayed exactly, definition/evidence write probes were
 denied, and a later quiet tick created no new session. A separate live run
 produced a valid one-file definition proposal without mutating authored
-context. Suite packaging and interactive learning/amendment application
-remain future slices.
+context. Suite packaging and exact generated-lesson admission remain future
+slices.
 Bench now also exposes an attached `bench home [-C DIR] COMMAND...` boundary
 that
 passes literal arguments and streams to the public agent program, supplies the
@@ -646,12 +646,14 @@ literal argv and a bounded self-contained task on stdin to public
 `agent specialist`; it neither parses the child catalogue nor shares parent
 conversation state. A second form invokes public `agent learn -why` with one
 destination skill and home session, exposing replay-verified recovery evidence
-without a model call or skill write. Generated lesson admission and amendment
-application remain future work; exact proposal bytes and approval actions are
-visible in the TUI, while approval and application remain explicit headless
-operations. Hone `-N` generates fresh wording but does not yield an exact
-artifact that a later write consumes, so it is not treated as reviewed
-admission.
+without a model call or skill write. A third form sends one literal reviewed
+patch name to public `agent amend`. It preserves May's parked exit 75 and
+declined exit 3, shows the unchanged command for a later retry, and reports
+success only after Agent revalidates, applies, checks, and receipts the granted
+bytes. Bench does not parse or recreate the proposal or approval envelope.
+Generated lesson admission remains future work. Hone `-N` generates fresh
+wording but does not yield an exact artifact that a later write consumes, so
+it is not treated as reviewed admission.
 The Agent repository now ships a frozen four-home integration corpus covering
 already-complete re-entry, a zero-model quiet watch, broken wake protocol, and
 a recursive specialist. Its network-free report measures definition/compiled

@@ -50,6 +50,8 @@ func (m *Model) startAgentCommand(command string) (tea.Model, tea.Cmd) {
 		input = m.agentChildTask
 	case "learn-why":
 		args = []string{"learn", "-into", m.agentLearnName, "-why", m.agentHome, m.agentLearnSession}
+	case "amend":
+		args = []string{"amend", m.agentHome, m.agentAmendName}
 	default:
 		m.notice = "Unknown agent operation"
 		return m, nil
@@ -103,6 +105,16 @@ func (m *Model) updateAgentProcess(event agentexec.Event) (tea.Model, tea.Cmd) {
 	case event.ExitCode == 0:
 		m.agentState = agentSucceeded
 		m.notice = ""
+		if m.agentCommand == "amend" {
+			m.agentDefinition = ""
+			m.notice = "Amendment applied and checked; press r to inspect the refreshed compiled home"
+		}
+	case m.agentCommand == "amend" && event.ExitCode == 75:
+		m.agentState = agentApprovalPending
+		m.notice = "Exact May approval parked; the definition is unchanged · decide the printed digest separately, then rerun this patch"
+	case m.agentCommand == "amend" && event.ExitCode == 3:
+		m.agentState = agentNegative
+		m.notice = "May declined this exact amendment; the definition is unchanged"
 	case event.ExitCode == 1:
 		m.agentState = agentNegative
 		m.notice = m.agentNegativeNotice()
@@ -124,6 +136,8 @@ func (m *Model) agentNegativeNotice() string {
 		return "The specialist did not reach its own executable definition of done"
 	case "learn-why":
 		return "This run has no replay-verified recovery to learn from"
+	case "amend":
+		return "The home or proposal was rejected before amendment; the definition is unchanged"
 	case "run":
 		return "Not accepted · the home check still rejects the standing outcome"
 	case "history", "history-check":
@@ -151,6 +165,9 @@ func (m *Model) updateAgentHome(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 	if m.agentLearnOpen {
 		return m.updateAgentLearnForm(msg, key)
 	}
+	if m.agentAmendOpen {
+		return m.updateAgentAmendForm(msg, key)
+	}
 	switch key {
 	case "ctrl+c", "esc":
 		return m, tea.Quit
@@ -172,6 +189,8 @@ func (m *Model) updateAgentHome(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
 		return m.openAgentSpecialistForm()
 	case "h":
 		return m.openAgentLearnForm()
+	case "a":
+		return m.openAgentAmendForm()
 	case "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -337,6 +356,55 @@ func (m *Model) startAgentLearnWhy() (tea.Model, tea.Cmd) {
 	return m.startAgentCommand("learn-why")
 }
 
+func (m *Model) openAgentAmendForm() (tea.Model, tea.Cmd) {
+	m.agentAmendOpen = true
+	m.agentAmend.SetValue(m.agentAmendName)
+	m.notice = "Name one patch already inspected with p; Agent will bind its exact bytes into May"
+	m.viewport.GotoBottom()
+	m.syncContent()
+	return m, m.agentAmend.Focus()
+}
+
+func (m *Model) closeAgentAmendForm() (tea.Model, tea.Cmd) {
+	m.agentAmendOpen = false
+	m.agentAmend.Blur()
+	m.notice = "Amendment cancelled; Agent and May were not invoked"
+	m.syncContent()
+	return m, nil
+}
+
+func (m *Model) updateAgentAmendForm(msg tea.Msg, key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		return m.closeAgentAmendForm()
+	case "ctrl+s", "ctrl+enter":
+		return m.startAgentAmend()
+	case "pgup", "pgdown":
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	}
+
+	var cmd tea.Cmd
+	m.agentAmend, cmd = m.agentAmend.Update(msg)
+	m.syncContent()
+	return m, cmd
+}
+
+func (m *Model) startAgentAmend() (tea.Model, tea.Cmd) {
+	name := strings.TrimSpace(m.agentAmend.Value())
+	if name == "" {
+		m.notice = "Name one reviewed .patch file from this home's work/proposals directory"
+		return m, nil
+	}
+	m.agentAmendName = name
+	m.agentAmendOpen = false
+	m.agentAmend.Blur()
+	return m.startAgentCommand("amend")
+}
+
 func waitAgentEvent(events <-chan agentexec.Event) tea.Cmd {
 	return func() tea.Msg {
 		event, ok := <-events
@@ -389,6 +457,8 @@ func (m *Model) renderAgentHome(width int) string {
 			label = "SPECIALIST RESULT"
 		} else if m.agentCommand == "learn-why" {
 			label = "LEARNING EVIDENCE · READ ONLY"
+		} else if m.agentCommand == "amend" {
+			label = "AMENDMENT APPROVAL / RESULT"
 		}
 		rows = append(rows, "", t.sessionLabel.Render(label), t.document.Width(max(16, width-5)).Render(output))
 	}
@@ -421,6 +491,12 @@ func (m *Model) renderAgentHome(width int) string {
 			"", skillLabel, t.input.Width(max(16, width-5)).Render(m.agentLearnSkill.View()),
 			"", runLabel, t.input.Width(max(16, width-5)).Render(m.agentLearnRun.View()))
 	}
+	if m.agentAmendOpen {
+		rows = append(rows, "",
+			t.hero.Render("Apply one exact, separately approved definition amendment."),
+			t.muted.Render("Review with p first. Agent owns patch validation, May binding, stale checks, rollback, and the receipt."),
+			"", t.sessionLabel.Render("REVIEWED PATCH FILE"), t.input.Width(max(16, width-5)).Render(m.agentAmend.View()))
+	}
 	return strings.Join(rows, "\n")
 }
 
@@ -445,6 +521,8 @@ func (m *Model) agentCommandDisplay() string {
 		return "<" + fmt.Sprint(len([]byte(m.agentChildTask))) + "-byte task> | agent specialist " + home + " " + strconv.Quote(m.agentChildName) + model
 	case "learn-why":
 		return "agent learn -into " + strconv.Quote(m.agentLearnName) + " -why " + home + " " + strconv.Quote(m.agentLearnSession)
+	case "amend":
+		return "agent amend " + home + " " + strconv.Quote(m.agentAmendName)
 	case "":
 		return "agent show " + home
 	default:
@@ -463,7 +541,13 @@ func (m *Model) agentVerdict(t theme) (string, lipgloss.Style) {
 		return fmt.Sprintf("! BROKEN · EXIT %d", m.agentExitCode), t.danger
 	}
 	if m.agentState == agentNegative {
+		if m.agentCommand == "amend" && m.agentExitCode == 3 {
+			return "○ AMENDMENT DECLINED · EXIT 3", t.warning
+		}
 		return fmt.Sprintf("○ NOT ACCEPTED · EXIT %d", m.agentExitCode), t.warning
+	}
+	if m.agentState == agentApprovalPending {
+		return "◇ APPROVAL PARKED · EXIT 75", t.warning
 	}
 	if m.agentState == agentSucceeded {
 		switch m.agentCommand {
@@ -483,6 +567,8 @@ func (m *Model) agentVerdict(t theme) (string, lipgloss.Style) {
 			return "✓ SPECIALIST CHECK ACCEPTED", t.success
 		case "learn-why":
 			return "✓ LEARNING EVIDENCE REVIEWED", t.success
+		case "amend":
+			return "✓ AMENDMENT APPLIED", t.success
 		}
 		return "✓ SUCCEEDED", t.success
 	}
