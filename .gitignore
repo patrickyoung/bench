@@ -1,4 +1,5 @@
 /.bench/
 /.benchpack/
+/.DS_Store
 /bench
 /dist/

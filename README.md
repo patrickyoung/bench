@@ -32,6 +32,8 @@ Requirements when running from source rather than a suite archive:
 - `draft` on `PATH` for agent-project creation (`ask`, `brief`, `ply`, and
   `hone` are draft's own dependencies)
 - `brief` and `ply` on `PATH` to browse, author, and refine skills
+- `context` and `cite` on `PATH` to retrieve external evidence and verify its
+  exact citation identities
 - `hone` on `PATH` to admit lessons from verified build recoveries
 - `may` and `cage` on `PATH` for admitted exact-action approval and action-only
   confinement
@@ -46,7 +48,8 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-ten public commands under `~/.local`. Pass `-prefix DIR` to change the destination.
+twelve public commands under `~/.local`. Pass `-prefix DIR` to change the
+destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.
 

@@ -13,6 +13,8 @@ version number.
 | `ask` | model and replay boundary | native executable |
 | `brief` | skill catalogue | native executable |
 | `ply` | tool loop and executable verdict | native executable |
+| `context` | external evidence retrieval through source connectors | native executable |
+| `cite` | exact Context ref-to-URL citation check | native executable |
 | `hone` | verified learning path | native executable |
 | `trail` | read-only Ask archive inspection | native executable |
 | `agent` | filesystem-worker runtime | script plus private `bin/agent-action-shell` |
@@ -24,7 +26,10 @@ version number.
 May and Cage are now required suite components because Review/Loop can admit
 their exact-action approval and confinement policies. They remain ordinary
 independent filters; packaging them does not merge their runtimes into Bench.
-Agent and Trail are required because the folder-worker boundary includes
+Context and Cite are required because the evidence path now has a common
+retrieval seam and a deterministic citation-identity check. Ask remains the
+single event-log writer; Cite remains a stateless filter, and Ply records its
+verifier outcome through Ask. Agent and Trail are required because the folder-worker boundary includes
 replayable history. Agent remains an ordinary POSIX shell program rather than
 a runtime embedded in Bench.
 
@@ -32,8 +37,9 @@ The release layout is relocatable:
 
 ```text
 bench-suite-VERSION-GOOS-GOARCH/
-  bin/bench  bin/ask  bin/brief  bin/ply  bin/hone  bin/trail
-  bin/agent  bin/agent-action-shell  bin/draft  bin/may  bin/cage
+  bin/bench  bin/ask  bin/brief  bin/ply  bin/context  bin/cite
+  bin/hone  bin/trail  bin/agent  bin/agent-action-shell
+  bin/draft  bin/may  bin/cage
   skills/draft/...
   licenses/COMPONENT/LICENSE
   licenses/third-party/MODULE-ID/...
@@ -79,7 +85,7 @@ There are two useful version axes and they should not be conflated:
 
 An update to any required component is a manifest change followed by the full
 suite build and smoke tests. Compatibility is therefore demonstrated by the
-artifact that ships, rather than inferred from ten independent `@latest`
+artifact that ships, rather than inferred from twelve independent `@latest`
 resolutions. Exact revisions are intentional while the command contracts are
 young; version ranges can be introduced only after those contracts have
 declared compatibility majors of their own.
@@ -160,11 +166,11 @@ reference are still checked without executing a foreign binary.
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all ten public commands without overwriting unrelated
+  directory, and links all twelve public commands without overwriting unrelated
   files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install ten `HEAD` formulas. It can link the ten public
+  independently install twelve `HEAD` formulas. It can link the twelve public
   commands and keep Agent's private adapter and `skills/draft` beside the
   versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
@@ -194,9 +200,9 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all ten public commands;
+   versions for all twelve public commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
-   the bundled Ask/Ply/Draft and Agent/Trail boundaries, and all ten public
+   the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all twelve public
    commands report their pinned versions, in offline smoke tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.
@@ -204,8 +210,8 @@ A publishable suite release requires all of the following:
 `.github/workflows/suite.yml` executes this gate on native Linux and macOS,
 for both amd64 and arm64, and retains the archives as CI artifacts. It does not
 publish a GitHub release until the tag matches the suite version and every
-matrix artifact passes. Bench, Draft, Ask, Brief, Ply, Hone, Trail, Agent, May,
-and Cage are MIT licensed, and their license files travel in the archive. The
+matrix artifact passes. Bench, Draft, Ask, Brief, Ply, Context, Cite, Hone,
+Trail, Agent, May, and Cage are MIT licensed, and their license files travel in the archive. The
 compiled module inventory remains the input to third-party notice generation.
 The publish job and a Homebrew formula consume the exact checked artifacts
 rather than introducing a second build definition.

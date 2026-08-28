@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.6",
+      "version": "0.6.7",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -15,7 +15,7 @@
     {
       "name": "ask",
       "repository": "https://github.com/patrickyoung/ask.git",
-      "revision": "32bd64edb0135849c8062ac63faeaf9dc6bc4779",
+      "revision": "44af29033031c75c6a5554c60a5afa15f624da90",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -34,6 +34,24 @@
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
       "revision": "586c9514f73b505e1d9932c55e7039a39042c6b8",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "context",
+      "repository": "https://github.com/patrickyoung/context.git",
+      "revision": "809547b2727f7f2a2ffa7aaf5465f7626ebc307b",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "cite",
+      "repository": "https://github.com/patrickyoung/cite.git",
+      "revision": "495f44c58790db538b1b7c82485f393beab4faf2",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -60,7 +78,7 @@
     {
       "name": "hone",
       "repository": "https://github.com/patrickyoung/hone.git",
-      "revision": "8a531e4d320713b4b85f0070be82adcd2aeea1f3",
+      "revision": "f33b7fe55bec58aff043aa5e3c1c35afeac29b1c",
       "version": "0.2.0",
       "kind": "go",
       "license": "MIT",
@@ -78,7 +96,7 @@
     {
       "name": "agent",
       "repository": "https://github.com/patrickyoung/agent.git",
-      "revision": "a2b98b957d803382807e778840e735edc1288039",
+      "revision": "b24195bff15b3fe09bd89db68b6ae6711daf0b19",
       "version": "0.1.1",
       "kind": "files",
       "entry": "bin/agent",
@@ -89,7 +107,7 @@
     {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "adc12ce3b9b470302f31dc46ff304361895a3256",
+      "revision": "66443354b634d1932fffc30d4ae8b9555455de24",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",

@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	version      = "0.6.6"
+	version      = "0.6.7"
 	maxPipeInput = 16 << 20
 )
 

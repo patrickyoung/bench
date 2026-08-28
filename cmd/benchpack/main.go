@@ -523,26 +523,15 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 			return fmt.Errorf("bundle install smoke attempt %d: %w: %s", attempt, err, strings.TrimSpace(string(output)))
 		}
 	}
-	bench := filepath.Join(prefix, "bin", "bench")
-	benchVersion, err := componentVersion(m, "bench")
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(bench, "version")
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
-	output, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "bench "+benchVersion {
-		return fmt.Errorf("installed Bench smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
-	}
-	mayVersion, err := componentVersion(m, "may")
-	if err != nil {
-		return err
-	}
-	cmd = exec.Command(filepath.Join(prefix, "bin", "may"), "version")
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
-	output, err = cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "may "+mayVersion {
-		return fmt.Errorf("installed May smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	for _, component := range m.Components {
+		cmd := exec.Command(filepath.Join(prefix, "bin", component.Name), "version")
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
+		output, err := cmd.CombinedOutput()
+		want := component.Name + " " + component.Version
+		if err != nil || strings.TrimSpace(string(output)) != want {
+			return fmt.Errorf("installed %s smoke failed: exit=%v output=%q; want %q",
+				component.Name, err, strings.TrimSpace(string(output)), want)
+		}
 	}
 	blockedPrefix := filepath.Join(temp, "blocked-prefix")
 	blockedBench := filepath.Join(blockedPrefix, "bin", "bench")

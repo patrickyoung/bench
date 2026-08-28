@@ -10,7 +10,7 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.7.0" || len(m.Components) != 10 {
+	if m.Version != "0.8.0" || len(m.Components) != 12 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
 	}
 	data, err := JSON(m)
@@ -27,7 +27,7 @@ func TestManifestRejectsMissingSuiteMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, missing := range []string{"bench", "ask", "brief", "ply", "may", "cage", "hone", "trail", "agent", "draft"} {
+	for _, missing := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "draft"} {
 		t.Run(missing, func(t *testing.T) {
 			broken := m
 			broken.Components = nil

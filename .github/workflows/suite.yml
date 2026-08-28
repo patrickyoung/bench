@@ -89,7 +89,7 @@ jobs:
               src/bench/internal/suite/manifest.json)
             printf '%s/%s-%s\n' "$sources" "$1" "$revision"
           }
-          for component in ask brief ply hone trail; do
+          for component in ask brief ply context cite hone trail; do
             (cd "$(component_dir "$component")" && go test ./...)
           done
           draft=$(component_dir draft)
