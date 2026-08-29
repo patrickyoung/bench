@@ -18,6 +18,7 @@ version number.
 | `hone` | verified learning path | native executable |
 | `trail` | read-only Ask archive inspection | native executable |
 | `agent` | filesystem-worker runtime | script plus private `bin/agent-action-shell` |
+| `tend` | crash-durable supervision for arbitrary processes | native executable |
 | `draft` | agent design/build/prove composition | script plus `skills/draft` |
 | `may` | exact, single-use human action decisions | native executable |
 | `cage` | kernel-enforced model-action confinement | native executable |
@@ -31,14 +32,16 @@ retrieval seam and a deterministic citation-identity check. Ask remains the
 single event-log writer; Cite remains a stateless filter, and Ply records its
 verifier outcome through Ask. Agent and Trail are required because the folder-worker boundary includes
 replayable history. Agent remains an ordinary POSIX shell program rather than
-a runtime embedded in Bench.
+a runtime embedded in Bench. Tend is likewise an independent Unix process
+supervisor: Bench and Agent may compose it as an ordinary executable, but
+neither embeds it or depends on a private Tend protocol.
 
 The release layout is relocatable:
 
 ```text
 bench-suite-VERSION-GOOS-GOARCH/
   bin/bench  bin/ask  bin/brief  bin/ply  bin/context  bin/cite
-  bin/hone  bin/trail  bin/agent  bin/agent-action-shell
+  bin/hone  bin/trail  bin/agent  bin/agent-action-shell  bin/tend
   bin/draft  bin/may  bin/cage
   skills/draft/...
   licenses/COMPONENT/LICENSE
@@ -85,7 +88,7 @@ There are two useful version axes and they should not be conflated:
 
 An update to any required component is a manifest change followed by the full
 suite build and smoke tests. Compatibility is therefore demonstrated by the
-artifact that ships, rather than inferred from twelve independent `@latest`
+artifact that ships, rather than inferred from thirteen independent `@latest`
 resolutions. Exact revisions are intentional while the command contracts are
 young; version ranges can be introduced only after those contracts have
 declared compatibility majors of their own.
@@ -166,11 +169,11 @@ reference are still checked without executing a foreign binary.
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all twelve public commands without overwriting unrelated
+  directory, and links all thirteen public commands without overwriting unrelated
   files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install twelve `HEAD` formulas. It can link the twelve public
+  independently install thirteen `HEAD` formulas. It can link the thirteen public
   commands and keep Agent's private adapter and `skills/draft` beside the
   versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
@@ -200,9 +203,9 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all twelve public commands;
+   versions for all thirteen public commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
-   the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all twelve public
+   the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all thirteen public
    commands report their pinned versions, in offline smoke tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.
@@ -211,7 +214,7 @@ A publishable suite release requires all of the following:
 for both amd64 and arm64, and retains the archives as CI artifacts. It does not
 publish a GitHub release until the tag matches the suite version and every
 matrix artifact passes. Bench, Draft, Ask, Brief, Ply, Context, Cite, Hone,
-Trail, Agent, May, and Cage are MIT licensed, and their license files travel in the archive. The
+Trail, Agent, Tend, May, and Cage are MIT licensed, and their license files travel in the archive. The
 compiled module inventory remains the input to third-party notice generation.
 The publish job and a Homebrew formula consume the exact checked artifacts
 rather than introducing a second build definition.

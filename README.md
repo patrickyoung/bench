@@ -48,7 +48,7 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-twelve public commands under `~/.local`. Pass `-prefix DIR` to change the
+thirteen public commands under `~/.local`. Pass `-prefix DIR` to change the
 destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.

@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.8.0",
+  "version": "0.9.0",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -33,8 +33,8 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "586c9514f73b505e1d9932c55e7039a39042c6b8",
-      "version": "0.1.0",
+      "revision": "15d107d7182c577bd387721b26d9538f43160112",
+      "version": "0.1.1",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -96,11 +96,20 @@
     {
       "name": "agent",
       "repository": "https://github.com/patrickyoung/agent.git",
-      "revision": "b24195bff15b3fe09bd89db68b6ae6711daf0b19",
-      "version": "0.1.1",
+      "revision": "e2ef90a83820ff72ca041a8bc8fd840e210f47d0",
+      "version": "0.1.2",
       "kind": "files",
       "entry": "bin/agent",
       "assets": ["bin/agent-action-shell"],
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "tend",
+      "repository": "https://github.com/patrickyoung/tend.git",
+      "revision": "142f1ad7566ec99cdb282128a2897aecbd9b3d35",
+      "version": "0.1.1",
+      "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
     },
