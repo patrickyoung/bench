@@ -10,7 +10,7 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.10.0" || len(m.Components) != 15 {
+	if m.Version != "0.10.1" || len(m.Components) != 15 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
 	}
 	var commands []string

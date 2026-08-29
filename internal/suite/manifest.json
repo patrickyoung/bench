@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.10.0",
+  "version": "0.10.1",
   "go": "1.26",
   "components": [
     {
@@ -107,8 +107,8 @@
     {
       "name": "tend",
       "repository": "https://github.com/patrickyoung/tend.git",
-      "revision": "de5fc98f421cc3c0bac3d02031220600bbb41b2f",
-      "version": "0.1.1",
+      "revision": "cb872452d73daaff99768db294171c9c10809667",
+      "version": "0.1.2",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
