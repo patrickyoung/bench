@@ -107,7 +107,7 @@
     {
       "name": "tend",
       "repository": "https://github.com/patrickyoung/tend.git",
-      "revision": "142f1ad7566ec99cdb282128a2897aecbd9b3d35",
+      "revision": "c578a581f2bb8b9247d12779c1a05ec8497b365c",
       "version": "0.1.1",
       "kind": "go",
       "license": "MIT",
