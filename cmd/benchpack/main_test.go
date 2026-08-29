@@ -96,9 +96,16 @@ func TestInstallScriptLinksEveryRequiredSuiteCommand(t *testing.T) {
 }
 
 func TestInstallScriptDerivesNewCommandsFromManifest(t *testing.T) {
-	components := []suite.Component{{Name: "bench"}, {Name: "agent"}}
+	components := []suite.Component{
+		{Name: "bench", Kind: "go"},
+		{Name: "edge", Kind: "go", Commands: []suite.Command{
+			{Name: "mcp", Package: "./cmd/mcp"},
+			{Name: "mcpbox", Package: "./cmd/mcpbox"},
+		}},
+		{Name: "agent", Kind: "files"},
+	}
 	script := installScript("0.7.0", componentNames(components))
-	if !strings.Contains(script, "tools='bench agent'") {
+	if !strings.Contains(script, "tools='bench mcp mcpbox agent'") {
 		t.Fatalf("installer did not derive commands:\n%s", script)
 	}
 }

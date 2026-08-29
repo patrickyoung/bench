@@ -24,16 +24,35 @@ type Manifest struct {
 }
 
 type Component struct {
-	Name        string   `json:"name"`
-	Repository  string   `json:"repository"`
-	Revision    string   `json:"revision"`
-	Version     string   `json:"version"`
-	Kind        string   `json:"kind"`
-	Entry       string   `json:"entry,omitempty"`
-	Assets      []string `json:"assets,omitempty"`
-	License     string   `json:"license"`
-	LicenseFile string   `json:"license_file"`
-	Dirty       bool     `json:"dirty,omitempty"`
+	Name        string    `json:"name"`
+	Repository  string    `json:"repository"`
+	Revision    string    `json:"revision"`
+	Version     string    `json:"version"`
+	Kind        string    `json:"kind"`
+	Entry       string    `json:"entry,omitempty"`
+	Assets      []string  `json:"assets,omitempty"`
+	Commands    []Command `json:"commands,omitempty"`
+	License     string    `json:"license"`
+	LicenseFile string    `json:"license_file"`
+	Dirty       bool      `json:"dirty,omitempty"`
+}
+
+type Command struct {
+	Name    string `json:"name"`
+	Package string `json:"package"`
+}
+
+// PublicCommands returns the user-facing commands emitted by a component.
+// Existing one-command components need no manifest ceremony; a Go repository
+// with multiple commands names each main package explicitly.
+func (c Component) PublicCommands() []Command {
+	if c.Kind == "files" {
+		return []Command{{Name: c.Name}}
+	}
+	if len(c.Commands) == 0 {
+		return []Command{{Name: c.Name, Package: "."}}
+	}
+	return append([]Command(nil), c.Commands...)
 }
 
 func Current() (Manifest, error) {
@@ -62,6 +81,7 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("suite Go version is empty")
 	}
 	seen := make(map[string]bool, len(m.Components))
+	commands := make(map[string]bool, len(m.Components))
 	for _, c := range m.Components {
 		if c.Name == "" || c.Repository == "" || c.Revision == "" || c.Version == "" {
 			return fmt.Errorf("suite component has an empty required field: %q", c.Name)
@@ -84,7 +104,19 @@ func (m Manifest) Validate() error {
 			if c.Entry != "" || len(c.Assets) != 0 {
 				return fmt.Errorf("Go component %q cannot declare files", c.Name)
 			}
+			for _, command := range c.PublicCommands() {
+				if !validName(command.Name) || !validGoPackage(command.Package) {
+					return fmt.Errorf("Go component %q has unsafe command %#v", c.Name, command)
+				}
+				if commands[command.Name] {
+					return fmt.Errorf("public command %q is duplicated", command.Name)
+				}
+				commands[command.Name] = true
+			}
 		case "files":
+			if len(c.Commands) != 0 {
+				return fmt.Errorf("files component %q cannot declare Go commands", c.Name)
+			}
 			if !validRelative(c.Entry) {
 				return fmt.Errorf("files component %q has no entry", c.Name)
 			}
@@ -93,6 +125,10 @@ func (m Manifest) Validate() error {
 					return fmt.Errorf("component %q has unsafe asset path %q", c.Name, asset)
 				}
 			}
+			if commands[c.Name] {
+				return fmt.Errorf("public command %q is duplicated", c.Name)
+			}
+			commands[c.Name] = true
 		default:
 			return fmt.Errorf("component %q has unsupported kind %q", c.Name, c.Kind)
 		}
@@ -103,12 +139,22 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("component %q has unsafe license path %q", c.Name, c.LicenseFile)
 		}
 	}
-	for _, required := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft"} {
+	for _, required := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft", "mcp", "oauth"} {
 		if !seen[required] {
 			return fmt.Errorf("suite is missing required component %q", required)
 		}
 	}
 	return nil
+}
+
+func validGoPackage(path string) bool {
+	if path == "." {
+		return true
+	}
+	if !strings.HasPrefix(path, "./") {
+		return false
+	}
+	return validRelative(strings.TrimPrefix(path, "./"))
 }
 
 func validName(name string) bool {

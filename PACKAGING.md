@@ -23,6 +23,14 @@ version number.
 | `may` | exact, single-use human action decisions | native executable |
 | `cage` | kernel-enforced model-action confinement | native executable |
 
+The complete distribution also ships four edge commands without making them
+part of the thirteen-component agent core:
+
+| Edge component | Shipped commands | Boundary |
+| --- | --- | --- |
+| `mcp` | `mcp`, `mcpbox`, `mcpserve` | consume MCP as filters, compile admitted capability folders, and serve filters as MCP |
+| `oauth` | `oauth` | discover, obtain, refresh, and narrowly transfer resource-bound OAuth credentials |
+
 `rules`, `vouch`, and `web` remain useful standalone capabilities.
 May and Cage are now required suite components because Review/Loop can admit
 their exact-action approval and confinement policies. They remain ordinary
@@ -43,6 +51,7 @@ bench-suite-VERSION-GOOS-GOARCH/
   bin/bench  bin/ask  bin/brief  bin/ply  bin/context  bin/cite
   bin/hone  bin/trail  bin/agent  bin/agent-action-shell  bin/tend
   bin/draft  bin/may  bin/cage
+  bin/mcp  bin/mcpbox  bin/mcpserve  bin/oauth
   skills/draft/...
   licenses/COMPONENT/LICENSE
   licenses/third-party/MODULE-ID/...
@@ -86,10 +95,10 @@ There are two useful version axes and they should not be conflated:
    for standalone users. Components do not move in lockstep merely because a
    suite release changed.
 
-An update to any required component is a manifest change followed by the full
+An update to any shipped component is a manifest change followed by the full
 suite build and smoke tests. Compatibility is therefore demonstrated by the
-artifact that ships, rather than inferred from thirteen independent `@latest`
-resolutions. Exact revisions are intentional while the command contracts are
+artifact that ships, rather than inferred from independently resolved
+`@latest` components. Exact revisions are intentional while the command contracts are
 young; version ranges can be introduced only after those contracts have
 declared compatibility majors of their own.
 
@@ -169,13 +178,13 @@ reference are still checked without executing a foreign binary.
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all thirteen public commands without overwriting unrelated
-  files.
+  directory, and links all seventeen public commands without overwriting
+  unrelated files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install thirteen `HEAD` formulas. It can link the thirteen public
-  commands and keep Agent's private adapter and `skills/draft` beside the
-  versioned keg.
+  independently install seventeen `HEAD` formulas. It can link the seventeen
+  public commands and keep Agent's private adapter and `skills/draft` beside
+  the versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
   checksum during the app build, and launch its `bin/bench` by absolute path.
   Application releases pin the suite version and checksum. Keep the whole
@@ -203,10 +212,11 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all thirteen public commands;
+   versions for all seventeen public commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
-   the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all thirteen public
-   commands report their pinned versions, in offline smoke tests.
+   the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all
+   seventeen public commands report their pinned versions, in offline smoke
+   tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.
 
@@ -214,7 +224,8 @@ A publishable suite release requires all of the following:
 for both amd64 and arm64, and retains the archives as CI artifacts. It does not
 publish a GitHub release until the tag matches the suite version and every
 matrix artifact passes. Bench, Draft, Ask, Brief, Ply, Context, Cite, Hone,
-Trail, Agent, Tend, May, and Cage are MIT licensed, and their license files travel in the archive. The
+Trail, Agent, Tend, May, Cage, MCP, and OAuth are MIT licensed, and their
+license files travel in the archive. The
 compiled module inventory remains the input to third-party notice generation.
 The publish job and a Homebrew formula consume the exact checked artifacts
 rather than introducing a second build definition.

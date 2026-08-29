@@ -39,6 +39,8 @@ Requirements when running from source rather than a suite archive:
   confinement
 - `agent` on `PATH` for the experimental `bench home` folder-worker boundary
 - `trail` on `PATH` for that boundary's read-only run-history operations
+- `mcp`, `mcpbox`, and `mcpserve` on `PATH` for the optional protocol edge
+- `oauth` on `PATH` for resource-bound login and refresh at authenticated edges
 
 Build a relocatable development suite from the sibling repositories with:
 
@@ -48,8 +50,8 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-thirteen public commands under `~/.local`. Pass `-prefix DIR` to change the
-destination.
+seventeen public commands—the thirteen-component core plus MCP's three edge
+commands and OAuth—under `~/.local`. Pass `-prefix DIR` to change the destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.
 

@@ -131,8 +131,10 @@ func build(m suite.Manifest, o options) (string, error) {
 		source := sources[component.Name]
 		switch component.Kind {
 		case "go":
-			if err := buildGo(source, filepath.Join(root, "bin", executable(component.Name, o.GOOS)), o); err != nil {
-				return "", fmt.Errorf("build %s: %w", component.Name, err)
+			for _, command := range component.PublicCommands() {
+				if err := buildGo(source, command.Package, filepath.Join(root, "bin", executable(command.Name, o.GOOS)), o); err != nil {
+					return "", fmt.Errorf("build %s command %s: %w", component.Name, command.Name, err)
+				}
 			}
 		case "files":
 			if err := copyFile(filepath.Join(source, component.Entry), filepath.Join(root, "bin", component.Name), 0o755); err != nil {
@@ -319,8 +321,10 @@ func runnableTools(root, stage string, sources map[string]string, components []s
 			if component.Kind != "go" {
 				continue
 			}
-			if err := buildGo(sources[component.Name], filepath.Join(toolDir, executable(component.Name, runtime.GOOS)), host); err != nil {
-				return "", fmt.Errorf("build host %s for bundle verification: %w", component.Name, err)
+			for _, command := range component.PublicCommands() {
+				if err := buildGo(sources[component.Name], command.Package, filepath.Join(toolDir, executable(command.Name, runtime.GOOS)), host); err != nil {
+					return "", fmt.Errorf("build host %s command %s for bundle verification: %w", component.Name, command.Name, err)
+				}
 			}
 		}
 		return toolDir, nil
@@ -330,18 +334,20 @@ func runnableTools(root, stage string, sources map[string]string, components []s
 
 func verifyVersions(root, toolDir string, m suite.Manifest) error {
 	for _, component := range m.Components {
-		path := filepath.Join(toolDir, executable(component.Name, runtime.GOOS))
-		if component.Kind == "files" {
-			path = filepath.Join(root, "bin", component.Name)
-		}
-		cmd := exec.Command(path, "version")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("read %s version: %w: %s", component.Name, err, strings.TrimSpace(string(output)))
-		}
-		want := component.Name + " " + component.Version
-		if got := strings.TrimSpace(string(output)); got != want {
-			return fmt.Errorf("%s reports %q; suite manifest requires %q", component.Name, got, want)
+		for _, command := range component.PublicCommands() {
+			path := filepath.Join(toolDir, executable(command.Name, runtime.GOOS))
+			if component.Kind == "files" {
+				path = filepath.Join(root, "bin", command.Name)
+			}
+			cmd := exec.Command(path, "version")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("read %s version: %w: %s", command.Name, err, strings.TrimSpace(string(output)))
+			}
+			want := command.Name + " " + component.Version
+			if got := strings.TrimSpace(string(output)); got != want {
+				return fmt.Errorf("%s reports %q; suite manifest requires %q", command.Name, got, want)
+			}
 		}
 	}
 	return nil
@@ -389,21 +395,23 @@ func writeGoModules(root string, m suite.Manifest, o options) (moduleInventory, 
 		if component.Kind != "go" {
 			continue
 		}
-		path := filepath.Join(root, "bin", executable(component.Name, o.GOOS))
-		info, err := buildinfo.ReadFile(path)
-		if err != nil {
-			return moduleInventory{}, fmt.Errorf("read %s Go build info: %w", component.Name, err)
+		for _, command := range component.PublicCommands() {
+			path := filepath.Join(root, "bin", executable(command.Name, o.GOOS))
+			info, err := buildinfo.ReadFile(path)
+			if err != nil {
+				return moduleInventory{}, fmt.Errorf("read %s Go build info: %w", command.Name, err)
+			}
+			record := componentInventory{Name: command.Name, GoVersion: info.GoVersion, Main: moduleFrom(&info.Main)}
+			for _, dependency := range info.Deps {
+				record.Modules = append(record.Modules, moduleFrom(dependency))
+			}
+			sort.Slice(record.Modules, func(i, j int) bool { return record.Modules[i].Path < record.Modules[j].Path })
+			for _, setting := range info.Settings {
+				record.BuildFlags = append(record.BuildFlags, buildFlag{Key: setting.Key, Value: setting.Value})
+			}
+			sort.Slice(record.BuildFlags, func(i, j int) bool { return record.BuildFlags[i].Key < record.BuildFlags[j].Key })
+			inventory.Components = append(inventory.Components, record)
 		}
-		record := componentInventory{Name: component.Name, GoVersion: info.GoVersion, Main: moduleFrom(&info.Main)}
-		for _, dependency := range info.Deps {
-			record.Modules = append(record.Modules, moduleFrom(dependency))
-		}
-		sort.Slice(record.Modules, func(i, j int) bool { return record.Modules[i].Path < record.Modules[j].Path })
-		for _, setting := range info.Settings {
-			record.BuildFlags = append(record.BuildFlags, buildFlag{Key: setting.Key, Value: setting.Value})
-		}
-		sort.Slice(record.BuildFlags, func(i, j int) bool { return record.BuildFlags[i].Key < record.BuildFlags[j].Key })
-		inventory.Components = append(inventory.Components, record)
 	}
 	data, err := json.MarshalIndent(inventory, "", "  ")
 	if err != nil {
@@ -552,13 +560,15 @@ func smokeInstall(root string, m suite.Manifest, o options) error {
 		}
 	}
 	for _, component := range m.Components {
-		cmd := exec.Command(filepath.Join(prefix, "bin", component.Name), "version")
-		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
-		output, err := cmd.CombinedOutput()
-		want := component.Name + " " + component.Version
-		if err != nil || strings.TrimSpace(string(output)) != want {
-			return fmt.Errorf("installed %s smoke failed: exit=%v output=%q; want %q",
-				component.Name, err, strings.TrimSpace(string(output)), want)
+		for _, command := range component.PublicCommands() {
+			cmd := exec.Command(filepath.Join(prefix, "bin", command.Name), "version")
+			cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + temp, "TMPDIR=" + temp}
+			output, err := cmd.CombinedOutput()
+			want := command.Name + " " + component.Version
+			if err != nil || strings.TrimSpace(string(output)) != want {
+				return fmt.Errorf("installed %s smoke failed: exit=%v output=%q; want %q",
+					command.Name, err, strings.TrimSpace(string(output)), want)
+			}
 		}
 	}
 	blockedPrefix := filepath.Join(temp, "blocked-prefix")
@@ -662,8 +672,8 @@ func git(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func buildGo(source, target string, o options) error {
-	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", target, ".")
+func buildGo(source, packagePath, target string, o options) error {
+	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", target, packagePath)
 	cmd.Dir = source
 	cmd.Env = overlay(os.Environ(), "GOOS="+o.GOOS, "GOARCH="+o.GOARCH, "CGO_ENABLED=0")
 	output, err := cmd.CombinedOutput()
@@ -859,9 +869,11 @@ every component. `+"`SHA256SUMS`"+` covers every other shipped file.
 }
 
 func componentNames(components []suite.Component) []string {
-	names := make([]string, 0, len(components))
+	var names []string
 	for _, component := range components {
-		names = append(names, component.Name)
+		for _, command := range component.PublicCommands() {
+			names = append(names, command.Name)
+		}
 	}
 	return names
 }

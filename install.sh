@@ -11,8 +11,9 @@ usage() {
 usage: ./install.sh [-prefix DIR] [-allow-dirty]
 
 Build the complete pinned Bench suite, fetching missing component sources into
-.benchpack/sources, then install all thirteen public commands. The default prefix is
-$HOME/.local. A clean checkout is required unless -allow-dirty is explicit.
+.benchpack/sources, then install all seventeen public commands. The default
+prefix is $HOME/.local. A clean checkout is required unless -allow-dirty is
+explicit.
 EOF
 }
 

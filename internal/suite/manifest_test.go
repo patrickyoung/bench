@@ -10,8 +10,22 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.9.0" || len(m.Components) != 13 {
+	if m.Version != "0.10.0" || len(m.Components) != 15 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
+	}
+	var commands []string
+	for _, component := range m.Components {
+		for _, command := range component.PublicCommands() {
+			commands = append(commands, command.Name)
+		}
+	}
+	if len(commands) != 17 {
+		t.Fatalf("public commands=%d: %v", len(commands), commands)
+	}
+	for _, required := range []string{"mcp", "mcpbox", "mcpserve", "oauth"} {
+		if !strings.Contains(" "+strings.Join(commands, " ")+" ", " "+required+" ") {
+			t.Fatalf("public command %q is missing: %v", required, commands)
+		}
 	}
 	data, err := JSON(m)
 	if err != nil {
@@ -27,7 +41,7 @@ func TestManifestRejectsMissingSuiteMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, missing := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft"} {
+	for _, missing := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft", "mcp", "oauth"} {
 		t.Run(missing, func(t *testing.T) {
 			broken := m
 			broken.Components = nil
@@ -40,6 +54,25 @@ func TestManifestRejectsMissingSuiteMember(t *testing.T) {
 				t.Fatalf("Validate() = %v", err)
 			}
 		})
+	}
+}
+
+func TestManifestRejectsUnsafeOrDuplicateCommands(t *testing.T) {
+	m, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, commands := range [][]Command{
+		{{Name: "../mcp", Package: "./cmd/mcp"}},
+		{{Name: "mcp", Package: "../mcp"}},
+		{{Name: "bench", Package: "./cmd/mcp"}},
+	} {
+		broken := m
+		broken.Components = append([]Component(nil), m.Components...)
+		broken.Components[len(broken.Components)-2].Commands = commands
+		if err := broken.Validate(); err == nil {
+			t.Fatalf("unsafe commands unexpectedly validated: %#v", commands)
+		}
 	}
 }
 

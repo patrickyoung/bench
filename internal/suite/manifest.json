@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.8",
+      "version": "0.6.9",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -33,7 +33,7 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "15d107d7182c577bd387721b26d9538f43160112",
+      "revision": "aa7e3869f2b9b0890e8c91051509d022d9980991",
       "version": "0.1.1",
       "kind": "go",
       "license": "MIT",
@@ -96,7 +96,7 @@
     {
       "name": "agent",
       "repository": "https://github.com/patrickyoung/agent.git",
-      "revision": "e2ef90a83820ff72ca041a8bc8fd840e210f47d0",
+      "revision": "d570dcfb03c660796988b036629ada4763e2c6b6",
       "version": "0.1.2",
       "kind": "files",
       "entry": "bin/agent",
@@ -107,7 +107,7 @@
     {
       "name": "tend",
       "repository": "https://github.com/patrickyoung/tend.git",
-      "revision": "68620ee64b7e48466673f5b068f24679f5176499",
+      "revision": "de5fc98f421cc3c0bac3d02031220600bbb41b2f",
       "version": "0.1.1",
       "kind": "go",
       "license": "MIT",
@@ -116,11 +116,37 @@
     {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "bbcb9f5fb8973a47d726ca84872ab4dc630ae050",
+      "revision": "09678d38ad8b7b7f38d1657f5c5bbe1e5b57bc1f",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",
       "assets": ["skills/draft"],
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "mcp",
+      "repository": "https://github.com/patrickyoung/mcp.git",
+      "revision": "77314390b0619e77090cec02cfbb337c4af2e8a3",
+      "version": "0.2.1",
+      "kind": "go",
+      "commands": [
+        {"name": "mcp", "package": "./cmd/mcp"},
+        {"name": "mcpbox", "package": "./cmd/mcpbox"},
+        {"name": "mcpserve", "package": "./cmd/mcpserve"}
+      ],
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "oauth",
+      "repository": "https://github.com/patrickyoung/oauth.git",
+      "revision": "479a0c6d3874ecc7f21e8cc0e9ad7c8a393b22e1",
+      "version": "0.1.1",
+      "kind": "go",
+      "commands": [
+        {"name": "oauth", "package": "./cmd/oauth"}
+      ],
       "license": "MIT",
       "license_file": "LICENSE"
     }
