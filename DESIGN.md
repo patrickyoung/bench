@@ -209,8 +209,9 @@ override; there is no TUI-only contract engine.
 ## Distribution is a pinned composition
 
 The source projects remain independent filters, but the end-user product is a
-suite release containing `bench`, `ask`, `brief`, `ply`, `hone`, and Draft's
-script and skill at exact revisions. `internal/suite/manifest.json` is the
+suite release containing `bench`, `ask`, `brief`, `ply`, `context`, `cite`,
+`may`, `cage`, `hone`, `trail`, `agent`, `tend`, and Draft's script and skill
+at exact revisions. `internal/suite/manifest.json` is the
 machine-readable compatibility set and `cmd/benchpack` turns matching sibling
 checkouts into one checksummed, relocatable archive. The emitted manifest
 resolves Bench's `self` revision to the actual source commit and records dirty

@@ -493,6 +493,34 @@ func smokeBundle(root string, o options) error {
 	if len(runs) != 0 {
 		return fmt.Errorf("bundled Agent zero-model smoke created %d run artifact(s)", len(runs))
 	}
+
+	tend := filepath.Join(root, "bin", executable("tend", runtime.GOOS))
+	tendRoot := filepath.Join(temp, "tend-root")
+	tendEnv := append(append([]string(nil), env...), "TEND_ROOT="+tendRoot)
+	cmd = exec.Command(tend, "submit", "--", "/bin/sh", "-c", "printf suite-tend")
+	cmd.Env = tendEnv
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bundled Tend submit smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	job := strings.TrimSpace(string(output))
+	if !strings.HasPrefix(job, "job-") {
+		return fmt.Errorf("bundled Tend submit smoke returned invalid job id %q", job)
+	}
+	cmd = exec.Command(tend, "work")
+	cmd.Env = tendEnv
+	if output, err = cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("bundled Tend work smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	cmd = exec.Command(tend, "show", job)
+	cmd.Env = tendEnv
+	if output, err = cmd.CombinedOutput(); err != nil || !strings.Contains(string(output), `"status":"done"`) {
+		return fmt.Errorf("bundled Tend completion smoke failed: exit=%v output=%q", err, strings.TrimSpace(string(output)))
+	}
+	output, err = os.ReadFile(filepath.Join(tendRoot, "jobs", job, "attempts", "001.out"))
+	if err != nil || string(output) != "suite-tend" {
+		return fmt.Errorf("bundled Tend output smoke failed: err=%v output=%q", err, string(output))
+	}
 	return nil
 }
 
