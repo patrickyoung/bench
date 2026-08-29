@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.11.0",
+  "version": "0.11.1",
   "go": "1.26",
   "components": [
     {
@@ -116,7 +116,7 @@
     {
       "name": "draft",
       "repository": "https://github.com/patrickyoung/draft.git",
-      "revision": "09678d38ad8b7b7f38d1657f5c5bbe1e5b57bc1f",
+      "revision": "8d818bdf6935f0654c69185356c92b3b56c25f91",
       "version": "1.0.0",
       "kind": "files",
       "entry": "bin/draft",
