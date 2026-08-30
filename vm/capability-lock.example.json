@@ -1,0 +1,65 @@
+{
+  "schema": "bench.capability-lock/v1",
+  "suite": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "agent": {
+    "definition_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "vm": {
+    "profile": "terminal-minimal",
+    "image": "bench-terminal-minimal.raw@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "kernel_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "snapshot_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tools": [
+    {
+      "name": "bench-worker",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "skills": [],
+  "mounts": [
+    {
+      "source_id": "workspace-example",
+      "target": "/work",
+      "mode": "rw"
+    },
+    {
+      "source_id": "state-example",
+      "target": "/state",
+      "mode": "rw"
+    }
+  ],
+  "network": {
+    "default": "deny",
+    "rules": []
+  },
+  "identity": {
+    "workload": "spiffe://example.invalid/bench/worker",
+    "token_audiences": []
+  },
+  "approvals": {
+    "policy_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "consequential_actions": "exact-action"
+  },
+  "resources": {
+    "vcpus": 2,
+    "memory_mib": 4096,
+    "pids": 512,
+    "disk_mib": 8192,
+    "wall_seconds": 3600
+  },
+  "verifier": {
+    "source": "controller",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "model": {
+    "provider": "none",
+    "name": "none"
+  },
+  "update": {
+    "channel": "development",
+    "tuf_root_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

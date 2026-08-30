@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "version": "0.12.0",
+  "version": "0.13.0",
   "go": "1.26",
   "components": [
     {
       "name": "bench",
       "repository": "https://github.com/patrickyoung/bench.git",
       "revision": "self",
-      "version": "0.6.9",
+      "version": "0.7.0",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -24,8 +24,8 @@
     {
       "name": "brief",
       "repository": "https://github.com/patrickyoung/brief.git",
-      "revision": "8b746f0825f9c945c32d836541a394e88f035f53",
-      "version": "0.1.0",
+      "revision": "46be1dd01a0deddaf50aa863fb6831b3056137f1",
+      "version": "0.1.1",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -33,8 +33,8 @@
     {
       "name": "ply",
       "repository": "https://github.com/patrickyoung/ply.git",
-      "revision": "aa7e3869f2b9b0890e8c91051509d022d9980991",
-      "version": "0.1.1",
+      "revision": "b563c3e8c8402b8c4d0e3a6a9cfde6374a08249f",
+      "version": "0.1.2",
       "kind": "go",
       "license": "MIT",
       "license_file": "LICENSE"
@@ -105,8 +105,8 @@
     {
       "name": "agent",
       "repository": "https://github.com/patrickyoung/agent.git",
-      "revision": "84c3d22490e1391ebf0f30ed7c8c22ff47990261",
-      "version": "0.2.0",
+      "revision": "5df2c95a093e5b35817f8dd82b0010cb910d76c7",
+      "version": "0.2.1",
       "kind": "files",
       "entry": "bin/agent",
       "assets": ["bin/agent-action-shell"],

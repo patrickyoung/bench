@@ -35,6 +35,9 @@ jobs:
       - name: Check source installer
         working-directory: src/bench
         run: sh -n install.sh
+      - name: Validate VM scaffold
+        working-directory: src/bench
+        run: sh vm/validate.sh
 
   suite-build:
     needs: bench-test
@@ -89,7 +92,7 @@ jobs:
               src/bench/internal/suite/manifest.json)
             printf '%s/%s-%s\n' "$sources" "$1" "$revision"
           }
-          for component in ask brief ply context action cite hone trail tend mcp oauth; do
+          for component in ask brief ply context action cite hone trail tend may cage mcp oauth; do
             (cd "$(component_dir "$component")" && go test ./...)
           done
           draft=$(component_dir draft)

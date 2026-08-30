@@ -129,12 +129,12 @@ workbench and default task loop. They are also useful for exercising the
 complete flow offline with fake filters.
 
 `BENCH_AGENT` selects the standalone folder-agent executable used by
-`bench home`, and `BENCH_TRAIL` selects its read-only history browser. Bench
-passes its selected Ask, Ply, Brief, Cage, Hone, Trail, and May paths into that
-process; it does not parse or reimplement agent-home behavior. Agent scrubs
-May from model-run environments and resolves it only for the controller's
-explicit amendment command. Trail remains a standalone `PATH` dependency
-until it and Agent are added to the pinned suite.
+`bench home`, `BENCH_TRAIL` selects its read-only history browser, and
+`BENCH_ACTION` selects its external-effect review and execution boundary.
+Bench passes its selected Ask, Ply, Brief, Cage, Hone, Trail, May, and Action
+paths into that process; it does not parse or reimplement agent-home behavior.
+Agent scrubs May and Action from model-run environments and resolves them only
+for explicit controller commands.
 
 Bench names autonomy rather than making the user reason about an internal
 contract switch. `review` is the default: negotiate and admit a durable outcome
@@ -654,6 +654,7 @@ bench home learn -show recovery.json support-chief
 bench home learn -admit recovery.json support-chief
 bench home history support-chief
 bench home history support-chief check
+bench home actions support-chief
 bench home proposals support-chief
 bench home amend support-chief tighten-checking.patch
 ```

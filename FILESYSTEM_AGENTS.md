@@ -1,6 +1,7 @@
 # Filesystem agents for Bench
 
-Research snapshot: 27 August 2026.
+Research snapshot: 30 August 2026. For the current whole-system verdict and
+the proposed sealed execution plane, see [DIGITAL_WORKER.md](DIGITAL_WORKER.md).
 
 ## The opportunity
 
@@ -616,10 +617,10 @@ capability and truth, and the filesystem supplies composition and provenance.
 
 ## Delivery slices
 
-Prototype status on 27 August 2026: the sibling `agent` repository implements
+Prototype status on 30 August 2026: the sibling `agent` repository implements
 Slice 1, the cheap wake gate from Slice 2, direct foreground specialist runs
 from Slice 3, and the history, learning, and reviewed-amendment headless paths
-from Slice 4. Its 117-check offline process-boundary suite covers scaffold,
+from Slice 4. Its 163-check offline process-boundary suite covers scaffold,
 validation, composition, private-context transport, authority flags,
 heartbeat behavior, specialist-home catalogue validation, hard-link refusal,
 history scoping, bounded side-effect-free proposal review, May parking and
@@ -630,7 +631,11 @@ home also ran red-to-green through installed Brief, Ply, Ask, and Cage; its
 accepted Ask session replayed exactly, definition/evidence write probes were
 denied, and a later quiet tick created no new session. A separate live run
 produced a valid one-file definition proposal without mutating authored
-context. Suite packaging remains a future slice.
+context. The pinned suite is packaged today; packaging alone does not create a
+sealed execution plane. A Linux VM image and exact guest request/receipt
+protocol now provide the first replaceable-worker foothold, while host-side
+credential brokering, durable effect recovery, signed capability locks, and a
+production Firecracker launcher remain roadmap work.
 Bench now also exposes an attached `bench home [-C DIR] COMMAND...` boundary
 that
 passes literal arguments and streams to the public agent program, supplies the
@@ -663,8 +668,8 @@ a recursive specialist. Its network-free report measures definition/compiled
 bytes and verifies a minimal real Ask archive through Trail; model-quality and
 false-success studies still need separate tasks and an external oracle.
 
-The `agent` repository is public and exact Agent and Trail revisions are pinned
-in suite `0.7.0`. Benchpack's installer derives public commands from the
+The component repositories are public and exact revisions are pinned in the
+suite manifest. Benchpack's installer derives public commands from the
 manifest, carries `agent-action-shell` as a private executable asset, and Agent
 resolves that companion through its real path when invoked by an installation
 symlink. Native packaging exercises an installed zero-model Agent re-entry and

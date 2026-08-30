@@ -486,6 +486,7 @@ func smokeBundle(root string, o options) error {
 		{"check", []string{"home", "check", agentHome}, "valid agent home"},
 		{"zero-model run", []string{"home", "run", agentHome}, "nothing to do"},
 		{"Trail history", []string{"home", "history", agentHome}, "agent: history · home="},
+		{"Action review", []string{"home", "actions", agentHome}, "agent-actions/v1"},
 	} {
 		cmd := exec.Command(bench, probe.args...)
 		cmd.Env = env
@@ -621,8 +622,8 @@ func syncDraft(root, stage, toolDir string) error {
 		"BRIEF="+filepath.Join(toolDir, executable("brief", runtime.GOOS)),
 		"PLY="+filepath.Join(toolDir, executable("ply", runtime.GOOS)),
 		"HONE="+filepath.Join(toolDir, executable("hone", runtime.GOOS)),
-		"CAGE="+missingOptional,
-		"MAY="+missingOptional,
+		"CAGE="+filepath.Join(toolDir, executable("cage", runtime.GOOS)),
+		"MAY="+filepath.Join(toolDir, executable("may", runtime.GOOS)),
 		"VOUCH="+missingOptional,
 		"WEB="+missingOptional,
 	)

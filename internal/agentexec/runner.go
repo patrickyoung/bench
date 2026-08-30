@@ -46,15 +46,16 @@ func (r Runner) Start(ctx context.Context, args []string, stdin string) <-chan E
 
 // Runner invokes an installed agent program directly, without a shell.
 type Runner struct {
-	Path      string
-	PlyPath   string
-	BriefPath string
-	CagePath  string
-	HonePath  string
-	TrailPath string
-	AskPath   string
-	MayPath   string
-	WorkDir   string
+	Path       string
+	PlyPath    string
+	BriefPath  string
+	CagePath   string
+	HonePath   string
+	TrailPath  string
+	AskPath    string
+	MayPath    string
+	ActionPath string
+	WorkDir    string
 }
 
 func (r Runner) Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) Outcome {
@@ -99,6 +100,7 @@ func (r Runner) toolEnv() []string {
 		{"AGENT_TRAIL", r.TrailPath},
 		{"AGENT_ASK", r.AskPath},
 		{"AGENT_MAY", r.MayPath},
+		{"AGENT_ACTION", r.ActionPath},
 	} {
 		if path := strings.TrimSpace(tool.path); path != "" {
 			env = append(env, tool.name+"="+path)

@@ -1,0 +1,54 @@
+[Unit]
+Description=Run one admitted Bench worker request (%i)
+After=systemd-tmpfiles-setup.service
+RequiresMountsFor=/work /state /run/bench/inbox/%i /run/bench/outbox/%i
+ConditionPathIsRegular=/run/bench/inbox/%i/request.json
+ConditionPathIsDirectory=/run/bench/outbox/%i
+
+[Service]
+Type=oneshot
+User=bench-worker
+Group=bench-worker
+WorkingDirectory=/work
+ExecStart=/usr/libexec/bench-worker run -request /run/bench/inbox/%i/request.json -receipt /run/bench/outbox/%i/receipt.json
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateIPC=yes
+PrivateMounts=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+KeyringMode=private
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+IPAddressDeny=any
+ReadOnlyPaths=/run/bench/inbox/%i
+ReadWritePaths=/work /state /run/bench/outbox/%i
+TasksMax=512
+
+TimeoutStartSec=1h5min
+TimeoutStopSec=30s
+KillMode=control-group
+StandardInput=null
+StandardOutput=journal
+StandardError=journal

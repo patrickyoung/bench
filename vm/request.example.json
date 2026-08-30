@@ -1,0 +1,13 @@
+{
+  "schema": "bench.worker-request/v1",
+  "run_id": "example-001",
+  "argv": [
+    "/usr/bin/printf",
+    "hello from bench-worker\n"
+  ],
+  "cwd": "/work",
+  "stdout_path": "/run/bench/outbox/example-001/stdout",
+  "stderr_path": "/run/bench/outbox/example-001/stderr",
+  "timeout_ms": 30000,
+  "capability_lock_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

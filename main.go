@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	version      = "0.6.9"
+	version      = "0.7.0"
 	maxPipeInput = 16 << 20
 )
 
@@ -179,7 +179,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Agent: agentexec.Runner{
 			Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
 			CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
-			AskPath: paths.ask, MayPath: paths.may, WorkDir: workspace,
+			AskPath: paths.ask, MayPath: paths.may, ActionPath: paths.action, WorkDir: workspace,
 		},
 		Hone:          honeexec.Runner{Path: paths.hone, AskPath: paths.ask, BriefPath: paths.brief, WorkDir: workspace},
 		Brief:         briefexec.Runner{Binary: paths.brief, WorkDir: workspace},
@@ -241,7 +241,7 @@ func runHomeCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	outcome := (agentexec.Runner{
 		Path: paths.agent, PlyPath: paths.ply, BriefPath: paths.brief,
 		CagePath: paths.cage, HonePath: paths.hone, TrailPath: paths.trail,
-		AskPath: paths.ask, MayPath: paths.may, WorkDir: work,
+		AskPath: paths.ask, MayPath: paths.may, ActionPath: paths.action, WorkDir: work,
 	}).Run(ctx, fs.Args(), stdin, stdout, stderr)
 	if outcome.Err != nil {
 		return report(stderr, fmt.Errorf("agent: %w", outcome.Err))
@@ -613,7 +613,7 @@ func pathContains(root, target string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-type paths struct{ ask, ply, brief, draft, hone, may, cage, agent, trail string }
+type paths struct{ ask, ply, brief, draft, hone, may, cage, agent, trail, action string }
 
 func filterPaths() paths {
 	return paths{
@@ -621,7 +621,7 @@ func filterPaths() paths {
 		brief: toolPath("BENCH_BRIEF", "brief"), draft: toolPath("BENCH_DRAFT", "draft"),
 		hone: toolPath("BENCH_HONE", "hone"), may: toolPath("BENCH_MAY", "may"),
 		cage: toolPath("BENCH_CAGE", "cage"), agent: toolPath("BENCH_AGENT", "agent"),
-		trail: toolPath("BENCH_TRAIL", "trail"),
+		trail: toolPath("BENCH_TRAIL", "trail"), action: toolPath("BENCH_ACTION", "action"),
 	}
 }
 
@@ -943,7 +943,7 @@ bench home passes every argument after COMMAND literally to agent.
 
 Environment: ASK_MODEL · BENCH_TOOLS · BENCH_DIR · BENCH_ASK · BENCH_PLY ·
 BENCH_BRIEF · BENCH_DRAFT · BENCH_HONE · BENCH_MAY · BENCH_CAGE · BENCH_AGENT ·
-BENCH_TRAIL · NO_COLOR
+BENCH_TRAIL · BENCH_ACTION · NO_COLOR
 
 When stdin or stdout is not a terminal, plain bench behaves like bench run:
   git diff | bench -m provider/model 'review this patch'`)
@@ -954,7 +954,7 @@ func printHomeUsage(w io.Writer) {
 
 Run the standalone agent executable with its public argv/stdin/stdout/stderr
 contract intact. Bench supplies the exact Ask, Ply, Brief, Cage, Hone, Trail,
-and May programs from the active suite. Use -- before an agent command that
+May, and Action programs from the active suite. Use -- before an agent command that
 begins with a dash.
 
 examples:
@@ -963,6 +963,7 @@ examples:
   bench home specialist support-chief researcher -- 'bounded question'
   bench home learn -into triage support-chief SESSION.jsonl
   bench home history support-chief check
+  bench home actions support-chief
   bench home proposals support-chief
   bench home amend support-chief tighten-checking.patch`)
 }

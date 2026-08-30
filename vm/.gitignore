@@ -1,0 +1,4 @@
+staging/
+output/
+cache/
+.mkosi-private/

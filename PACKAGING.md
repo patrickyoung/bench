@@ -73,11 +73,11 @@ its real suite path without adding an accidental user-facing command.
 
 When `bin/bench` sees the valid `suite.json` marker above it, it resolves its
 companions from the same `bin` directory. Explicit `BENCH_ASK`, `BENCH_BRIEF`,
-`BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, and `BENCH_CAGE` values
+`BENCH_PLY`, `BENCH_HONE`, `BENCH_DRAFT`, `BENCH_MAY`, `BENCH_ACTION`, and `BENCH_CAGE` values
 still win. The experimental headless `bench home` boundary likewise resolves
 `agent` from `BENCH_AGENT` and its history reader from `BENCH_TRAIL`, then the
 suite when present or ordinary `PATH`; it also supplies the already-pinned May
-path for explicit definition amendments. Agent's action adapter is shipped
+and Action paths for explicit controller operations. Agent's action adapter is shipped
 beside its real script path and covered by the archive checksum, but is not a
 manifest component or public installed command. Without the marker, a
 standalone or `go install` build retains the existing `PATH`

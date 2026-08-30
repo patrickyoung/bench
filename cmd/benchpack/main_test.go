@@ -80,6 +80,40 @@ func TestExecutableSuffix(t *testing.T) {
 	}
 }
 
+func TestSyncDraftIncludesRequiredCageAndMay(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Bench suite packaging supports Unix hosts")
+	}
+	root := t.TempDir()
+	stage := t.TempDir()
+	toolDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(root, "bin", "draft")
+	script := "#!/bin/sh\nset -eu\n[ \"$1\" = sync ]\nprintf '%s\\n' \"$CAGE\" \"$MAY\" \"$VOUCH\" \"$WEB\" > sync-env\n"
+	if err := os.WriteFile(draft, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDraft(root, stage, toolDir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "sync-env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingOptional := filepath.Join(stage, ".not-in-base-suite")
+	want := strings.Join([]string{
+		filepath.Join(toolDir, executable("cage", runtime.GOOS)),
+		filepath.Join(toolDir, executable("may", runtime.GOOS)),
+		missingOptional,
+		missingOptional,
+	}, "\n") + "\n"
+	if string(data) != want {
+		t.Fatalf("Draft sync environment = %q, want %q", data, want)
+	}
+}
+
 func TestInstallScriptLinksEveryRequiredSuiteCommand(t *testing.T) {
 	m, err := suite.Current()
 	if err != nil {
