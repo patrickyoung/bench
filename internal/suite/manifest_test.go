@@ -10,7 +10,7 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != "0.11.1" || len(m.Components) != 15 {
+	if m.Version != "0.12.0" || len(m.Components) != 16 {
 		t.Fatalf("manifest version=%q components=%d", m.Version, len(m.Components))
 	}
 	var commands []string
@@ -19,10 +19,10 @@ func TestEmbeddedManifestIsComplete(t *testing.T) {
 			commands = append(commands, command.Name)
 		}
 	}
-	if len(commands) != 17 {
+	if len(commands) != 18 {
 		t.Fatalf("public commands=%d: %v", len(commands), commands)
 	}
-	for _, required := range []string{"mcp", "mcpbox", "mcpserve", "oauth"} {
+	for _, required := range []string{"action", "mcp", "mcpbox", "mcpserve", "oauth"} {
 		if !strings.Contains(" "+strings.Join(commands, " ")+" ", " "+required+" ") {
 			t.Fatalf("public command %q is missing: %v", required, commands)
 		}
@@ -41,7 +41,7 @@ func TestManifestRejectsMissingSuiteMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, missing := range []string{"bench", "ask", "brief", "ply", "context", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft", "mcp", "oauth"} {
+	for _, missing := range []string{"bench", "ask", "brief", "ply", "context", "action", "cite", "may", "cage", "hone", "trail", "agent", "tend", "draft", "mcp", "oauth"} {
 		t.Run(missing, func(t *testing.T) {
 			broken := m
 			broken.Components = nil

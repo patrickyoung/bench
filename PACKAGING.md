@@ -14,6 +14,7 @@ version number.
 | `brief` | skill catalogue | native executable |
 | `ply` | tool loop and executable verdict | native executable |
 | `context` | external evidence retrieval through source connectors | native executable |
+| `action` | exact policy, approval, execution, and effect receipts | native executable |
 | `cite` | exact Context ref-to-URL citation check | native executable |
 | `hone` | verified learning path | native executable |
 | `trail` | read-only Ask archive inspection | native executable |
@@ -24,7 +25,7 @@ version number.
 | `cage` | kernel-enforced model-action confinement | native executable |
 
 The complete distribution also ships four edge commands without making them
-part of the thirteen-component agent core:
+part of the fourteen-component agent core:
 
 | Edge component | Shipped commands | Boundary |
 | --- | --- | --- |
@@ -35,9 +36,9 @@ part of the thirteen-component agent core:
 May and Cage are now required suite components because Review/Loop can admit
 their exact-action approval and confinement policies. They remain ordinary
 independent filters; packaging them does not merge their runtimes into Bench.
-Context and Cite are required because the evidence path now has a common
-retrieval seam and a deterministic citation-identity check. Ask remains the
-single event-log writer; Cite remains a stateless filter, and Ply records its
+Context, Action, and Cite are required because read evidence, controlled
+effects, and deterministic citation identity need common filter seams. Ask
+remains the single event-log writer; Cite remains a stateless filter, and Ply records its
 verifier outcome through Ask. Agent and Trail are required because the folder-worker boundary includes
 replayable history. Agent remains an ordinary POSIX shell program rather than
 a runtime embedded in Bench. Tend is likewise an independent Unix process
@@ -48,7 +49,7 @@ The release layout is relocatable:
 
 ```text
 bench-suite-VERSION-GOOS-GOARCH/
-  bin/bench  bin/ask  bin/brief  bin/ply  bin/context  bin/cite
+  bin/bench  bin/ask  bin/brief  bin/ply  bin/context  bin/action  bin/cite
   bin/hone  bin/trail  bin/agent  bin/agent-action-shell  bin/tend
   bin/draft  bin/may  bin/cage
   bin/mcp  bin/mcpbox  bin/mcpserve  bin/oauth
@@ -178,11 +179,11 @@ reference are still checked without executing a foreign binary.
 - **Release archive:** the canonical artifact and the source for all other
   installation methods. Extract it and run `./install.sh [PREFIX]`; the
   default is `~/.local`. It verifies the suite, installs into a versioned
-  directory, and links all seventeen public commands without overwriting
+  directory, and links all eighteen public commands without overwriting
   unrelated files.
   The unpacked directory also runs in place.
 - **Homebrew:** a thin formula should install an immutable suite archive, not
-  independently install seventeen `HEAD` formulas. It can link the seventeen
+  independently install eighteen `HEAD` formulas. It can link the eighteen
   public commands and keep Agent's private adapter and `skills/draft` beside
   the versioned keg.
 - **Applications:** vendor one unpacked suite directory, verify the archive
@@ -212,10 +213,10 @@ A publishable suite release requires all of the following:
 3. `go test ./...` passes in Bench;
 4. archives build for the supported target matrix;
 5. an extracted archive passes checksum verification and reports the expected
-   versions for all seventeen public commands;
+   versions for all eighteen public commands;
 6. `bench` launched by absolute path with a deliberately empty `PATH` reaches
    the bundled Ask/Ply/Draft, Context/Cite, and Agent/Trail boundaries, and all
-   seventeen public commands report their pinned versions, in offline smoke
+   eighteen public commands report their pinned versions, in offline smoke
    tests.
 7. every redistributed project and Go dependency has an approved license and
    the archive contains the required license/notices or generated SBOM.

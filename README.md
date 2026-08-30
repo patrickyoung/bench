@@ -34,6 +34,8 @@ Requirements when running from source rather than a suite archive:
 - `brief` and `ply` on `PATH` to browse, author, and refine skills
 - `context` and `cite` on `PATH` to retrieve external evidence and verify its
   exact citation identities
+- `action` on `PATH` for exact policy, May review, effect execution, and
+  replay receipts
 - `hone` on `PATH` to admit lessons from verified build recoveries
 - `may` and `cage` on `PATH` for admitted exact-action approval and action-only
   confinement
@@ -50,7 +52,7 @@ go run ./cmd/benchpack -workspace .. -out /tmp/bench-dist -allow-dirty
 
 On a clean Bench checkout, `./install.sh` fetches missing components into an
 ignored local cache, builds and verifies the pinned suite, and installs all
-seventeen public commands—the thirteen-component core plus MCP's three edge
+eighteen public commands—the fourteen-component core plus MCP's three edge
 commands and OAuth—under `~/.local`. Pass `-prefix DIR` to change the destination.
 The resulting archive also has an external checksum for application builds;
 apps can keep the extracted directory private and invoke `bin/bench` directly.

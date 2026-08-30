@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.11.1",
+  "version": "0.12.0",
   "go": "1.26",
   "components": [
     {
@@ -43,6 +43,15 @@
       "name": "context",
       "repository": "https://github.com/patrickyoung/context.git",
       "revision": "809547b2727f7f2a2ffa7aaf5465f7626ebc307b",
+      "version": "0.1.0",
+      "kind": "go",
+      "license": "MIT",
+      "license_file": "LICENSE"
+    },
+    {
+      "name": "action",
+      "repository": "https://github.com/patrickyoung/action.git",
+      "revision": "29648b46abe8354d483c4bf6b30dec4d4c2c4cae",
       "version": "0.1.0",
       "kind": "go",
       "license": "MIT",
@@ -96,8 +105,8 @@
     {
       "name": "agent",
       "repository": "https://github.com/patrickyoung/agent.git",
-      "revision": "d570dcfb03c660796988b036629ada4763e2c6b6",
-      "version": "0.1.2",
+      "revision": "84c3d22490e1391ebf0f30ed7c8c22ff47990261",
+      "version": "0.2.0",
       "kind": "files",
       "entry": "bin/agent",
       "assets": ["bin/agent-action-shell"],
@@ -127,8 +136,8 @@
     {
       "name": "mcp",
       "repository": "https://github.com/patrickyoung/mcp.git",
-      "revision": "77314390b0619e77090cec02cfbb337c4af2e8a3",
-      "version": "0.2.1",
+      "revision": "e9f745f019c3bd2070ea98e681d66fc917ddd783",
+      "version": "0.3.0",
       "kind": "go",
       "commands": [
         {"name": "mcp", "package": "./cmd/mcp"},
